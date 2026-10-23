@@ -259,6 +259,8 @@ async function startRec(ctx, btn) {
   if (!navigator.mediaDevices || !window.MediaRecorder) { toast('Ce téléphone ne permet pas d’enregistrer ici. Mets à jour le navigateur.'); return; }
   S.rec = { ctx, btn, starting: true, chunks: [], t0: Date.now() };
   if (btn) btn.classList.add('rec');
+  // Un vocal en lecture bloque le micro sur iPhone : on le met en pause.
+  document.querySelectorAll('audio,video').forEach((m) => { try { m.pause(); } catch (_) {} });
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     const r = S.rec;
@@ -285,12 +287,15 @@ async function stopRec(send) {
   S.rec = null; clearInterval(recTimer); $('recov').hidden = true; if (r.btn) r.btn.classList.remove('rec');
   if (r.starting) { r.cancelled = true; toast('Garde le doigt appuyé pendant que tu parles.'); return; }
   const secs = (Date.now() - r.t0) / 1000;
+  try { if (r.mr.state === 'recording') r.mr.requestData(); } catch (_) {}
   await new Promise((res) => { r.mr.onstop = res; try { r.mr.stop(); } catch (e) { res(); } });
+  await new Promise((res) => setTimeout(res, 150)); // derniers morceaux parfois en retard
   r.stream.getTracks().forEach((t) => t.stop());
   if (!send) return;
   if (secs < 0.8) { toast('Garde le doigt appuyé pendant que tu parles, puis relâche.'); return; }
   const type = (r.mime || 'audio/webm').split(';')[0];
   const blob = new Blob(r.chunks, { type });
+  if (blob.size < 1000) { toast('Le micro n’a rien enregistré. Rien n’est parti : réessaie.', 6000); return; }
   const ext = type.includes('mp4') ? 'm4a' : (type.includes('ogg') ? 'ogg' : 'webm');
   await sendVoice(r.ctx, blob, type, ext, Math.round(secs));
   if (S.dirty) softRender();
@@ -347,6 +352,16 @@ function render() {
   if (!S.loaded) { a.innerHTML = `<div class="wrap"><div class="empty"><div class="e">🧺</div><h2>Chargement…</h2></div></div>`; return; }
   document.body.dataset.hotel = (S.open && S.rooms[S.open]) ? S.rooms[S.open].hotel : S.hotel;
   a.innerHTML = role() === 'mgr' ? viewManager() : (S.open ? viewCleanRoom() : viewCleanHome());
+  updateBadge();
+}
+// Pastille rouge sur l'icône de l'appli (écran d'accueil) = messages non lus.
+let lastBadge = -1;
+function updateBadge() {
+  const n = unreadTotal(); if (n === lastBadge) return; lastBadge = n;
+  try {
+    const p = n > 0 ? navigator.setAppBadge && navigator.setAppBadge(n) : navigator.clearAppBadge && navigator.clearAppBadge();
+    if (p && p.catch) p.catch(() => {});
+  } catch (_) {}
 }
 
 /* ----- activation ----- */
@@ -652,7 +667,7 @@ function heardText(m, conv) {
 function msgHtml(m, conv) {
   const mine = m.from_staff === S.me.id;
   const u = mediaUrl(m.media_path);
-  const media = m.media_path ? (u ? `<audio controls preload="metadata" src="${esc(u)}"></audio>` : '<span class="muted">Vocal indisponible</span>') : (m.media_type === 'expired' ? '<span class="muted">🎤 Vocal effacé après 30 jours</span>' : '');
+  const media = m.media_path ? (u ? `<audio controls preload="metadata" src="${esc(u)}"></audio>` : '<span class="muted">Vocal indisponible</span>') : (m.media_type === 'expired' ? '<span class="muted">🎤 Vocal effacé après 30 jours</span>' : (m.media_type === 'empty' ? '<span class="muted">🎤 Vocal vide : le micro n’a rien enregistré</span>' : ''));
   const heard = heardText(m, conv);
   return `<div class="msg ${mine ? 'me' : ''}"><span class="meta">${esc(mine ? 'Moi' : nameOf(m.from_staff))} · ${when(m.created_at)}${m.room ? ` · ${H(m.hotel).e} ch. ${esc(m.room)}` : ''}</span>
     ${m.text ? `<span class="txt">${esc(m.text)}</span>` : ''}${media}${m.duration ? `<span class="meta">${m.duration} s</span>` : ''}${heard ? `<span class="meta" style="align-self:flex-end">${heard}</span>` : ''}</div>`;

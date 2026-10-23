@@ -104,12 +104,25 @@ async function sendPush(sub: { endpoint: string; p256dh: string; auth: string },
   });
   return r.status;
 }
-async function pushTo(staffIds: string[], payload: { title: string; body: string; tag?: string; conv?: string }) {
+// Nombre de messages non lus pour chaque personne (même calcul que l'appli) : sert à la pastille rouge.
+async function unreadCounts(ids: string[]) {
+  const out: Record<string, number> = {};
+  const { data: people } = await sb.from("staff").select("id,role").in("id", ids);
+  await Promise.all((people || []).map(async (p: any) => {
+    const [msgs, { data: reads }] = await Promise.all([visibleMsgs(p, 400), sb.from("conv_reads").select("conv,read_at").eq("staff_id", p.id)]);
+    const r: Record<string, number> = {}; (reads || []).forEach((x: any) => r[x.conv] = new Date(x.read_at).getTime());
+    out[p.id] = msgs.filter((m: any) => m.from_staff !== p.id && new Date(m.created_at).getTime() > (r[m.conv] || 0)).length;
+  }));
+  return out;
+}
+async function pushTo(staffIds: string[], payload: { title: string; body: string; tag?: string; conv?: string }, opts: { badge?: boolean } = {}) {
   const ids = [...new Set(staffIds.filter(Boolean))]; if (!ids.length) return;
-  const { data } = await sb.from("push_subs").select("id,endpoint,p256dh,auth").in("staff_id", ids);
+  const { data } = await sb.from("push_subs").select("id,staff_id,endpoint,p256dh,auth").in("staff_id", ids);
+  if (!data || !data.length) return;
+  const counts = opts.badge ? await unreadCounts([...new Set(data.map((s: any) => s.staff_id))]).catch(() => ({} as Record<string, number>)) : {};
   await Promise.all((data || []).map(async (s: any) => {
     try {
-      const st = await sendPush(s, payload);
+      const st = await sendPush(s, s.staff_id in counts ? { ...payload, badge: counts[s.staff_id] } : payload);
       if (st === 404 || st === 410) await sb.from("push_subs").delete().eq("id", s.id);
     } catch (e) { console.warn("push", e); }
   }));
@@ -421,7 +434,7 @@ async function handle(req: Request) {
       await pushTo(to.filter((id) => id !== me.id), {
         title: `${media ? "🎤" : "💬"} ${me.label}${label ? " · " + label : ""}`,
         body: [where, what].filter(Boolean).join(" · "), tag: "c-" + conv, conv,
-      } as any);
+      } as any, { badge: true });
       return { ok: true };
     }
     case "read_mark": {

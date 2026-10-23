@@ -1,6 +1,6 @@
 // Service worker : coquille hors-ligne + notifications.
-const VERSION = 'v3';
-const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
+const VERSION = 'v4';
+const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/badge-96.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -23,8 +23,12 @@ self.addEventListener('push', (e) => {
   e.waitUntil((async () => {
     await self.registration.showNotification(d.title || 'Ménage', {
       body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag,
-      icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { conv: d.conv || null },
+      icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { conv: d.conv || null },
     });
+    // Pastille rouge sur l'icône de l'appli avec le nombre de messages non lus.
+    if (typeof d.badge === 'number' && self.navigator) {
+      try { if (d.badge > 0 && self.navigator.setAppBadge) await self.navigator.setAppBadge(d.badge); else if (d.badge === 0 && self.navigator.clearAppBadge) await self.navigator.clearAppBadge(); } catch (_) {}
+    }
     const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     cs.forEach((c) => c.postMessage({ type: 'refresh' }));
   })());
