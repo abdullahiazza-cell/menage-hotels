@@ -146,6 +146,9 @@ textarea{min-height:64px;width:100%;resize:vertical}
 .bubble{position:fixed;z-index:30;right:calc(18px + env(safe-area-inset-right,0px));bottom:calc(22px + env(safe-area-inset-bottom,0px));width:72px;height:72px;border-radius:50%;border:0;background:var(--accent);color:var(--accent-ink);font-size:32px;box-shadow:0 10px 24px rgba(60,50,140,.35)}
 .bubble .badge{position:absolute;top:-2px;right:-2px;font-size:15px;min-width:28px;height:28px;border-radius:14px}
 .bubble.ping{animation:ping 1.6s ease-in-out infinite}
+.inbox{border:2px solid #F7B4BE;background:linear-gradient(180deg,#FFF1F3,var(--card))}
+@media (prefers-color-scheme: dark){.inbox{border-color:#7A3A47;background:var(--card)}}
+body:has(.bubble) .wrap{padding-bottom:84px}
 @keyframes ping{0%,100%{transform:scale(1)}50%{transform:scale(1.09)}}
 #sheet{position:fixed;inset:0;z-index:50;background:var(--veil);display:flex;align-items:flex-end;justify-content:center}
 .panel{background:var(--bg);width:100%;max-width:700px;max-height:94%;overflow:auto;border-radius:26px 26px 0 0;display:flex;flex-direction:column;gap:14px;

@@ -466,7 +466,17 @@ function viewManager() {
     <div class="top"><div class="logo"><img src="icons/icon-192.png" alt=""><div class="hero"><h1>Ménage</h1><span class="muted">${esc(S.me.label)} · ${owner ? 'propriétaire' : 'gérant'}</span></div></div>
       <button class="btn small" data-a="preview">👁 Écran ménage</button></div>
     <nav class="nav" aria-label="Sections">${tabs.map(([k, l, n]) => `<button data-a="tab" data-k="${k}" aria-pressed="${S.tab === k}">${l}${n ? `<span class="badge">${n}</span>` : ''}</button>`).join('')}</nav>
-    ${body}</div>`;
+    ${S.tab !== 'msgs' ? inboxCard() : ''}
+    ${body}</div>
+    ${S.tab !== 'msgs' && !S.sel.size ? `<button class="bubble ${unread ? 'ping' : ''}" data-a="convList" aria-label="Messages${unread ? ', ' + unread + ' non lus' : ''}">💬${unread ? `<span class="badge">${unread}</span>` : ''}</button>` : ''}`;
+}
+// Encart en haut de l'accueil : les conversations avec des messages non lus, un toucher pour les ouvrir.
+function inboxCard() {
+  const cs = myConvs().filter((c) => unreadIn(c)).sort(byLast);
+  if (!cs.length) return '';
+  const n = cs.reduce((t, c) => t + unreadIn(c), 0);
+  return `<div class="card inbox"><div class="row between"><h3>💬 ${n} message${n > 1 ? 's' : ''} non lu${n > 1 ? 's' : ''}</h3><button class="btn small ghost" data-a="tab" data-k="msgs">Tout voir</button></div>
+    <div class="list">${cs.slice(0, 4).map(convRow).join('')}</div>${cs.length > 4 ? `<span class="muted">+ ${cs.length - 4} autre${cs.length - 4 > 1 ? 's' : ''} conversation${cs.length - 4 > 1 ? 's' : ''}</span>` : ''}</div>`;
 }
 function hotelCards() {
   const hs = S.me.only_hotel ? HOTELS.filter((h) => h.id === S.me.only_hotel) : HOTELS;
@@ -700,6 +710,12 @@ function threadSheet(conv) {
   }
 }
 function convListSheet() {
+  if (role() === 'mgr') {
+    const cs = myConvs().sort(byLast).sort((a, b) => (unreadIn(b) ? 1 : 0) - (unreadIn(a) ? 1 : 0));
+    openSheet('convs', `${sheetHead('Messages')}<button class="btn pri" data-a="newMsg">＋ Nouveau message</button>
+      <div class="list">${cs.map(convRow).join('')}</div>`);
+    return;
+  }
   const cs = myConvs().sort(byLast);
   openSheet('convs', `${sheetHead('Messages')}${holdBtn('boss', 'Garde appuyé pour parler aux responsables', 'big soft')}
     <div class="list">${cs.map(convRow).join('')}</div>
