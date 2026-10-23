@@ -104,7 +104,7 @@ async function sendPush(sub: { endpoint: string; p256dh: string; auth: string },
   });
   return r.status;
 }
-async function pushTo(staffIds: string[], payload: { title: string; body: string; tag?: string }) {
+async function pushTo(staffIds: string[], payload: { title: string; body: string; tag?: string; conv?: string }) {
   const ids = [...new Set(staffIds.filter(Boolean))]; if (!ids.length) return;
   const { data } = await sb.from("push_subs").select("id,endpoint,p256dh,auth").in("staff_id", ids);
   await Promise.all((data || []).map(async (s: any) => {
@@ -124,6 +124,23 @@ function parisDay(d = new Date()) { return new Intl.DateTimeFormat("en-CA", { ti
 function parisHour(d = new Date()) { return Number(new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", hour12: false }).format(d)); }
 const isMgr = (me: any) => me.role === "owner" || me.role === "gerant";
 function needMgr(me: any) { if (!isMgr(me)) throw new E("forbidden", 403); }
+const UUID = /^[0-9a-f-]{36}$/;
+function convOk(me: any, conv: string) {
+  if (conv === "team") return true;
+  if (conv === "mgrs") return isMgr(me);
+  if (conv.startsWith("staff:")) return isMgr(me) || conv === `staff:${me.id}`;
+  if (conv.startsWith("dm:")) return conv.slice(3).split("_").includes(me.id);
+  return false;
+}
+async function visibleMsgs(me: any, limit: number) {
+  const [a, b] = await Promise.all([
+    isMgr(me)
+      ? sb.from("messages").select("*").not("conv", "like", "dm:%").order("created_at", { ascending: false }).limit(limit)
+      : sb.from("messages").select("*").in("conv", ["team", `staff:${me.id}`]).order("created_at", { ascending: false }).limit(limit),
+    sb.from("messages").select("*").like("conv", `dm:%${me.id}%`).order("created_at", { ascending: false }).limit(limit),
+  ]);
+  return [...(a.data || []), ...(b.data || [])].filter((m: any) => convOk(me, m.conv)).sort((x: any, y: any) => x.created_at < y.created_at ? 1 : -1);
+}
 function hotelOk(me: any, h: string) { return !me.only_hotel || me.only_hotel === h; }
 async function getConfig() { const { data } = await sb.from("config").select("data").eq("id", 1).single(); return data?.data || {}; }
 function estimate(r: any, cfg: any) {
@@ -178,14 +195,14 @@ async function actState(me: any, device: any) {
     if (r.last_job?.photos && (mgr ? r.status === "a_controler" || r.status === "propre" : r.last_job.uid === me.id)) r.last_job.photos.forEach((p: any) => paths.push(p.id));
   });
   if (mgr) {
-    const [{ data: staff }, { data: devices }, { data: invites }, { data: plan }, { data: issues }, { data: msgs }, { data: reads }] = await Promise.all([
+    const [{ data: staff }, { data: devices }, { data: invites }, { data: plan }, { data: issues }, msgs, { data: reads }] = await Promise.all([
       sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked,fails,created_at").order("created_at"),
       sb.from("devices").select("id,staff_id,label,created_at,last_seen").is("revoked_at", null),
       sb.from("invites").select("id,staff_id,created_at,expires_at").is("used_at", null).gt("expires_at", new Date().toISOString()),
       sb.from("plan").select("*").eq("day", parisDay()).maybeSingle(),
       sb.from("issues").select("*").order("created_at", { ascending: false }).limit(150),
-      sb.from("messages").select("*").order("created_at", { ascending: false }).limit(400),
-      sb.from("thread_reads").select("*"),
+      visibleMsgs(me, 400),
+      sb.from("conv_reads").select("*"),
     ]);
     const subs = await sb.from("push_subs").select("staff_id");
     const pushOn = new Set((subs.data || []).map((s: any) => s.staff_id));
@@ -196,13 +213,14 @@ async function actState(me: any, device: any) {
     out.issues.forEach((i: any) => paths.push(i.photo, i.video, i.audio));
     out.msgs.forEach((m: any) => paths.push(m.media_path));
   } else {
-    const [{ data: staff }, { data: issues }, { data: msgs }, { data: reads }] = await Promise.all([
-      sb.from("staff").select("id,label,role").eq("active", true).in("role", ["owner", "gerant"]),
+    const [{ data: staff }, { data: issues }, msgs] = await Promise.all([
+      sb.from("staff").select("id,label,role").eq("active", true),
       sb.from("issues").select("*").eq("by_staff", me.id).order("created_at", { ascending: false }).limit(20),
-      sb.from("messages").select("*").eq("thread", me.id).order("created_at", { ascending: false }).limit(150),
-      sb.from("thread_reads").select("*").eq("thread", me.id),
+      visibleMsgs(me, 150),
     ]);
-    out.staff = [...(staff || []), { id: me.id, label: me.label, role: me.role }];
+    const convs = [...new Set(["team", `staff:${me.id}`, ...msgs.map((m: any) => m.conv)])];
+    const { data: reads } = await sb.from("conv_reads").select("*").in("conv", convs);
+    out.staff = staff || [];
     out.issues = issues || []; out.msgs = msgs || []; out.reads = reads || [];
     out.msgs.forEach((m: any) => paths.push(m.media_path));
   }
@@ -374,30 +392,42 @@ async function handle(req: Request) {
       const text = body.text ? String(body.text).slice(0, 1000) : null;
       const media = (typeof body.media_path === "string" && body.media_path.startsWith(me.id + "/")) ? body.media_path : null;
       if (!text && !media) throw new E("empty");
-      const base = { from_staff: me.id, text, media_path: media, media_type: media ? String(body.media_type || "audio").slice(0, 10) : null, duration: body.duration ? Math.min(600, Math.round(body.duration)) : null, hotel: HOTELS.includes(body.hotel) ? body.hotel : null, room: body.room ? String(body.room).slice(0, 12) : null };
-      let threads: string[] = [];
-      if (!mgr) threads = [me.id];
-      else if (body.thread === "all") {
-        const { data } = await sb.from("staff").select("id").eq("role", "menage").eq("active", true);
-        threads = (data || []).map((s: any) => s.id);
-      } else {
-        const { data } = await sb.from("staff").select("id,role").eq("id", body.thread).maybeSingle();
-        if (!data || data.role !== "menage") throw new E("bad");
-        threads = [data.id];
-      }
-      if (!threads.length) throw new E("no_one");
-      await sb.from("messages").insert(threads.map((t) => ({ ...base, thread: t })));
-      await sb.from("thread_reads").upsert(threads.map((t) => ({ staff_id: me.id, thread: t, read_at: new Date().toISOString() })));
-      const title = base.media_path ? `🎤 Vocal de ${me.label}` : `💬 ${me.label}`;
-      const where = base.room ? `${HOTEL_NAMES[base.hotel || ""] || ""} · Chambre ${base.room}` : "";
-      const preview = text ? text.slice(0, 120) : (where || "Nouveau message vocal");
-      if (mgr) await pushTo(threads, { title, body: preview, tag: "msg" });
-      else await pushTo(await managerIds(base.hotel), { title, body: where ? `${where}${text ? " · " + text.slice(0, 80) : ""}` : preview, tag: "msg-" + me.id });
+      let conv = typeof body.conv === "string" ? body.conv : "";
+      if (!conv) conv = !mgr ? `staff:${me.id}` : (body.thread === "all" ? "team" : `staff:${body.thread}`);
+      if (!convOk(me, conv)) throw new E("forbidden", 403);
+      const { data: all } = await sb.from("staff").select("id,role,active,only_hotel").eq("active", true);
+      const act = all || []; const byId: Record<string, any> = {}; act.forEach((x: any) => byId[x.id] = x);
+      const mgrIds = (h?: string | null) => act.filter((x: any) => (x.role === "owner" || x.role === "gerant") && (!h || !x.only_hotel || x.only_hotel === h)).map((x: any) => x.id);
+      const hotel = HOTELS.includes(body.hotel) ? body.hotel : null;
+      let to: string[] = []; let thread: string | null = null; let label = "";
+      if (conv === "team") { to = act.map((x: any) => x.id); label = "📢 Toute l’équipe"; }
+      else if (conv === "mgrs") { to = mgrIds(); label = "👔 Responsables"; }
+      else if (conv.startsWith("staff:")) {
+        const x = conv.slice(6); if (!UUID.test(x) || !byId[x] || byId[x].role !== "menage") throw new E("bad");
+        thread = x; to = [x, ...mgrIds(hotel)];
+      } else if (conv.startsWith("dm:")) {
+        const pair = conv.slice(3).split("_");
+        if (pair.length !== 2 || !pair.every((p) => UUID.test(p)) || pair[0] >= pair[1]) throw new E("bad");
+        const other = pair[0] === me.id ? pair[1] : pair[0];
+        if (!byId[other]) throw new E("bad");
+        if (!mgr && !(byId[other].role === "owner" || byId[other].role === "gerant")) throw new E("forbidden", 403);
+        to = [other];
+      } else throw new E("bad");
+      const row = { conv, thread, from_staff: me.id, text, media_path: media, media_type: media ? String(body.media_type || "audio").slice(0, 10) : null, duration: body.duration ? Math.min(600, Math.round(body.duration)) : null, hotel, room: body.room ? String(body.room).slice(0, 12) : null };
+      const { error } = await sb.from("messages").insert(row); if (error) throw new E("db");
+      await sb.from("conv_reads").upsert({ staff_id: me.id, conv, read_at: new Date().toISOString() });
+      const where = row.room ? `${HOTEL_NAMES[hotel || ""] || ""} · Chambre ${row.room}` : "";
+      const what = text ? text.slice(0, 120) : "Message vocal";
+      await pushTo(to.filter((id) => id !== me.id), {
+        title: `${media ? "🎤" : "💬"} ${me.label}${label ? " · " + label : ""}`,
+        body: [where, what].filter(Boolean).join(" · "), tag: "c-" + conv, conv,
+      } as any);
       return { ok: true };
     }
     case "read_mark": {
-      const thread = mgr ? body.thread : me.id; if (!thread) throw new E("bad");
-      await sb.from("thread_reads").upsert({ staff_id: me.id, thread, read_at: new Date().toISOString() });
+      const conv = typeof body.conv === "string" ? body.conv : (mgr ? `staff:${body.thread}` : `staff:${me.id}`);
+      if (!convOk(me, conv)) throw new E("forbidden", 403);
+      await sb.from("conv_reads").upsert({ staff_id: me.id, conv, read_at: new Date().toISOString() });
       return { ok: true };
     }
 

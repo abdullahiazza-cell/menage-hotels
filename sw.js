@@ -1,5 +1,5 @@
 // Service worker : coquille hors-ligne + notifications.
-const VERSION = 'v1';
+const VERSION = 'v2';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
 
 self.addEventListener('install', (e) => {
@@ -23,7 +23,7 @@ self.addEventListener('push', (e) => {
   e.waitUntil((async () => {
     await self.registration.showNotification(d.title || 'Ménage', {
       body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag,
-      icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { url: './' },
+      icon: 'icons/icon-192.png', badge: 'icons/icon-192.png', data: { conv: d.conv || null },
     });
     const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
     cs.forEach((c) => c.postMessage({ type: 'refresh' }));
@@ -33,7 +33,8 @@ self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   e.waitUntil((async () => {
     const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    for (const c of cs) { if ('focus' in c) { c.postMessage({ type: 'refresh' }); return c.focus(); } }
-    return self.clients.openWindow('./');
+    const conv = e.notification.data && e.notification.data.conv;
+    for (const c of cs) { if ('focus' in c) { c.postMessage(conv ? { type: 'open', conv } : { type: 'refresh' }); return c.focus(); } }
+    return self.clients.openWindow(conv ? './#c=' + encodeURIComponent(conv) : './');
   })());
 });

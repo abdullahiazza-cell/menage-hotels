@@ -98,13 +98,43 @@ function estimate(r) {
 }
 
 /* ---------- messages : lus / non lus ---------- */
-const readAt = (staffId, thread) => { const r = S.reads.find((x) => x.staff_id === staffId && x.thread === thread); return r ? ts(r.read_at) : 0; };
-function unreadIn(thread) {
-  if (!S.me) return 0;
-  const mine = readAt(S.me.id, thread);
-  return S.msgs.filter((m) => m.thread === thread && m.from_staff !== S.me.id && ts(m.created_at) > mine && (isMgr() ? m.from_staff === thread : true)).length;
+const splitCtx = (c) => { const i = c.indexOf(':'); return i < 0 ? [c, ''] : [c.slice(0, i), c.slice(i + 1)]; };
+const dmConv = (a, b) => 'dm:' + [a, b].sort().join('_');
+const isMgrRole = (r) => r === 'owner' || r === 'gerant';
+const readAt = (staffId, conv) => { const r = S.reads.find((x) => x.staff_id === staffId && x.conv === conv); return r ? ts(r.read_at) : 0; };
+const convMsgs = (c) => S.msgs.filter((m) => m.conv === c);
+function unreadIn(conv) { if (!S.me) return 0; const mine = readAt(S.me.id, conv); return convMsgs(conv).filter((m) => m.from_staff !== S.me.id && ts(m.created_at) > mine).length; }
+function myConvs() {
+  const set = new Set(['team']);
+  if (isMgr() && !S.preview) { set.add('mgrs'); cleaners().forEach((c) => set.add('staff:' + c.id)); }
+  else set.add('staff:' + S.me.id);
+  S.msgs.forEach((m) => set.add(m.conv));
+  return [...set];
 }
-const unreadTotal = () => isMgr() && !S.preview ? cleaners().reduce((s, c) => s + unreadIn(c.id), 0) : unreadIn(S.me.id);
+const unreadTotal = () => S.me ? myConvs().reduce((s, c) => s + unreadIn(c), 0) : 0;
+function convOther(c) { return c.slice(3).split('_').find((x) => x !== S.me.id); }
+function convLabel(c) {
+  if (c === 'team') return '📢 Toute l’équipe';
+  if (c === 'mgrs') return '👔 Responsables';
+  if (c.startsWith('staff:')) { const id = c.slice(6); return id === S.me.id ? '🧺 Mes responsables' : '🧺 ' + nameOf(id); }
+  if (c.startsWith('dm:')) return '🔒 ' + nameOf(convOther(c));
+  return c;
+}
+function convSub(c) {
+  if (c === 'team') return 'Tout le monde reçoit le message';
+  if (c === 'mgrs') return 'Propriétaire et gérants seulement';
+  if (c.startsWith('staff:')) return c.slice(6) === S.me.id ? 'Tous les responsables reçoivent ton message' : 'Elle + tous les responsables';
+  if (c.startsWith('dm:')) return 'Privé : seulement vous deux';
+  return '';
+}
+function convMembers(c) {
+  const act = S.staff.filter((s) => s.active !== false);
+  if (c === 'team') return act.map((s) => s.id);
+  if (c === 'mgrs') return act.filter((s) => isMgrRole(s.role)).map((s) => s.id);
+  if (c.startsWith('staff:')) return [c.slice(6), ...act.filter((s) => isMgrRole(s.role)).map((s) => s.id)];
+  if (c.startsWith('dm:')) return c.slice(3).split('_');
+  return [];
+}
 
 /* ---------- toast ---------- */
 let toastT = null;
@@ -172,7 +202,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
-  navigator.serviceWorker.addEventListener('message', (e) => { if (e.data && e.data.type === 'refresh') refresh(); });
+  navigator.serviceWorker.addEventListener('message', (e) => { if (!e.data) return; if (e.data.type === 'refresh') refresh(); if (e.data.type === 'open' && e.data.conv) openConvWhenReady(e.data.conv); });
 }
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; if (S.sheet === 'onboard') onboardSheet(); });
 
@@ -266,20 +296,17 @@ async function stopRec(send) {
   if (S.dirty) softRender();
 }
 async function sendVoice(ctx, blob, type, ext, secs) {
-  const kind0 = ctx.split(':')[0];
-  if (isMgr() && (kind0 === 'boss' || kind0 === 'room')) { toast('Mode test : en vrai, ce vocal partirait aux responsables.'); return; }
+  const [kind, arg] = splitCtx(ctx);
+  if (S.me.role !== 'menage' && (kind === 'boss' || kind === 'room')) { toast('Mode test : en vrai, ce vocal partirait aux responsables.'); return; }
   toast('Envoi du vocal…', 8000);
   let path;
   try { path = await upload(blob, type, ext); } catch (e) { toast('Le vocal n’a pas pu partir. Vérifie la connexion et réessaie.'); return; }
-  const [kind, arg] = ctx.split(':');
   if (kind === 'issue') {
     if (S.rep && S.rep.items && S.rep.items[arg]) { S.rep.items[arg].audio = path; S.rep.items[arg].audioSecs = secs; drawReport(); toast('Vocal ajouté ✓'); }
     return;
   }
-  const payload = { media_path: path, media_type: 'audio', duration: secs };
+  const payload = { media_path: path, media_type: 'audio', duration: secs, conv: kind === 'conv' ? arg : 'staff:' + S.me.id };
   if (kind === 'room') { const rm = S.rooms[arg]; if (rm) { payload.hotel = rm.hotel; payload.room = rm.num; } }
-  if (kind === 'thread') payload.thread = arg;
-  if (kind === 'all') payload.thread = 'all';
   await act(() => api('msg_send', payload), 'Vocal envoyé ✓');
 }
 document.addEventListener('pointerdown', (e) => {
@@ -587,38 +614,69 @@ function viewIssues() {
 }
 
 /* ----- messages ----- */
-function viewThreads() {
-  const list = cleaners().map((c) => { const ms = S.msgs.filter((m) => m.thread === c.id); return { c, last: ms[ms.length - 1], un: unreadIn(c.id) }; })
-    .sort((a, b) => (ts(b.last && b.last.created_at) || 0) - (ts(a.last && a.last.created_at) || 0));
-  const prev = (m) => !m ? '<span class="muted">Pas encore de message</span>' : `<span class="muted">${m.from_staff === m.thread ? '' : esc(first(nameOf(m.from_staff))) + ' : '}${m.media_path || m.media_type === 'expired' ? '🎤 Vocal' : esc((m.text || '').slice(0, 60))}${m.room ? ' · ch. ' + esc(m.room) : ''} · ${when(m.created_at)}</span>`;
-  return `<div class="card"><div class="row between"><h2>Conversations</h2><button class="btn small soft" data-a="threadOpen" data-id="all">📢 Toute l’équipe</button></div>
-    <p class="muted">Chaque conversation est privée entre une personne et les responsables.</p>
-    ${list.length ? `<div class="list">${list.map(({ c, last, un }) => `<button class="li" style="text-align:left;cursor:pointer" data-a="threadOpen" data-id="${c.id}"><span class="t"><b>${esc(c.label)}</b><br>${prev(last)}</span>${un ? `<span class="badge">${un}</span>` : ''}</button>`).join('')}</div>` : '<p class="muted">Ajoute d’abord ton équipe dans l’onglet Équipe.</p>'}</div>`;
+function convRow(c) {
+  const ms = convMsgs(c), last = ms[ms.length - 1], un = unreadIn(c);
+  const prev = !last ? '<span class="muted">Pas encore de message</span>' : `<span class="muted">${last.from_staff === S.me.id ? 'Moi' : esc(first(nameOf(last.from_staff)))} : ${last.media_path || last.media_type === 'expired' ? '🎤 Vocal' : esc((last.text || '').slice(0, 60))}${last.room ? ' · ch. ' + esc(last.room) : ''} · ${when(last.created_at)}</span>`;
+  return `<button class="li" style="text-align:left;cursor:pointer" data-a="threadOpen" data-id="${esc(c)}"><span class="t"><b>${esc(convLabel(c))}</b><br>${prev}</span>${un ? `<span class="badge">${un}</span>` : ''}</button>`;
 }
-function msgHtml(m, thread) {
-  const mine = m.from_staff === S.me.id || (isMgr() && !S.preview && m.from_staff !== thread);
-  let heard = '';
-  if (isMgr() && !S.preview && m.from_staff !== thread && thread !== 'all') heard = readAt(thread, thread) >= ts(m.created_at) ? '✓✓ Écouté' : '✓ Envoyé';
+const byLast = (a, b) => { const la = convMsgs(a), lb = convMsgs(b); return (ts(lb.length && lb[lb.length - 1].created_at) || 0) - (ts(la.length && la[la.length - 1].created_at) || 0); };
+function viewThreads() {
+  const all = myConvs();
+  const groups = ['team', 'mgrs'];
+  const staffC = all.filter((c) => c.startsWith('staff:')).sort(byLast);
+  const dms = all.filter((c) => c.startsWith('dm:')).sort(byLast);
+  return `<div class="card"><div class="row between"><h2>Messages</h2><button class="btn small pri" data-a="newMsg">＋ Nouveau message</button></div>
+      <p class="muted">Seules les personnes de la conversation reçoivent la notification.</p>
+      <div class="list">${groups.map(convRow).join('')}</div></div>
+    ${dms.length ? `<div class="card"><h3>🔒 Privés</h3><div class="list">${dms.map(convRow).join('')}</div></div>` : ''}
+    <div class="card"><h3>🧺 Femmes de ménage</h3><p class="muted">Chaque conversation : elle + tous les responsables.</p>
+      ${staffC.length ? `<div class="list">${staffC.map(convRow).join('')}</div>` : '<p class="muted">Pas encore de femme de ménage dans l’équipe.</p>'}</div>`;
+}
+function newMsgSheet() {
+  const others = S.staff.filter((s) => s.active !== false && s.id !== S.me.id);
+  const mgrs = others.filter((s) => isMgrRole(s.role)), cl = others.filter((s) => s.role === 'menage');
+  const btn = (c, title, sub) => `<button class="li" style="text-align:left;cursor:pointer" data-a="threadOpen" data-id="${esc(c)}"><span class="t"><b>${esc(title)}</b><br><span class="muted">${esc(sub)}</span></span></button>`;
+  openSheet('newmsg', `${sheetHead('Nouveau message')}
+    <div class="card"><h3>Groupes</h3><div class="list">${btn('team', '📢 Toute l’équipe', 'Tout le monde')}${isMgr() ? btn('mgrs', '👔 Responsables', 'Propriétaire et gérants seulement') : ''}</div></div>
+    ${mgrs.length ? `<div class="card"><h3>🔒 Une seule personne (privé)</h3><div class="list">${mgrs.map((s) => btn(dmConv(S.me.id, s.id), s.label, ROLE_L[s.role] + ' · seulement vous deux')).join('')}</div></div>` : ''}
+    ${isMgr() && cl.length ? `<div class="card"><h3>🧺 Femmes de ménage</h3><div class="list">${cl.map((s) => btn('staff:' + s.id, s.label, 'Elle + tous les responsables')).join('')}${cl.map((s) => btn(dmConv(S.me.id, s.id), '🔒 ' + s.label + ' (privé)', 'Seulement vous deux')).join('')}</div></div>` : ''}`);
+}
+function heardText(m, conv) {
+  if (m.from_staff !== S.me.id) return '';
+  const others = convMembers(conv).filter((id) => id !== S.me.id);
+  const heard = others.filter((id) => readAt(id, conv) >= ts(m.created_at));
+  if (conv.startsWith('dm:') || others.length === 1) return heard.length ? '✓✓ Lu' : '✓ Envoyé';
+  if (!heard.length) return '✓ Envoyé';
+  return '✓✓ Lu par ' + (heard.length <= 3 ? heard.map((id) => first(nameOf(id))).join(', ') : heard.length + ' personnes');
+}
+function msgHtml(m, conv) {
+  const mine = m.from_staff === S.me.id;
   const u = mediaUrl(m.media_path);
   const media = m.media_path ? (u ? `<audio controls preload="metadata" src="${esc(u)}"></audio>` : '<span class="muted">Vocal indisponible</span>') : (m.media_type === 'expired' ? '<span class="muted">🎤 Vocal effacé après 30 jours</span>' : '');
-  return `<div class="msg ${mine ? 'me' : ''}"><span class="meta">${esc(m.from_staff === S.me.id ? 'Moi' : nameOf(m.from_staff))} · ${when(m.created_at)}${m.room ? ` · ${H(m.hotel).e} ch. ${esc(m.room)}` : ''}</span>
+  const heard = heardText(m, conv);
+  return `<div class="msg ${mine ? 'me' : ''}"><span class="meta">${esc(mine ? 'Moi' : nameOf(m.from_staff))} · ${when(m.created_at)}${m.room ? ` · ${H(m.hotel).e} ch. ${esc(m.room)}` : ''}</span>
     ${m.text ? `<span class="txt">${esc(m.text)}</span>` : ''}${media}${m.duration ? `<span class="meta">${m.duration} s</span>` : ''}${heard ? `<span class="meta" style="align-self:flex-end">${heard}</span>` : ''}</div>`;
 }
-function threadSheet(thread) {
-  const isAll = thread === 'all';
-  const title = isAll ? '📢 Toute l’équipe' : (isMgr() && !S.preview ? esc(nameOf(thread)) : 'Mes messages');
-  const ms = isAll ? [] : S.msgs.filter((m) => m.thread === thread);
-  const ctx = isAll ? 'all' : (isMgr() && !S.preview ? 'thread:' + thread : 'boss');
-  openSheet('thread:' + thread, `<div class="row between"><h2>${title}</h2><button class="btn small" data-a="close">Fermer</button></div>
-    <div class="thread" id="thr">${isAll ? '<p class="muted">Le message partira dans la conversation de chaque femme de ménage active.</p>' : (ms.length ? ms.map((m) => msgHtml(m, thread)).join('') : '<p class="muted" style="text-align:center">Pas encore de message.</p>')}</div>
-    <div class="composer">${holdBtn(ctx, 'Garde appuyé pour parler')}
-      <div class="row"><input id="msgText" placeholder="Ou écris un message" style="flex:1"><button class="btn" data-a="sendText" data-ctx="${esc(ctx)}">Envoyer</button></div></div>`, 'chat');
+function threadSheet(conv) {
+  if (conv === 'all') conv = 'team';
+  if (conv && !conv.includes(':') && conv !== 'team' && conv !== 'mgrs') conv = 'staff:' + conv;
+  const ms = convMsgs(conv);
+  openSheet('thread:' + conv, `<div class="row between"><div><h2>${esc(convLabel(conv))}</h2><span class="muted">${esc(convSub(conv))}</span></div><button class="btn small" data-a="close">Fermer</button></div>
+    <div class="thread" id="thr">${ms.length ? ms.map((m) => msgHtml(m, conv)).join('') : '<p class="muted" style="text-align:center">Pas encore de message.</p>'}</div>
+    <div class="composer">${holdBtn('conv:' + conv, 'Garde appuyé pour parler')}
+      <div class="row"><input id="msgText" placeholder="Ou écris un message" style="flex:1"><button class="btn" data-a="sendText" data-ctx="${esc(conv)}">Envoyer</button></div></div>`, 'chat');
   const el = $('thr'); if (el) el.scrollTop = el.scrollHeight;
-  if (!isAll && unreadIn(thread)) {
-    S.reads = S.reads.filter((x) => !(x.staff_id === S.me.id && x.thread === thread)).concat([{ staff_id: S.me.id, thread, read_at: new Date().toISOString() }]);
-    api('read_mark', { thread }).catch(() => {});
+  if (unreadIn(conv)) {
+    S.reads = S.reads.filter((x) => !(x.staff_id === S.me.id && x.conv === conv)).concat([{ staff_id: S.me.id, conv, read_at: new Date().toISOString() }]);
+    api('read_mark', { conv }).catch(() => {});
     if (!S.sheetLock) { S.sheetLock = true; setTimeout(() => { S.sheetLock = false; render(); }, 0); }
   }
+}
+function convListSheet() {
+  const cs = myConvs().sort(byLast);
+  openSheet('convs', `${sheetHead('Messages')}${holdBtn('boss', 'Garde appuyé pour parler aux responsables', 'big soft')}
+    <div class="list">${cs.map(convRow).join('')}</div>
+    ${S.staff.some((s) => isMgrRole(s.role) && s.id !== S.me.id) ? '<button class="btn" data-a="newMsg">🔒 Message privé à un responsable</button>' : ''}`);
 }
 
 /* ----- équipe ----- */
@@ -736,7 +794,7 @@ function viewCleanHome() {
   const me = S.me.id, mine = Object.values(S.rooms).filter((r) => r.assignee === me && !r.blocked);
   const todo = mine.filter((r) => r.status === 'a_faire' || r.status === 'en_cours').sort((a, b) => (a.status === 'en_cours' ? 0 : 1) - (b.status === 'en_cours' ? 0 : 1) || a.hotel.localeCompare(b.hotel) || a.order - b.order);
   const done = mine.filter((r) => r.status === 'a_controler' && r.doneAt && dayStr(r.doneAt) === dayStr(Date.now()));
-  const total = todo.length + done.length, un = unreadIn(me), left = todo.reduce((s, r) => s + estimate(r), 0);
+  const total = todo.length + done.length, un = unreadTotal(), left = todo.reduce((s, r) => s + estimate(r), 0);
   const [ge, gt] = greet();
   const card = (r) => { const t = TY[r.type] || { e: '🧹', l: '' };
     return `<button class="job st-${r.status}" data-a="openClean" data-id="${r.id}"><span class="ph" style="background-image:${photoUrl(r.hotel)}" aria-hidden="true"></span><span class="num">${esc(r.num)}</span>
@@ -750,7 +808,7 @@ function viewCleanHome() {
     ${holdBtn('boss', 'Garde appuyé pour parler au responsable', 'big soft')}
     <button class="btn big" data-a="report">🔧 Signaler un problème</button>
   </div>
-  <button class="bubble ${un ? 'ping' : ''}" data-a="threadOpen" data-id="${me}" aria-label="Messages${un ? ', ' + un + ' nouveaux' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
+  <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' nouveaux' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
 }
 const workOf = (id) => S.work[id] || (S.work[id] = { checks: {}, photos: {} });
 function cleanItems(r) {
@@ -792,7 +850,8 @@ function closeSheet() { S.sheet = null; S.rep = null; const s = $('sheet'); s.hi
 function refreshSheet() {
   if (!S.sheet) return;
   if (S.sheet.startsWith('room:')) roomSheet(S.sheet.slice(5));
-  else if (S.sheet.startsWith('thread:')) { const th = S.sheet.slice(7); if (th !== 'all') threadSheet(th); }
+  else if (S.sheet.startsWith('thread:')) threadSheet(S.sheet.slice(7));
+  else if (S.sheet === 'convs') convListSheet();
 }
 const sheetHead = (t) => `<div class="row between"><h2>${t}</h2><button class="btn small" data-a="close">Fermer</button></div>`;
 function roomSheet(id) {
@@ -922,13 +981,12 @@ const A = {
   async issueStatus(d) { await act(() => api('issue_status', { id: d.id, status: d.s }), d.s === 'regle' ? 'Marqué réglé' : null); },
   /* messages */
   threadOpen(d) { threadSheet(d.id); },
+  newMsg() { newMsgSheet(); },
+  convList() { convListSheet(); },
   async sendText(d) {
     const t = ($('msgText').value || '').trim(); if (!t) { toast('Écris d’abord le message, ou garde le doigt sur 🎤.'); return; }
-    const [kind, arg] = d.ctx.split(':'); const payload = { text: t };
-    if (kind === 'thread') payload.thread = arg; if (kind === 'all') payload.thread = 'all';
     $('msgText').value = '';
-    await act(() => api('msg_send', payload), 'Envoyé ✓');
-    if (kind === 'all') closeSheet();
+    await act(() => api('msg_send', { text: t, conv: d.ctx }), 'Envoyé ✓');
   },
   /* équipe */
   personNew() { personSheet(null); },
@@ -1054,12 +1112,18 @@ document.addEventListener('input', (e) => { const t = e.target.closest('[data-in
 document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.sheet) closeSheet(); if (e.key === 'Enter' && e.target.id === 'codeIn') A.codeGo(); });
 window.addEventListener('hashchange', () => { if (!S.secret) { S.act = null; render(); } });
 
+function openConvWhenReady(conv) {
+  const go = () => { if (S.loaded && S.me) { if (S.me.role === 'menage' || !S.preview) threadSheet(conv); } else setTimeout(go, 400); };
+  refresh(true).then(go);
+}
 /* ---------- démarrage ---------- */
 (async function boot() {
-  if (S.secret && readHashCode()) history.replaceState(null, '', location.pathname);
+  const cm = location.hash.match(/[#&]c=([^&]+)/); const openC = cm ? decodeURIComponent(cm[1]) : null;
+  if (S.secret && (readHashCode() || openC)) history.replaceState(null, '', location.pathname);
   render();
   if (S.secret) {
     await refresh(true);
     if (S.loaded && pushSupported() && Notification.permission === 'granted') enablePush(true);
+    if (S.loaded && openC) threadSheet(openC);
   }
 })();
