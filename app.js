@@ -254,6 +254,18 @@ async function takeVideo() {
 /* ---------- enregistrement vocal (garder appuyé) ---------- */
 const recMime = () => ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
 let recTimer = null;
+// Le micro reste ouvert quelques minutes après un vocal : l'iPhone ne redemande pas l'autorisation à chaque fois.
+const MIC_KEEP = 3 * 60000;
+let micStream = null, micTimer = null;
+async function getMic() {
+  clearTimeout(micTimer);
+  if (micStream && micStream.getAudioTracks().some((t) => t.readyState === 'live')) return micStream;
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  return micStream;
+}
+function releaseMic() { clearTimeout(micTimer); if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; } }
+function releaseMicLater() { clearTimeout(micTimer); micTimer = setTimeout(releaseMic, MIC_KEEP); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && !S.rec) releaseMic(); });
 async function startRec(ctx, btn) {
   if (S.rec) return;
   if (!navigator.mediaDevices || !window.MediaRecorder) { toast('Ce téléphone ne permet pas d’enregistrer ici. Mets à jour le navigateur.'); return; }
@@ -262,9 +274,9 @@ async function startRec(ctx, btn) {
   // Un vocal en lecture bloque le micro sur iPhone : on le met en pause.
   document.querySelectorAll('audio,video').forEach((m) => { try { m.pause(); } catch (_) {} });
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+    const stream = await getMic();
     const r = S.rec;
-    if (!r || r.cancelled) { stream.getTracks().forEach((t) => t.stop()); return; }
+    if (!r || r.cancelled) { releaseMicLater(); return; }
     const mime = recMime();
     const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
     mr.ondataavailable = (e) => { if (e.data && e.data.size) r.chunks.push(e.data); };
@@ -290,12 +302,12 @@ async function stopRec(send) {
   try { if (r.mr.state === 'recording') r.mr.requestData(); } catch (_) {}
   await new Promise((res) => { r.mr.onstop = res; try { r.mr.stop(); } catch (e) { res(); } });
   await new Promise((res) => setTimeout(res, 150)); // derniers morceaux parfois en retard
-  r.stream.getTracks().forEach((t) => t.stop());
+  releaseMicLater();
   if (!send) return;
   if (secs < 0.8) { toast('Garde le doigt appuyé pendant que tu parles, puis relâche.'); return; }
   const type = (r.mime || 'audio/webm').split(';')[0];
   const blob = new Blob(r.chunks, { type });
-  if (blob.size < 1000) { toast('Le micro n’a rien enregistré. Rien n’est parti : réessaie.', 6000); return; }
+  if (blob.size < 1000) { releaseMic(); toast('Le micro n’a rien enregistré. Rien n’est parti : réessaie.', 6000); return; }
   const ext = type.includes('mp4') ? 'm4a' : (type.includes('ogg') ? 'ogg' : 'webm');
   await sendVoice(r.ctx, blob, type, ext, Math.round(secs));
   if (S.dirty) softRender();
