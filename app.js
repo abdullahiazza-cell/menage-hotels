@@ -145,7 +145,7 @@ const ERR = {
   invite_invalid: 'Ce lien n’est plus valable. Demande un nouveau lien à ton responsable.', locked: 'Accès bloqué après 5 codes faux. Appelle ton responsable.',
   not_yours: 'Cette chambre n’est plus à toi.', not_started: 'Touche d’abord « Je commence ».', photos_missing: 'Il manque des photos.',
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
-  busy: 'Cette chambre est en cours de ménage.', pin_format: 'Le code doit faire 4 chiffres.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
+  busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
 };
 async function api(a, payload = {}) {
   let r;
@@ -699,7 +699,7 @@ function viewTeam() {
         ${devs.length ? `<div class="list">${devs.map((d) => `<div class="li"><span class="t">📱 ${esc(d.label || 'Appareil')}<br><span class="muted">installé ${when(d.created_at)} · vu ${when(d.last_seen)}</span></span>${d.id === S.device ? '<span class="chip c-accent">Ce téléphone</span>' : (canTouch ? `<button class="btn small bad" data-a="devRevoke" data-id="${d.id}">Déconnecter</button>` : '')}</div>`).join('')}</div>` : ''}
         ${canTouch && s.active !== false ? `<div class="row"><button class="btn small soft" data-a="inviteNew" data-id="${s.id}">📲 ${devs.length ? 'Nouveau lien (nouveau téléphone)' : (s.locked ? 'Débloquer : nouveau lien' : 'Lien d’installation')}</button>
           <button class="btn small" data-a="personEdit" data-id="${s.id}">Modifier</button>${owner ? '' : `<button class="btn small ghost" data-a="personActive" data-id="${s.id}" data-v="0">Désactiver</button>`}</div>` : ''}
-        ${s.active === false ? `<button class="btn small" data-a="personActive" data-id="${s.id}" data-v="1">Réactiver</button>` : ''}</div>`;
+        ${s.active === false ? `<div class="row"><button class="btn small" data-a="personActive" data-id="${s.id}" data-v="1">Réactiver</button><button class="btn small bad" data-a="personDelete" data-id="${s.id}">🗑️ Supprimer définitivement</button></div>` : ''}</div>`;
     }).join('')}
     <div class="card"><div class="row between"><h3>Temps réels sur 30 jours</h3><button class="btn small" data-a="stats">${S.stats ? 'Actualiser' : 'Calculer'}</button></div>
       ${S.stats ? statsTable(S.stats) : '<p class="muted">Temps moyen par chambre à blanc et par recouche, pour chaque personne.</p>'}</div>`;
@@ -1004,6 +1004,12 @@ const A = {
   async personActive(d) {
     if (d.v === '0' && S.confirmOff !== d.id) { S.confirmOff = d.id; toast('Touche encore « Désactiver » pour confirmer : son téléphone sera déconnecté.'); setTimeout(() => S.confirmOff = null, 5000); return; }
     await act(() => api('staff_active', { id: d.id, active: d.v === '1' }), d.v === '1' ? 'Réactivée' : 'Désactivée et déconnectée');
+  },
+  async personDelete(d) {
+    const s = staffById(d.id);
+    if (S.confirmDelP !== d.id) { S.confirmDelP = d.id; toast(`Touche encore « Supprimer » pour effacer ${first(s.label)} et ses conversations privées. C’est définitif.`, 6000); setTimeout(() => S.confirmDelP = null, 6000); return; }
+    S.confirmDelP = null;
+    await act(() => api('staff_delete', { id: d.id }), first(s.label) + ' est supprimée');
   },
   inviteNew(d) { inviteSheet(d.id); },
   async inviteGo(d) {

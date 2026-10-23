@@ -511,6 +511,18 @@ async function handle(req: Request) {
       if (!active) { const now = new Date().toISOString(); await sb.from("devices").update({ revoked_at: now }).eq("staff_id", body.id).is("revoked_at", null); await sb.from("invites").update({ used_at: now }).eq("staff_id", body.id).is("used_at", null); }
       return { ok: true };
     }
+    case "staff_delete": {
+      needMgr(me);
+      const { data: t } = await sb.from("staff").select("id,role,active").eq("id", body.id).single();
+      if (!t || t.role === "owner") throw new E("owner_protected", 403);
+      if (t.active) throw new E("still_active");
+      await sb.from("messages").delete().like("conv", `dm:%${t.id}%`);
+      await sb.from("messages").delete().eq("conv", `staff:${t.id}`);
+      await sb.from("messages").delete().eq("from_staff", t.id).like("conv", "archive:%");
+      await sb.from("conv_reads").delete().like("conv", `%${t.id}%`);
+      const { error } = await sb.from("staff").delete().eq("id", t.id); if (error) throw new E("db");
+      return { ok: true };
+    }
     case "invite_create": {
       needMgr(me);
       const pin = String(body.pin || ""); if (!/^\d{4}$/.test(pin)) throw new E("pin_format");
