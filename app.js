@@ -614,7 +614,11 @@ function threadSheet(thread) {
     <div class="composer">${holdBtn(ctx, 'Garde appuyé pour parler')}
       <div class="row"><input id="msgText" placeholder="Ou écris un message" style="flex:1"><button class="btn" data-a="sendText" data-ctx="${esc(ctx)}">Envoyer</button></div></div>`, 'chat');
   const el = $('thr'); if (el) el.scrollTop = el.scrollHeight;
-  if (!isAll && unreadIn(thread)) api('read_mark', { thread }).then(() => refresh(true)).catch(() => {});
+  if (!isAll && unreadIn(thread)) {
+    S.reads = S.reads.filter((x) => !(x.staff_id === S.me.id && x.thread === thread)).concat([{ staff_id: S.me.id, thread, read_at: new Date().toISOString() }]);
+    api('read_mark', { thread }).catch(() => {});
+    if (!S.sheetLock) { S.sheetLock = true; setTimeout(() => { S.sheetLock = false; render(); }, 0); }
+  }
 }
 
 /* ----- équipe ----- */
