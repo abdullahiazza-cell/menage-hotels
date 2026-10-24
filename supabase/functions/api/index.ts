@@ -246,6 +246,7 @@ async function actState(me: any, device: any) {
     out.notes = await issueNotes(out.issues); out.notes.forEach((n: any) => paths.push(n.photo));
     out.contacts = (await sb.from("contacts").select("*").order("nom")).data || [];
     out.reg = await regState();
+    out.sec = await secState(me, paths);
   } else {
     const brico = isBrico(me);
     const [{ data: staff }, { data: issues }, msgs] = await Promise.all([
@@ -263,6 +264,7 @@ async function actState(me: any, device: any) {
       out.issues.forEach((i: any) => { paths.push(i.photo, i.video, i.audio); (i.done_photos || []).forEach((p: any) => paths.push(p.id)); });
       out.notes = await issueNotes(out.issues); out.notes.forEach((n: any) => paths.push(n.photo));
       out.contacts = (me.perms || []).includes("contacts") ? ((await sb.from("contacts").select("*").in("categorie", PRESTA).order("nom")).data || []) : [];
+      out.sec = await secState(me, paths);
     }
     if (can(me, "reg_pec")) out.reg = await regState();
   }
@@ -441,6 +443,99 @@ async function repairAction(me: any, a: string, body: any) {
   throw new E("unknown_action");
 }
 
+// ---------- sécurité : vérifications, contrôles internes, documents ----------
+const SEC_GRP = ["presta", "interne", "doc", "commission"];
+const addMonths = (iso: string, n: number) => { const d = new Date(iso + "T12:00:00Z"); const day = d.getUTCDate(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + n); const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate(); d.setUTCDate(Math.min(day, last)); return d.toISOString().slice(0, 10); };
+const forBrico = (c: any) => c.grp === "interne" && c.who === "intendant";
+async function secState(me: any, paths: string[]) {
+  let cq = sb.from("sec_checks").select("*").order("ord");
+  if (!isMgr(me)) cq = cq.eq("grp", "interne").eq("who", "intendant");
+  const { data: checks } = await cq;
+  const ids = (checks || []).map((c: any) => c.id);
+  const { data: logs } = ids.length ? await sb.from("sec_logs").select("*").in("check_id", ids).order("done_on", { ascending: false }).limit(600) : { data: [] };
+  (logs || []).forEach((l: any) => { (l.photos || []).forEach((p: any) => paths.push(p.id)); if (isMgr(me)) (l.docs || []).forEach((d: any) => paths.push(d.path)); else l.docs = []; });
+  return { checks: (checks || []).filter((c: any) => hotelOk(me, c.hotel)), logs: logs || [] };
+}
+// Prochaine échéance d'une vérification : date fixée à la main, sinon dernière fois + périodicité.
+function secNext(c: any, last: string | null) { if (c.next_due) return c.next_due; if (!c.freq_months || !last) return null; return addMonths(last, c.freq_months); }
+async function secAction(me: any, a: string, body: any) {
+  if (!isMgr(me) && !isBrico(me)) throw new E("forbidden", 403);
+  const own = (p: any) => (typeof p === "string" && p.startsWith(me.id + "/")) ? p : null;
+  const { data: c } = await sb.from("sec_checks").select("*").eq("id", String(body.id || "")).maybeSingle();
+  if (a !== "sec_add" && !c) throw new E("bad");
+  if (c && !isMgr(me) && !forBrico(c)) throw new E("forbidden", 403);
+  if (c && !hotelOk(me, c.hotel)) throw new E("forbidden", 403);
+  const now = new Date().toISOString();
+  if (a === "sec_log") {
+    const done_on = D_(body.done_on) || parisDay();
+    const photos = (Array.isArray(body.photos) ? body.photos : []).map(own).filter(Boolean).slice(0, 8).map((id: string) => ({ id, by: me.id, at: now }));
+    const docs = isMgr(me) ? (Array.isArray(body.docs) ? body.docs : []).filter((d: any) => own(d?.path)).slice(0, 6).map((d: any) => ({ path: d.path, name: S_(d.name, 120) || "Rapport.pdf" })) : [];
+    const result = body.result === "obs" ? "obs" : "ok";
+    const obs_state = result === "obs" ? (body.obs_state === "levees" ? "levees" : "a_lever") : null;
+    const row = { check_id: c.id, done_on, by_staff: me.id, by_label: S_(body.by_label, 80) || String(me.label).split(" ")[0], result, obs_state, note: S_(body.note, 2000), photos, docs };
+    const { error } = await sb.from("sec_logs").insert(row); if (error) throw new E("db");
+    const p: any = { updated_at: now };
+    // la date fixée à la main (ex. commission prévue) est consommée quand on note le passage
+    if (c.next_due) { p.next_due = null; p.next_note = null; }
+    if (c.grp === "presta" || c.grp === "commission") p.obs = obs_state;
+    if (c.grp === "doc") p.doc_state = "ok";
+    await sb.from("sec_checks").update(p).eq("id", c.id);
+    if (isBrico(me) && result === "obs") await pushTo((await managerIds(c.hotel)).filter((x) => x !== me.id), { title: "⚠️ Contrôle sécurité : problème", body: `${c.label} · ${HOTEL_NAMES[c.hotel]}${row.note ? " · " + row.note : ""}`.slice(0, 160), tag: "sec" });
+    return { ok: true };
+  }
+  needMgr(me);
+  if (a === "sec_obs") {
+    const obs = ["a_lever", "levees"].includes(body.obs) ? body.obs : null;
+    await sb.from("sec_checks").update({ obs, updated_at: now }).eq("id", c.id);
+    const { data: last } = await sb.from("sec_logs").select("id,note").eq("check_id", c.id).order("done_on", { ascending: false }).limit(1).maybeSingle();
+    if (last) await sb.from("sec_logs").update({ obs_state: obs, ...(obs === "levees" ? { note: [last.note, `Observations levées le ${parisDay().split("-").reverse().join("/")}.`].filter(Boolean).join(" ") } : {}) }).eq("id", last.id);
+    return { ok: true };
+  }
+  if (a === "sec_save" || a === "sec_add") {
+    const row: any = { updated_at: now };
+    if ("label" in body) { row.label = S_(body.label, 160); if (!row.label) throw new E("bad"); }
+    if ("freq_months" in body) row.freq_months = body.freq_months ? Math.max(1, Math.min(120, parseInt(body.freq_months) || 12)) : null;
+    if ("next_due" in body) row.next_due = D_(body.next_due);
+    if ("next_note" in body) row.next_note = S_(body.next_note, 200);
+    if ("note" in body) row.note = S_(body.note, 2000);
+    if ("provider" in body) row.provider = S_(body.provider, 80);
+    if ("contact_id" in body) row.contact_id = UUID.test(String(body.contact_id || "")) ? body.contact_id : null;
+    if ("status" in body) row.status = body.status === "na" ? "na" : "actif";
+    if ("doc_state" in body) row.doc_state = ["ok", "manquant"].includes(body.doc_state) ? body.doc_state : null;
+    if ("who" in body) row.who = body.who === "intendant" ? "intendant" : "gerant";
+    if (a === "sec_save") { await sb.from("sec_checks").update(row).eq("id", c.id); return { ok: true }; }
+    const hotel = HOTELS.includes(body.hotel) ? body.hotel : null; const grp = SEC_GRP.includes(body.grp) ? body.grp : null;
+    if (!hotel || !grp || !row.label) throw new E("bad");
+    const id = `${hotel}-x${Date.now().toString(36)}`;
+    await sb.from("sec_checks").insert({ ...row, id, hotel, grp, who: row.who || (grp === "interne" ? "intendant" : "gerant"), ord: 500 });
+    return { ok: true, id };
+  }
+  if (a === "sec_log_delete") { await sb.from("sec_logs").delete().eq("id", body.log).eq("check_id", c.id); return { ok: true }; }
+  if (a === "sec_delete") { if (!c.id.includes("-x")) throw new E("bad"); await sb.from("sec_checks").delete().eq("id", c.id); return { ok: true }; }
+  throw new E("unknown_action");
+}
+// Rappels du matin : prestataires 30 et 7 jours avant, puis le jour même ; en retard, le lundi.
+async function secReminders() {
+  const { data: checks } = await sb.from("sec_checks").select("*").eq("status", "actif").not("freq_months", "is", null);
+  const { data: logs } = await sb.from("sec_logs").select("check_id,done_on").order("done_on", { ascending: false }).limit(2000);
+  const last: Record<string, string> = {}; (logs || []).forEach((l: any) => { if (!last[l.check_id]) last[l.check_id] = l.done_on; });
+  const today = parisDay(), monday = new Date(today + "T12:00:00Z").getUTCDay() === 1;
+  const days = (iso: string) => Math.round((new Date(iso + "T12:00:00Z").getTime() - new Date(today + "T12:00:00Z").getTime()) / 864e5);
+  const mgr: Record<string, string[]> = {}, brico: string[] = [];
+  for (const c of checks || []) {
+    const nx = secNext(c, last[c.id] || null); if (!nx) continue; const n = days(nx);
+    const fire = c.grp === "interne" ? (n === 0 || (n < 0 && monday)) : (n === 30 || n === 7 || n === 0 || (n < 0 && monday));
+    if (!fire || c.reminded_on === today) continue;
+    const txt = `${c.label} · ${HOTEL_NAMES[c.hotel]}${n > 0 ? ` · dans ${n} j` : n === 0 ? " · aujourd’hui" : " · en retard"}`;
+    if (c.who === "intendant") brico.push(txt); else (mgr[c.hotel] ||= []).push(txt);
+    await sb.from("sec_checks").update({ reminded_on: today }).eq("id", c.id);
+  }
+  let sent = 0;
+  for (const [h, list] of Object.entries(mgr)) { await pushTo(await managerIds(h), { title: `🛡️ Sécurité · ${list.length} à prévoir`, body: list.slice(0, 3).join("\n"), tag: "sec" }); sent++; }
+  if (brico.length) { await pushTo(await bricoIds(), { title: `🛡️ ${brico.length} contrôle${brico.length > 1 ? "s" : ""} à faire`, body: brico.slice(0, 3).join("\n"), tag: "sec" }); sent++; }
+  return sent;
+}
+
 async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Record<string, any>) {
   needMgr(me);
   const clean: any = {};
@@ -477,11 +572,12 @@ async function handle(req: Request) {
       const per: Record<string, { n: number; min: number }> = {};
       (rooms || []).forEach((r: any) => { const p = per[r.assignee] ||= { n: 0, min: 0 }; p.n++; p.min += estimate(r, cfg); });
       const { data: staff } = await sb.from("staff").select("id,label").in("id", Object.keys(per));
+      const secSent = await secReminders().catch(() => 0);
       for (const st of staff || []) {
         const p = per[st.id];
         await pushTo([st.id], { title: `☀️ Bonjour ${String(st.label).split(" ")[0]}`, body: `${p.n} chambre${p.n > 1 ? "s" : ""} aujourd’hui, environ ${fmtMin(p.min)}.`, tag: "morning" });
       }
-      return { sent: Object.keys(per).length };
+      return { sent: Object.keys(per).length, sec: secSent };
     }
     if (body.kind === "purge") {
       const cfg = await getConfig(); const days = Number(cfg.retentionDays) || 30;
@@ -730,6 +826,7 @@ async function handle(req: Request) {
     }
     case "issue_status": return await repairAction(me, "repair_etat", { id: body.id, etat: body.status === "regle" ? "fait" : "a_faire" });
     case "repair_save": case "repair_etat": case "repair_photo": case "repair_note": case "repair_delete": return await repairAction(me, a, body);
+    case "sec_log": case "sec_obs": case "sec_save": case "sec_add": case "sec_log_delete": case "sec_delete": return await secAction(me, a, body);
     case "contact_save": {
       needMgr(me);
       const nom = S_(body.nom, 120); if (!nom) throw new E("bad");

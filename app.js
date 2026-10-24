@@ -39,7 +39,7 @@ const LS = {
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
   me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
-  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [],
+  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [] }, sl: null,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
 };
@@ -195,7 +195,7 @@ async function refresh(force) {
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
-      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || [];
+      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [] }; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || [];
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
@@ -484,7 +484,7 @@ const ico = (k, cls) => `<svg class="ico ${cls || ''}" viewBox="0 0 24 24" fill=
 /* ----- gérant : accueil à tuiles + écrans par thème ----- */
 const SECTIONS = {
   menage: { t: 'Ménage', i: 'menage', c: 't-blue' }, issues: { t: 'Réparations', i: 'tool', c: 't-orange' },
-  registre: { t: 'Registre', i: 'book', c: 't-purple' }, securite: { t: 'Sécurité', i: 'shield', c: 't-red', soon: 'Étape 4' },
+  registre: { t: 'Registre', i: 'book', c: 't-purple' }, securite: { t: 'Sécurité', i: 'shield', c: 't-red' },
   msgs: { t: 'Messages', i: 'chat', c: 't-green' }, projets: { t: 'Projets', i: 'check', c: 't-teal', soon: 'Étape 5' },
   team: { t: 'Équipe', i: 'users', c: 't-indigo' }, contacts: { t: 'Contacts', i: 'phone', c: 't-brown' }, settings: { t: 'Réglages', i: 'sliders', c: 't-gray' },
 };
@@ -496,6 +496,7 @@ function viewManager() {
   if (S.tab === 'menage') { body = viewMenage(); }
   else if (S.tab === 'registre') { body = viewRegistre(); right = `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>`; }
   else if (S.tab === 'issues') { body = viewIssues(); right = `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>`; }
+  else if (S.tab === 'securite') { body = viewSecurite(); }
   else if (S.tab === 'contacts') { body = viewContacts(); right = `<button class="nb-act" data-a="ctNew" aria-label="Nouveau contact">${ico('plus')}</button>`; }
   else if (S.tab === 'msgs') { body = viewThreads(); right = `<button class="nb-act" data-a="newMsg" aria-label="Nouveau message">${ico('plus')}</button>`; }
   else if (S.tab === 'team') { body = viewTeam(); right = `<button class="nb-act" data-a="personNew" aria-label="Ajouter une personne">${ico('plus')}</button>`; }
@@ -523,6 +524,11 @@ function tile(k, sub, badge) {
     <span class="ti-ic ${T.c}">${ico(T.i)}</span>${badge ? `<span class="badge">${badge}</span>` : ''}
     <span class="ti-t">${T.t}</span><span class="ti-s">${T.soon ? 'Bientôt · ' + T.soon : sub}</span></button>`;
 }
+function secTile() {
+  const L = scoped(secChecks()).filter((c) => c.status !== 'na'), late = secLate(L).length, unk = L.filter((c) => secSt(c).k === 'unk').length;
+  const comm = L.filter((c) => c.grp === 'commission' && c.next_due && daysTo(c.next_due) >= 0 && daysTo(c.next_due) <= 30).sort((a, b) => a.next_due.localeCompare(b.next_due))[0];
+  return tile('securite', comm ? `Commission ${daysTo(comm.next_due) === 0 ? 'aujourd’hui' : 'le ' + fdate(comm.next_due).slice(0, 5)}` : (late ? `${late} en retard` : (unk ? `${unk} à renseigner` : 'Tout est à jour')), late);
+}
 function viewHome() {
   const c = homeCounts(), un = unreadTotal(), locked = S.staff.filter((s) => s.locked).length;
   const initials = String(S.me.label || '?').split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
@@ -538,7 +544,7 @@ function viewHome() {
     <div class="tiles">
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
       ${tile('issues', c.open ? `${c.open} à faire ou en cours` : 'Rien à réparer', c.newIss)}
-      ${tile('registre', `${presentOcc().filter(inScope).length} présents`, regBadge())}${tile('securite')}
+      ${tile('registre', `${presentOcc().filter(inScope).length} présents`, regBadge())}${secTile()}
       ${tile('msgs', un ? `${un} non lu${un > 1 ? 's' : ''}` : 'Tout est lu', un)}
       ${tile('projets')}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
@@ -931,12 +937,12 @@ function repSheet(id) {
       <div class="row"><input id="rn-text" placeholder="Écrire un message…" style="flex:1"><button class="btn small pri" data-a="repNote" data-id="${id}">Envoyer</button></div></div>
     <div class="row"><button class="btn ghost" data-a="repEdit" data-id="${id}">✏️ Modifier</button>${isMgr() ? `<button class="btn ghost bad-t" data-a="repDel" data-id="${id}">Supprimer</button>` : ''}</div>`);
 }
-function repForm(id) {
-  const i = id ? S.issues.find((x) => x.id === id) : { hotel: S.scope !== 'all' ? S.scope : S.hotel, origin: 'entretien', priority: 'normal' };
+function repForm(id, preset) {
+  const i = id ? S.issues.find((x) => x.id === id) : { hotel: S.scope !== 'all' ? S.scope : S.hotel, origin: 'entretien', priority: 'normal', ...(preset || {}) };
   const places = [...roomsOf(i.hotel), ...communsOf(i.hotel)].map((r) => r.num);
   openSheet('repf', `${sheetHead(id ? 'Modifier la réparation' : 'Nouvelle réparation')}
     <div class="card form">
-      <label>Quoi ?<input id="rf-title" value="${esc(id ? repTitle(i) : '')}" placeholder="Ex. : remplacer la prise de la chambre 14"></label>
+      <label>Quoi ?<input id="rf-title" value="${esc(id ? repTitle(i) : (i.title || ''))}" placeholder="Ex. : remplacer la prise de la chambre 14"></label>
       <div class="two"><label>Hôtel<select id="rf-hotel">${HOTELS.map((h) => opt(h.id, i.hotel, h.name)).join('')}</select></label><label>Où ?<input id="rf-room" list="rf-places" value="${esc(i.room || '')}" placeholder="Chambre, couloir…"></label></div>
       <datalist id="rf-places">${places.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
       <div class="two"><label>Priorité<select id="rf-prio">${Object.entries(PRIO).map(([k, l]) => opt(k, i.priority, l)).join('')}</select></label><label>Avant le<input id="rf-due" type="date" value="${esc(i.due || '')}"></label></div>
@@ -982,15 +988,148 @@ function ctForm(id) {
       <button class="btn pri" data-a="ctSave" data-id="${id || ''}">Enregistrer</button></div>`);
 }
 
+/* ----- sécurité : vérifications, contrôles internes, documents, commission ----- */
+const SG = { presta: 'Vérifications par les prestataires', interne: 'Contrôles internes', doc: 'Documents à avoir', commission: 'Commission de sécurité' };
+const SG_HELP = { presta: 'Faites par une entreprise, avec un rapport à garder.', interne: 'Faits par l’équipe. À noter aussi au registre de sécurité.', doc: 'À présenter le jour de la commission.', commission: '' };
+const FREQ = [[1, 'Tous les mois'], [3, 'Tous les 3 mois'], [6, 'Tous les 6 mois'], [12, 'Tous les ans'], [24, 'Tous les 2 ans'], [36, 'Tous les 3 ans'], [60, 'Tous les 5 ans']];
+const freqLabel = (m) => (FREQ.find((f) => f[0] === m) || [0, m ? `Tous les ${m} mois` : 'Pas de périodicité'])[1];
+const secChecks = () => (S.sec && S.sec.checks) || [];
+const secLogs = (id) => ((S.sec && S.sec.logs) || []).filter((l) => l.check_id === id).sort((a, b) => String(b.done_on).localeCompare(String(a.done_on)) || String(b.created_at || '').localeCompare(String(a.created_at || '')));
+const secLast = (c) => secLogs(c.id)[0] || null;
+const addMonthsISO = (iso, n) => { const d = new Date(iso + 'T12:00:00'), day = d.getDate(); d.setDate(1); d.setMonth(d.getMonth() + n); const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate(); d.setDate(Math.min(day, last)); return dayStr(d.getTime()); };
+const daysTo = (iso) => Math.round((new Date(iso + 'T12:00:00') - new Date(todayISO() + 'T12:00:00')) / 864e5);
+const longDate = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+function secNext(c) { if (c.next_due) return c.next_due; const l = secLast(c); return c.freq_months && l ? addMonthsISO(l.done_on, c.freq_months) : null; }
+// Couleur d'une ligne : rouge en retard ou manquant, orange bientôt, vert à jour, gris à renseigner.
+function secSt(c) {
+  if (c.status === 'na') return { k: 'na', c: 'plain', t: 'Non concerné', o: 5 };
+  if (c.grp === 'doc') return c.doc_state === 'ok' ? { k: 'ok', c: 'green', t: 'Présent', o: 4 } : (c.doc_state === 'manquant' ? { k: 'late', c: 'red', t: 'Manquant', o: 0 } : { k: 'unk', c: 'slate', t: 'À vérifier', o: 2 });
+  const nx = secNext(c);
+  if (!nx) return { k: 'unk', c: 'slate', t: 'À renseigner', o: 2 };
+  const n = daysTo(nx), soon = c.freq_months && c.freq_months <= 1 ? 3 : 30;
+  if (c.next_due && n >= 0) return { k: n <= soon ? 'soon' : 'ok', c: n <= soon ? 'amber' : 'green', t: n === 0 ? 'Aujourd’hui' : 'Prévue le ' + fdate(nx).slice(0, 5), o: n <= soon ? 1 : 3, n, nx };
+  if (n < 0) return { k: 'late', c: 'red', t: 'En retard', o: 0, n, nx };
+  if (n <= soon) return { k: 'soon', c: 'amber', t: n === 0 ? 'Aujourd’hui' : (n === 1 ? 'Demain' : `Dans ${n} j`), o: 1, n, nx };
+  return { k: 'ok', c: 'green', t: 'À jour', o: 3, n, nx };
+}
+const secOrder = (a, b) => secSt(a).o - secSt(b).o || a.ord - b.ord;
+const secLate = (list) => list.filter((c) => secSt(c).k === 'late');
+const secDueBrico = () => secChecks().filter((c) => c.grp === 'interne' && c.who === 'intendant' && c.status !== 'na' && ['late', 'soon', 'unk'].includes(secSt(c).k) && (secSt(c).k !== 'soon' || secSt(c).n <= 0));
+function secRow(c) {
+  const st = secSt(c), l = secLast(c);
+  const sub = c.grp === 'doc' ? (l ? 'Mis à jour le ' + fdate(l.done_on) : (c.doc_state === 'manquant' ? 'À obtenir' : ''))
+    : [l ? `Dernière fois le ${fdate(l.done_on)}${l.by_label ? ' · ' + l.by_label : ''}` : 'Jamais noté ici', st.nx && !c.next_due ? `prochaine avant le ${fdate(st.nx)}` : ''].filter(Boolean).join(' · ');
+  return `<button class="prow" data-a="secOpen" data-id="${esc(c.id)}"><span class="pr-t"><b>${esc(c.label)}</b>${sub ? `<span class="muted sm">${esc(sub)}</span>` : ''}${c.obs === 'a_lever' && c.status !== 'na' ? '<span class="sm warn-t">⚠️ Observations à lever</span>' : ''}${(secLast(c) || {}).docs && secLast(c).docs.length ? '<span class="muted sm">📄 Rapport joint</span>' : ''}</span><span class="pill p-${st.c}">${st.t}</span></button>`;
+}
+function secCommCard(c) {
+  if (!c || !c.next_due) return '';
+  const n = daysTo(c.next_due); if (n < -2 || n > 90) return '';
+  const pend = secChecks().filter((x) => x.hotel === c.hotel && x.status !== 'na' && x.grp !== 'commission' && x.grp !== 'interne' && ['late', 'unk'].includes(secSt(x).k)).length;
+  const obs = secChecks().filter((x) => x.hotel === c.hotel && x.obs === 'a_lever' && x.status !== 'na').length;
+  return `<div class="card comm"><p class="cap">Commission de sécurité · ${n > 1 ? 'dans ' + n + ' jours' : (n === 1 ? 'demain' : (n === 0 ? 'aujourd’hui' : 'passée'))}</p><h3>${esc(longDate(c.next_due))}</h3>${c.next_note ? `<p class="muted">${esc(c.next_note)}</p>` : ''}
+    <p class="sm">${pend ? `<b class="bad-t">${pend} point${pend > 1 ? 's' : ''} à compléter</b>` : '<b class="ok-t">Tout est prêt</b>'}${obs ? ` · ${obs} observation${obs > 1 ? 's' : ''} à lever` : ''}</p>
+    <div class="row"><button class="btn small pri" data-a="secDossier" data-k="${c.hotel}">📋 Préparer le dossier</button><button class="btn small" data-a="secOpen" data-id="${esc(c.id)}">Noter la visite</button></div></div>`;
+}
+function viewSecurite() {
+  const all = secChecks().filter((c) => hotelOk0(c.hotel)), list = all.filter((c) => c.hotel === S.hotel && c.status !== 'na'), na = all.filter((c) => c.hotel === S.hotel && c.status === 'na');
+  const n = (k) => list.filter((c) => secSt(c).k === k).length, obs = list.filter((c) => c.obs === 'a_lever').length;
+  const seg = `<div class="segc" role="group" aria-label="Hôtel">${HOTELS.map((h) => { const l = secLate(all.filter((c) => c.hotel === h.id && c.status !== 'na')).length; return `<button data-a="hotel" data-k="${h.id}" aria-pressed="${S.hotel === h.id}">${esc(h.id === 'par' ? 'Paris' : h.name)}${l ? ` <span class="badge sm">${l}</span>` : ''}</button>`; }).join('')}</div>`;
+  const comm = list.find((c) => c.grp === 'commission');
+  return `${seg}${secCommCard(comm)}
+    <div class="chips">${n('late') ? `<span class="chip c-red">En retard <b>${n('late')}</b></span>` : ''}${n('soon') ? `<span class="chip c-amber">Bientôt <b>${n('soon')}</b></span>` : ''}${n('unk') ? `<span class="chip c-slate">À renseigner <b>${n('unk')}</b></span>` : ''}${obs ? `<span class="chip c-amber">Observations <b>${obs}</b></span>` : ''}${!n('late') && !n('soon') && !n('unk') ? '<span class="chip c-green">Tout est à jour</span>' : ''}</div>
+    ${['presta', 'interne', 'doc', 'commission'].map((g) => { const L = list.filter((c) => c.grp === g).sort(secOrder); return L.length ? `<h2 class="sec">${SG[g]}</h2>${SG_HELP[g] ? `<p class="muted sm">${SG_HELP[g]}</p>` : ''}<div class="group">${L.map(secRow).join('')}</div>` : ''; }).join('')}
+    ${na.length ? `<h2 class="sec">Non concerné</h2><div class="group">${na.map(secRow).join('')}</div>` : ''}
+    <button class="btn ghost" data-a="secAdd">＋ Ajouter un contrôle ou un document</button>`;
+}
+const hotelOk0 = (h) => !S.me.only_hotel || S.me.only_hotel === h;
+// Intendant : ses contrôles internes, tous hôtels.
+function viewSecBrico() {
+  const all = secChecks().filter((c) => c.status !== 'na' && c.grp === 'interne' && c.who === 'intendant'), list = scoped(all).sort(secOrder), due = secDueBrico();
+  return `${scopeSeg(due)}<p class="muted">${due.length ? `${due.length} contrôle${due.length > 1 ? 's' : ''} à faire. Touche une ligne, fais le contrôle, puis « C’est fait ».` : 'Tout est fait pour l’instant. 👍'}</p>
+    ${HOTELS.filter((h) => list.some((c) => c.hotel === h.id)).map((h) => `<h2 class="sec">${esc(h.name)}</h2><div class="group">${list.filter((c) => c.hotel === h.id).map(secRow).join('')}</div>`).join('')}`;
+}
+const docA = (d) => { const u = mediaUrl(d.path); return u ? `<a class="doc" href="${esc(u)}" target="_blank" rel="noopener">📄 ${esc(d.name || 'Rapport')}</a>` : `<span class="doc muted">📄 ${esc(d.name || 'Rapport')} (indisponible)</span>`; };
+function secLogHtml(l, c) {
+  const res = l.result === 'obs' ? (l.obs_state === 'levees' ? '<span class="pill p-green">Observations levées</span>' : '<span class="pill p-amber">Observations</span>') : (c.grp === 'interne' ? '<span class="pill p-green">Fait</span>' : (c.grp === 'doc' ? '' : `<span class="pill p-green">${c.grp === 'commission' ? 'Avis favorable' : 'Conforme'}</span>`));
+  return `<div class="logi"><div class="row between"><b>${fdate(l.done_on)}${l.by_label ? ' · ' + esc(l.by_label) : ''}</b>${res}</div>${l.note ? `<p class="pre sm">${esc(l.note)}</p>` : ''}
+    ${(l.docs || []).length ? `<div class="docs">${l.docs.map(docA).join('')}</div>` : ''}${(l.photos || []).length ? `<div class="thumbs">${l.photos.map((p) => `<button data-a="zoom" data-id="${esc(p.id)}" data-l="${esc(c.label)}"><img loading="lazy" alt="" src="${esc(mediaUrl(p.id) || '')}"></button>`).join('')}</div>` : ''}
+    ${isMgr() ? `<button class="btn small ghost bad-t" data-a="secLogDel" data-id="${esc(c.id)}" data-l="${esc(l.id)}">Effacer cette ligne</button>` : ''}</div>`;
+}
+function secSheet(id) {
+  const c = secChecks().find((x) => x.id === id); if (!c) { closeSheet(); return; }
+  const st = secSt(c), logs = secLogs(id), mgr = isMgr(), ct = c.contact_id && S.contacts.find((x) => x.id === c.contact_id);
+  const nextTxt = c.grp === 'doc' ? '' : (st.nx ? (c.next_due ? `Prévue le ${longDate(st.nx)}` : `Prochaine avant le ${fdate(st.nx)}`) + (st.n != null ? (st.n < 0 ? ` · en retard de ${-st.n} j` : (st.n === 0 ? ' · aujourd’hui' : ` · dans ${st.n} j`)) : '') : (c.freq_months ? 'Date de la dernière fois à renseigner' : ''));
+  let acts = '';
+  if (c.grp === 'interne') acts = `<button class="btn ok" data-a="secDone" data-id="${esc(id)}">✓ C’est fait aujourd’hui</button><div class="row"><button class="btn soft" data-a="secDone" data-id="${esc(id)}" data-k="photo">📷 Fait, avec une photo</button><button class="btn soft bad-t" data-a="secLogNew" data-id="${esc(id)}" data-k="obs">⚠️ Un problème</button></div>${mgr ? `<button class="btn ghost" data-a="secLogNew" data-id="${esc(id)}">Noter à une autre date</button>` : ''}`;
+  else if (c.grp === 'doc') acts = `<div class="segc" role="group" aria-label="État">${[['ok', 'Présent'], ['manquant', 'Manquant'], ['', 'À vérifier']].map(([k, l]) => `<button data-a="secDocState" data-id="${esc(id)}" data-k="${k}" aria-pressed="${(c.doc_state || '') === k}">${l}</button>`).join('')}</div><button class="btn soft" data-a="secLogNew" data-id="${esc(id)}">📎 Joindre le document</button>`;
+  else acts = `<button class="btn pri" data-a="secLogNew" data-id="${esc(id)}">＋ ${c.grp === 'commission' ? 'Noter la visite de la commission' : 'Noter une vérification'}</button>`;
+  openSheet('sec:' + id, `${sheetHead(esc(c.label))}<p class="muted">${esc(hotelName(c.hotel))} · <span class="pill p-${st.c}">${st.t}</span></p>
+    ${nextTxt ? `<div class="banner c-${st.c === 'plain' ? 'slate' : st.c}">${esc(nextTxt)}${c.next_note ? `<br><span class="sm">${esc(c.next_note)}</span>` : ''}</div>` : ''}
+    ${c.obs === 'a_lever' && mgr ? `<div class="card"><h3>⚠️ Observations à lever</h3><p class="muted sm">Le dernier rapport contient des observations. Fais-les faire, puis note-les levées (sur le rapport et au registre).</p>
+      <div class="row"><button class="btn small ok" data-a="secObs" data-id="${esc(id)}" data-k="levees">✓ Observations levées</button><button class="btn small soft" data-a="secRep" data-id="${esc(id)}">🔧 Créer une réparation</button></div></div>` : ''}
+    ${c.status === 'na' ? '' : acts}
+    ${c.note ? `<div class="card"><h3>À savoir</h3><p class="pre">${esc(c.note)}</p></div>` : ''}
+    <div class="group">${[c.freq_months ? ['Fréquence', freqLabel(c.freq_months)] : null, c.provider || ct ? ['Fait par', c.provider || ct.nom] : null, c.grp === 'interne' ? ['Qui', c.who === 'intendant' ? 'L’intendant (ou un gérant)' : 'Un gérant'] : null, c.ref ? ['Règle', c.ref] : null].filter(Boolean).map(([l, v]) => `<div class="prow ro"><span class="pr-t"><span class="muted sm">${l}</span><span>${esc(v)}</span></span></div>`).join('')}
+      ${ct && canPresta() ? `<button class="prow" data-a="ctOpen" data-id="${ct.id}"><span class="pr-t"><span class="muted sm">Contact</span><span>${esc(ct.nom)}${ct.telephone ? ' · ' + esc(ct.telephone) : ''}</span></span><span class="chev">›</span></button>` : ''}</div>
+    <h2 class="sec">Historique</h2>${logs.length ? `<div class="card">${logs.map((l) => secLogHtml(l, c)).join('')}</div>` : '<p class="muted">Rien de noté pour l’instant.</p>'}
+    ${mgr ? `<div class="row"><button class="btn ghost" data-a="secEdit" data-id="${esc(id)}">✏️ Modifier</button><button class="btn ghost" data-a="secNa" data-id="${esc(id)}">${c.status === 'na' ? 'Concerné' : 'Non concerné'}</button>${id.includes('-x') ? `<button class="btn ghost bad-t" data-a="secDel" data-id="${esc(id)}">Supprimer</button>` : ''}</div>` : ''}`);
+}
+// Redessine un formulaire sans perdre ce qui a été tapé.
+function keepForm(draw) { const vals = {}; document.querySelectorAll('#sheet input[id], #sheet select[id], #sheet textarea[id]').forEach((e) => vals[e.id] = e.value); draw(); Object.entries(vals).forEach(([k, v]) => { const e = $(k); if (e) e.value = v; }); }
+function secLogForm(id, kind) {
+  const c = secChecks().find((x) => x.id === id); if (!c) return;
+  const comm = c.grp === 'commission', doc = c.grp === 'doc', inte = c.grp === 'interne';
+  S.sl = S.sl && S.sl.id === id ? S.sl : { id, docs: [], photos: [] };
+  const res = inte ? [['ok', 'Fait, tout va bien'], ['obs', 'Un problème à régler']] : (comm ? [['ok', 'Avis favorable'], ['obs', 'Prescriptions à lever'], ['obs_l', 'Prescriptions déjà levées']] : [['ok', 'Conforme, sans observation'], ['obs', 'Observations à lever'], ['obs_l', 'Observations déjà levées']]);
+  openSheet('secf', `${sheetHead(doc ? 'Joindre le document' : (inte ? 'Noter le contrôle' : (comm ? 'Visite de la commission' : 'Noter une vérification')))}<p class="muted">${esc(c.label)} · ${esc(hotelName(c.hotel))}</p>
+    <div class="card form">
+      <div class="two"><label>Date<input id="sl-date" type="date" value="${todayISO()}" max="${todayISO()}"></label>${inte ? '' : `<label>${comm ? 'Présents' : 'Fait par'}<input id="sl-by" value="${esc(comm ? '' : (c.provider || ''))}" placeholder="${comm ? 'Mairie, SDIS…' : 'Entreprise'}"></label>`}</div>
+      ${doc ? '' : `<label>Résultat<select id="sl-res">${res.map(([k, l]) => opt(k, kind === 'obs' ? 'obs' : 'ok', l)).join('')}</select></label>`}
+      <label>${inte ? 'Ce qui a été vu' : 'Notes'}<textarea id="sl-note" rows="3" placeholder="${inte ? (kind === 'obs' ? 'Ex. : bloc du couloir 2e ne s’allume pas' : 'Facultatif') : 'N° de rapport, observations…'}"></textarea></label>
+      ${isMgr() ? `<button class="btn soft" data-a="slDoc">📎 ${S.sl.docs.length ? S.sl.docs.length + ' PDF joint' + (S.sl.docs.length > 1 ? 's' : '') + ' · en ajouter' : (doc ? 'Choisir le fichier (PDF ou photo)' : 'Joindre le rapport (PDF)')}</button>` : ''}
+      <button class="btn soft" data-a="slPhoto">📷 ${S.sl.photos.length ? S.sl.photos.length + ' photo' + (S.sl.photos.length > 1 ? 's' : '') + ' · en ajouter' : 'Ajouter une photo'}</button>
+      <button class="btn pri" data-a="slSave" data-id="${esc(id)}">Enregistrer</button></div>
+    <button class="btn ghost" data-a="secOpen" data-id="${esc(id)}">← Retour</button>`);
+}
+function secEditForm(id) {
+  const c = id ? secChecks().find((x) => x.id === id) : { hotel: S.hotel, grp: 'presta', freq_months: 12, who: 'gerant' };
+  const prest = S.contacts.filter((x) => PRESTA.includes(x.categorie));
+  openSheet('sece', `${sheetHead(id ? 'Modifier' : 'Ajouter')}<p class="muted">${esc(hotelName(c.hotel))}</p>
+    <div class="card form">
+      ${id ? '' : `<label>Type<select id="se-grp">${Object.entries(SG).filter(([k]) => k !== 'commission').map(([k, l]) => opt(k, c.grp, l)).join('')}</select></label>`}
+      <label>Nom<input id="se-label" value="${esc(c.label || '')}" placeholder="Ex. : VMC – entretien"></label>
+      ${c.grp === 'doc' && id ? '' : `<div class="two"><label>Fréquence<select id="se-freq">${opt('', c.freq_months || '', 'Pas de périodicité')}${FREQ.map(([m, l]) => opt(m, c.freq_months, l)).join('')}</select></label><label>Date prévue<input id="se-next" type="date" value="${esc(c.next_due || '')}"></label></div>
+      <label>Précision sur la date prévue<input id="se-nnote" value="${esc(c.next_note || '')}" placeholder="Ex. : 14h00, présence de la mairie"></label>`}
+      ${c.grp === 'presta' || !id ? `<div class="two"><label>Fait par<input id="se-prov" value="${esc(c.provider || '')}"></label><label>Contact<select id="se-ct">${opt('', c.contact_id || '', '—')}${prest.map((x) => opt(x.id, c.contact_id, x.nom)).join('')}</select></label></div>` : ''}
+      ${c.grp === 'interne' ? `<label>Qui le fait<select id="se-who">${opt('intendant', c.who, 'L’intendant')}${opt('gerant', c.who, 'Un gérant')}</select></label>` : ''}
+      <label>À savoir<textarea id="se-note" rows="4">${esc(c.note || '')}</textarea></label>
+      <button class="btn pri" data-a="secSave" data-id="${esc(id || '')}">Enregistrer</button></div>
+    ${id ? `<button class="btn ghost" data-a="secOpen" data-id="${esc(id)}">← Retour</button>` : ''}`);
+}
+// Dossier pour la commission : tout ce qu'elle a demandé, coché ou non, avec les rapports.
+function secDossier(h) {
+  const L = secChecks().filter((c) => c.hotel === h && c.status !== 'na');
+  const line = (c) => { const st = secSt(c), l = secLast(c), okk = st.k === 'ok' || st.k === 'soon' || (c.grp === 'interne' && l);
+    return `<button class="prow" data-a="secOpen" data-id="${esc(c.id)}"><span class="pr-t"><b>${okk ? '✅' : '⬜️'} ${esc(c.label)}</b><span class="muted sm">${esc(c.grp === 'doc' ? st.t : (l ? 'Le ' + fdate(l.done_on) + (l.by_label ? ' · ' + l.by_label : '') : 'Pas de date'))}${l && (l.docs || []).length ? ' · 📄 rapport joint' : (c.grp === 'presta' && l ? ' · rapport à joindre' : '')}${c.obs === 'a_lever' ? ' · ⚠️ observations à lever' : ''}</span></span></button>`; };
+  const reps = S.issues.filter((i) => i.hotel === h && repEtat(i) !== 'fait' && (i.origin === 'dekra' || i.origin === 'commission'));
+  const comm = L.find((c) => c.grp === 'commission');
+  openSheet('secd', `${sheetHead('Dossier commission · ' + esc(hotelName(h)))}${comm && comm.next_due ? `<p class="muted">${esc(longDate(comm.next_due))}${comm.next_note ? ' · ' + esc(comm.next_note) : ''}</p>` : ''}
+    <h2 class="sec">Rapports des vérifications</h2><div class="group">${L.filter((c) => c.grp === 'presta').map(line).join('')}</div>
+    <h2 class="sec">Personnel</h2><div class="group">${L.filter((c) => ['exo', 'form', 't_alarme'].includes(c.id.split('-')[1])).map(line).join('')}</div>
+    <h2 class="sec">Documents et affichage</h2><div class="group">${L.filter((c) => c.grp === 'doc').map(line).join('')}</div>
+    <h2 class="sec">Réparations en cours (rapports, commission)</h2>${reps.length ? `<div class="group">${reps.map(repRow).join('')}</div>` : '<p class="muted">Aucune.</p>'}
+    <p class="muted sm">Avant la visite : faire le tour des locaux (rien de stocké dans les couloirs, locaux techniques identifiés).</p>`);
+}
+
 // Bandeau affiché quand un gérant utilise l'appli comme une femme de ménage ou l'intendant.
 const pvBar = () => S.preview ? `<div class="pvbar"><span>👁 Vue ${S.preview === 'brico' ? 'intendant' : 'femme de ménage'} · ce que vous faites ici compte vraiment</span><button class="btn small" data-a="unpreview">Revenir</button></div>` : '';
 /* ----- bricoleur : réparations + ménage en lecture ----- */
 function viewBrico() {
   const un = unreadTotal(), open = S.issues.filter((i) => repEtat(i) !== 'fait'), todo = open.filter((i) => repEtat(i) === 'a_faire'), urg = open.filter((i) => i.priority === 'urgent').length;
-  if (S.tab === 'issues' || S.tab === 'menage' || (S.tab === 'contacts' && canPresta()) || (S.tab === 'registre' && canReg('reg_pec'))) {
-    const body = S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : (S.tab === 'contacts' ? viewContacts() : viewMenageRead()));
+  if (S.tab === 'issues' || S.tab === 'menage' || S.tab === 'securite' || (S.tab === 'contacts' && canPresta()) || (S.tab === 'registre' && canReg('reg_pec'))) {
+    const body = S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : (S.tab === 'contacts' ? viewContacts() : (S.tab === 'securite' ? viewSecBrico() : viewMenageRead())));
     const right = S.tab === 'issues' ? `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>` : (S.tab === 'registre' && canReg('reg_full') ? `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>` : '');
-    return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre', contacts: 'Prestataires' }[S.tab], right)}<div class="wrap">${pvBar()}${body}</div>
+    return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre', contacts: 'Prestataires', securite: 'Contrôles sécurité' }[S.tab], right)}<div class="wrap">${pvBar()}${body}</div>
       <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' non lus' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
   }
   const [, gt] = greet(), myClean = myCleanings();
@@ -1003,6 +1142,7 @@ function viewBrico() {
       <button class="stat" data-a="go" data-k="issues"><b class="${urg ? 'n-red' : ''}">${urg}</b><span>${urg > 1 ? 'urgences' : 'urgence'}</span></button></div></div>
     <div class="tiles">
       <button class="tile" data-a="go" data-k="issues"><span class="ti-ic t-orange">${ico('tool')}</span>${open.length ? `<span class="badge">${open.length}</span>` : ''}<span class="ti-t">Réparations</span><span class="ti-s">${open.length ? open.length + ' en attente' : 'Rien à réparer'}</span></button>
+      <button class="tile" data-a="go" data-k="securite"><span class="ti-ic t-red">${ico('shield')}</span>${secDueBrico().length ? `<span class="badge">${secDueBrico().length}</span>` : ''}<span class="ti-t">Sécurité</span><span class="ti-s">${secDueBrico().length ? secDueBrico().length + ' contrôle' + (secDueBrico().length > 1 ? 's' : '') + ' à faire' : 'Contrôles faits'}</span></button>
       <button class="tile" data-a="go" data-k="menage"><span class="ti-ic t-blue">${ico('menage')}</span><span class="ti-t">Ménage</span><span class="ti-s">Qui a nettoyé quoi</span></button>
       ${canReg('reg_pec') ? `<button class="tile" data-a="go" data-k="registre"><span class="ti-ic t-purple">${ico('book')}</span>${inboxTodo().length ? `<span class="badge">${inboxTodo().length}</span>` : ''}<span class="ti-t">Registre</span><span class="ti-s">${inboxTodo().length ? inboxTodo().length + ' PEC à traiter' : presentOcc().length + ' présents'}</span></button>` : ''}
       <button class="tile" data-a="convList"><span class="ti-ic t-green">${ico('chat')}</span>${un ? `<span class="badge">${un}</span>` : ''}<span class="ti-t">Messages</span><span class="ti-s">${un ? un + ' non lu' + (un > 1 ? 's' : '') : 'Tout est lu'}</span></button>
@@ -1280,6 +1420,7 @@ function refreshSheet() {
   else if (S.sheet.startsWith('thread:')) threadSheet(S.sheet.slice(7));
   else if (S.sheet === 'convs') convListSheet();
   else if (S.sheet.startsWith('occ:') && S.sheet.length > 4 && !isTyping()) occSheet(S.sheet.slice(4));
+  else if (S.sheet.startsWith('sec:') && !isTyping()) secSheet(S.sheet.slice(4));
 }
 const sheetHead = (t) => `<div class="row between"><h2>${t}</h2><button class="btn small" data-a="close">Fermer</button></div>`;
 function roomSheet(id) {
@@ -1479,6 +1620,48 @@ const A = {
     if (await act(() => api('plan_apply', { assign, fond: P.fond, unassign }), 'Répartition envoyée. Chacune est prévenue sur son téléphone.')) { S.proposal = null; render(); }
     else if (el) el.classList.remove('busy');
   },
+  /* sécurité */
+  secOpen(d) { S.sl = null; secSheet(d.id); },
+  secDossier(d) { secDossier(d.k); },
+  secLogNew(d) { S.sl = null; secLogForm(d.id, d.k); },
+  secEdit(d) { secEditForm(d.id); },
+  secAdd() { secEditForm(null); },
+  async secDone(d) {
+    let photos = [];
+    if (d.k === 'photo') { toast('Ouvre l’appareil photo…'); const p = await takePhoto(null, false); if (!p) return; photos = [p]; }
+    if (await act(() => api('sec_log', { id: d.id, result: 'ok', photos }), 'Noté ✓')) secSheet(d.id);
+  },
+  async slPhoto() { const p = await takePhoto(null, false); if (p && S.sl) { S.sl.photos.push(p); keepForm(() => secLogForm(S.sl.id)); } },
+  async slDoc() {
+    const f = await pickFile('application/pdf,image/*'); if (!f || !S.sl) return;
+    if (f.size > 20 * 1024 * 1024) { toast('Fichier trop lourd (20 Mo maximum).'); return; }
+    toast('Envoi du fichier…', 8000);
+    try { const pdf = /pdf/.test(f.type) || /\.pdf$/i.test(f.name); const path = pdf ? await upload(f, 'application/pdf', 'pdf') : await upload(await shrink(f), 'image/jpeg', 'jpg'); S.sl.docs.push({ path, name: f.name || 'Document' }); toast('Fichier joint ✓'); keepForm(() => secLogForm(S.sl.id)); }
+    catch (e) { toast('Le fichier n’a pas pu partir. Réessaie.'); }
+  },
+  async slSave(d) {
+    const v = (x) => ($(x) ? $(x).value.trim() : ''); const r = v('sl-res') || 'ok';
+    const body = { id: d.id, done_on: v('sl-date'), by_label: v('sl-by') || undefined, result: r === 'ok' ? 'ok' : 'obs', obs_state: r === 'obs_l' ? 'levees' : 'a_lever', note: v('sl-note'), docs: S.sl ? S.sl.docs : [], photos: S.sl ? S.sl.photos : [] };
+    if (body.result === 'obs' && !body.note && !body.docs.length) { toast('Écris ce qui ne va pas, ou joins le rapport.'); return; }
+    if (await act(() => api('sec_log', body), 'Enregistré ✓')) { S.sl = null; secSheet(d.id); }
+  },
+  async secObs(d) { if (await act(() => api('sec_obs', { id: d.id, obs: d.k }), 'Observations levées ✓')) secSheet(d.id); },
+  async secDocState(d) { if (await act(() => api('sec_save', { id: d.id, doc_state: d.k || null }), 'Enregistré')) secSheet(d.id); },
+  async secNa(d) { const c = secChecks().find((x) => x.id === d.id); if (await act(() => api('sec_save', { id: d.id, status: c.status === 'na' ? 'actif' : 'na' }), 'Enregistré')) secSheet(d.id); },
+  async secSave(d) {
+    const v = (x) => ($(x) ? $(x).value.trim() : null), body = { label: v('se-label'), note: v('se-note') };
+    if ($('se-freq')) { body.freq_months = v('se-freq') || null; body.next_due = v('se-next') || null; body.next_note = v('se-nnote'); }
+    if ($('se-prov')) { body.provider = v('se-prov'); body.contact_id = v('se-ct') || null; }
+    if ($('se-who')) body.who = v('se-who');
+    if (!body.label) { toast('Indique un nom.'); return; }
+    let nid = d.id;
+    if (d.id) { if (await act(() => api('sec_save', { id: d.id, ...body }), 'Enregistré')) secSheet(d.id); return; }
+    body.hotel = S.hotel; body.grp = v('se-grp'); if (body.grp !== 'interne') body.who = 'gerant';
+    if (await act(async () => { nid = (await api('sec_add', body)).id; }, 'Ajouté')) secSheet(nid);
+  },
+  async secLogDel(d) { if (!S.confirmDel) { S.confirmDel = d.l; toast('Touche encore pour effacer cette ligne.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('sec_log_delete', { id: d.id, log: d.l }), 'Effacé')) secSheet(d.id); },
+  async secDel(d) { if (!S.confirmDel) { S.confirmDel = d.id; toast('Touche encore pour supprimer.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('sec_delete', { id: d.id }), 'Supprimé')) closeSheet(); },
+  secRep(d) { const c = secChecks().find((x) => x.id === d.id); S.rfPhoto = null; repForm(null, { hotel: c.hotel, title: 'Lever les observations : ' + c.label.toLowerCase(), origin: /dekra/i.test(c.provider || '') ? 'dekra' : (c.grp === 'commission' ? 'commission' : 'entretien'), priority: 'urgent' }); },
   /* problèmes */
   repFilter(d) { S.rf = d.k; render(); },
   repOpen(d) { repSheet(d.id); },
