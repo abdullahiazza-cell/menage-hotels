@@ -39,7 +39,7 @@ const LS = {
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
   me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
-  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, issueFilter: 'nouveau',
+  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [],
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
 };
@@ -194,7 +194,7 @@ async function refresh(force) {
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
-      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || [];
+      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || [];
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
@@ -475,6 +475,7 @@ const ICO = {
   sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/>',
   back: '<path d="M15 18l-6-6 6-6"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
   eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
 };
 const ico = (k, cls) => `<svg class="ico ${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k] || ''}</svg>`;
@@ -484,7 +485,7 @@ const SECTIONS = {
   menage: { t: 'Ménage', i: 'menage', c: 't-blue' }, issues: { t: 'Réparations', i: 'tool', c: 't-orange' },
   registre: { t: 'Registre', i: 'book', c: 't-purple' }, securite: { t: 'Sécurité', i: 'shield', c: 't-red', soon: 'Étape 4' },
   msgs: { t: 'Messages', i: 'chat', c: 't-green' }, projets: { t: 'Projets', i: 'check', c: 't-teal', soon: 'Étape 5' },
-  team: { t: 'Équipe', i: 'users', c: 't-indigo' }, settings: { t: 'Réglages', i: 'sliders', c: 't-gray' },
+  team: { t: 'Équipe', i: 'users', c: 't-indigo' }, contacts: { t: 'Contacts', i: 'phone', c: 't-brown' }, settings: { t: 'Réglages', i: 'sliders', c: 't-gray' },
 };
 const scoped = (list) => list.filter(inScope);
 function viewManager() {
@@ -493,7 +494,8 @@ function viewManager() {
   let body = '', right = '';
   if (S.tab === 'menage') { body = viewMenage(); }
   else if (S.tab === 'registre') { body = viewRegistre(); right = `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>`; }
-  else if (S.tab === 'issues') { body = viewIssues(); right = `<button class="nb-act" data-a="report" aria-label="Signaler">${ico('plus')}</button>`; }
+  else if (S.tab === 'issues') { body = viewIssues(); right = `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>`; }
+  else if (S.tab === 'contacts') { body = viewContacts(); right = `<button class="nb-act" data-a="ctNew" aria-label="Nouveau contact">${ico('plus')}</button>`; }
   else if (S.tab === 'msgs') { body = viewThreads(); right = `<button class="nb-act" data-a="newMsg" aria-label="Nouveau message">${ico('plus')}</button>`; }
   else if (S.tab === 'team') { body = viewTeam(); right = `<button class="nb-act" data-a="personNew" aria-label="Ajouter une personne">${ico('plus')}</button>`; }
   else body = viewSettings();
@@ -509,9 +511,9 @@ function homeCounts() {
     check: rs.filter((r) => r.status === 'a_controler').length,
     plan: rs.filter((r) => r.status === 'a_faire' && !r.assignee && !r.blocked).length,
     late: rs.filter((r) => !r.blocked && r.status === 'propre' && lateDays(r) >= 0).length,
-    newIss: iss.filter((i) => i.status === 'nouveau').length,
-    urgent: iss.filter((i) => i.status !== 'regle' && i.urgent).length,
-    open: iss.filter((i) => i.status !== 'regle').length,
+    newIss: iss.filter((i) => repEtat(i) === 'a_faire').length,
+    urgent: iss.filter((i) => repEtat(i) !== 'fait' && i.priority === 'urgent').length,
+    open: iss.filter((i) => repEtat(i) !== 'fait').length,
   };
 }
 function tile(k, sub, badge) {
@@ -534,12 +536,12 @@ function viewHome() {
       ${stat(c.todo, 'à nettoyer', 'n-blue', ['menage', 'rooms'])}${stat(c.check, 'à contrôler', 'n-green', ['menage', 'check'])}${stat(c.urgent, c.urgent > 1 ? 'urgences' : 'urgence', 'n-red', ['issues'])}</div></div>
     <div class="tiles">
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
-      ${tile('issues', c.open ? `${c.open} en cours` : 'Rien à réparer', c.newIss)}
+      ${tile('issues', c.open ? `${c.open} à faire ou en cours` : 'Rien à réparer', c.newIss)}
       ${tile('registre', `${presentOcc().filter(inScope).length} présents`, regBadge())}${tile('securite')}
       ${tile('msgs', un ? `${un} non lu${un > 1 ? 's' : ''}` : 'Tout est lu', un)}
       ${tile('projets')}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
-      ${tile('settings', 'Routines, lieux')}
+      ${tile('contacts', `${S.contacts.length} contacts`)}
     </div></div>`;
 }
 
@@ -875,43 +877,126 @@ function mediaBlock(p, kind) {
   if (kind === 'video') return `<video controls playsinline preload="metadata" src="${esc(u)}"></video>`;
   return `<audio controls preload="metadata" src="${esc(u)}"></audio>`;
 }
-function issueCard(i) {
-  const k = KINDS.find((x) => x.k === i.kind) || KINDS[KINDS.length - 1];
-  const st = { nouveau: '<span class="chip c-red">Nouveau</span>', notion: '<span class="chip c-accent">Dans Notion</span>', regle: '<span class="chip c-green">Réglé</span>' }[i.status] || '';
-  return `<div class="card"><div class="row between"><h3>${k.e} ${esc(k.l)}${i.urgent ? ' <span class="chip c-red">🚨 Urgent</span>' : ''}</h3>${st}</div>
-    <p><b>${H(i.hotel).e} ${esc(hotelName(i.hotel))}${i.room ? ' · ' + esc(placeShort(r0(i))) : ''}</b> <span class="muted">· ${esc(nameOf(i.by_staff))} · ${when(i.created_at)}</span></p>
-    ${i.text ? `<p>${esc(i.text)}</p>` : ''}${mediaBlock(i.photo, 'photo')}${mediaBlock(i.video, 'video')}${mediaBlock(i.audio, 'audio')}
-    ${i.notion_url ? `<p class="muted"><a href="${esc(i.notion_url)}" target="_blank" rel="noopener">Fiche Notion</a></p>` : ''}
-    <div class="row">${i.status !== 'regle' ? `<button class="btn small" data-a="issueStatus" data-id="${i.id}" data-s="regle">✓ ${k.k === 'oubli' ? 'Rendu au client' : 'Réglé'}</button>` : `<button class="btn small ghost" data-a="issueStatus" data-id="${i.id}" data-s="nouveau">Rouvrir</button>`}</div></div>`;
+// Réparations : une seule liste pour les pannes signalées et les travaux (rapport Dekra, commission…).
+const RST = { a_faire: { l: 'À faire', c: 'red' }, en_cours: { l: 'En cours', c: 'amber' }, piece: { l: 'Pièce à commander', c: 'accent' }, fait: { l: 'Fait', c: 'green' } };
+const ORIG = { signalement: 'Signalement', dekra: 'Rapport Dekra', commission: 'Commission de sécurité', entretien: 'Entretien courant' };
+const PRIO = { urgent: 'Urgent', normal: 'Normal', plus_tard: 'Quand possible' };
+const repEtat = (i) => i.etat || (i.status === 'regle' ? 'fait' : 'a_faire');
+const repKind = (i) => KINDS.find((x) => x.k === i.kind) || KINDS[KINDS.length - 1];
+const repTitle = (i) => i.title || repKind(i).l;
+const repWhere = (i) => `${hotelName(i.hotel)}${i.room ? ' · ' + (/^\d/.test(i.room) ? 'ch. ' + i.room : i.room) : ''}`;
+const repNotes = (id) => S.notes.filter((n) => n.issue_id === id);
+const repLate = (i) => i.due && repEtat(i) !== 'fait' && i.due < todayISO();
+function repRow(i) {
+  const e = repEtat(i), n = repNotes(i.id).length, ph = (i.done_photos || []).length;
+  const sub = [repWhere(i), i.origin && i.origin !== 'signalement' ? ORIG[i.origin] : (i.by_staff ? 'signalé par ' + first(nameOf(i.by_staff)) : '')].filter(Boolean).join(' · ');
+  const meta = e === 'fait' ? `fait ${i.done_at ? 'le ' + fdate(i.done_at) : ''}${i.done_by ? ' par ' + first(nameOf(i.done_by)) : ''}` : (i.due ? (repLate(i) ? '⏰ en retard, ' : 'avant le ') + fdate(i.due) : '');
+  return `<button class="prow" data-a="repOpen" data-id="${i.id}"><span class="pr-t"><b>${i.priority === 'urgent' && e !== 'fait' ? '🚨 ' : ''}${esc(repTitle(i))}</b><span class="muted">${esc(sub)}</span>${meta || n || ph ? `<span class="muted sm">${esc(meta)}${ph ? ' · 📷 ' + ph : ''}${n ? ' · 💬 ' + n : ''}</span>` : ''}</span>
+    ${e === 'piece' ? '<span class="pill p-accent">Pièce</span>' : (repLate(i) ? '<span class="pill p-red">En retard</span>' : '')}</button>`;
 }
 function viewIssues() {
-  const f = S.issueFilter, n = (k) => S.issues.filter((i) => i.status === k).length, list = S.issues.filter((i) => i.status === f);
-  const filters = [['nouveau', 'À faire'], ...(n('notion') && role() === 'mgr' ? [['notion', 'Dans Notion']] : []), ['regle', 'Réglés']];
-  return `<div class="segc" role="group" aria-label="Filtre">${filters.map(([k, l]) => `<button data-a="issueFilter" data-k="${k}" aria-pressed="${f === k}">${l} (${n(k)})</button>`).join('')}</div>
-    ${list.length ? `<div class="col">${list.map(issueCard).join('')}</div>` : `<div class="card empty"><div class="e">🔧</div><h3>${f === 'regle' ? 'Rien de réglé pour l’instant' : 'Rien à réparer'}</h3><p class="muted">Quand quelqu’un signale une panne, elle apparaît ici avec sa photo ou son vocal.</p></div>`}`;
+  const all = scoped(S.issues), f = RST[S.rf] ? S.rf : 'a_faire';
+  const n = (k) => all.filter((i) => repEtat(i) === k).length;
+  const list = all.filter((i) => repEtat(i) === f).sort((a, b) => f === 'fait' ? String(b.done_at || '').localeCompare(String(a.done_at || ''))
+    : ((b.priority === 'urgent') - (a.priority === 'urgent') || String(a.due || '9').localeCompare(String(b.due || '9')) || String(b.created_at).localeCompare(String(a.created_at))));
+  return `${scopeSeg(S.issues.filter((i) => repEtat(i) !== 'fait'))}
+    <div class="segc" role="group" aria-label="État">${Object.entries(RST).map(([k, v]) => `<button data-a="repFilter" data-k="${k}" aria-pressed="${f === k}">${k === 'piece' ? 'Pièce' : v.l}${k !== 'fait' && n(k) ? ` <span class="cnt">${n(k)}</span>` : ''}</button>`).join('')}</div>
+    ${list.length ? `<div class="group">${list.map(repRow).join('')}</div>` : `<div class="card empty"><div class="e">${f === 'fait' ? '📋' : '✅'}</div><h3>${f === 'fait' ? 'Rien de terminé pour l’instant' : 'Rien ici'}</h3><p class="muted">Les pannes signalées par l’équipe arrivent dans « À faire » avec leur photo ou leur vocal.</p></div>`}
+    ${role() === 'brico' || isMgr() ? `<button class="btn ghost" data-a="go" data-k="contacts">📇 ${isMgr() ? 'Contacts et prestataires' : 'Prestataires'}</button>` : ''}`;
+}
+function repSheet(id) {
+  const i = S.issues.find((x) => x.id === id); if (!i) return;
+  const e = repEtat(i), notes = repNotes(id), k = repKind(i);
+  const info = [['Où', repWhere(i)], ['Origine', ORIG[i.origin] || 'Signalement'], ['Priorité', PRIO[i.priority] || 'Normal'], i.due ? ['Date limite', fdate(i.due) + (repLate(i) ? ' · en retard' : '')] : null,
+    i.parts ? ['Matériel', i.parts] : null, ['Créée', `${when(i.created_at)}${i.by_staff ? ' par ' + nameOf(i.by_staff) : ''}`], e === 'fait' && i.done_at ? ['Faite', `${fdate(i.done_at)}${i.done_by ? ' par ' + nameOf(i.done_by) : ''}`] : null].filter(Boolean);
+  const done = (i.done_photos || []).map((p) => ({ id: p.id, l: p.l || 'Après' }));
+  openSheet('rep:' + id, `${sheetHead(esc(repTitle(i)))}
+    <div class="segc four" role="group" aria-label="État">${Object.entries(RST).map(([kk, v]) => `<button data-a="repEtat" data-id="${id}" data-k="${kk}" aria-pressed="${e === kk}">${kk === 'piece' ? 'Pièce' : v.l}</button>`).join('')}</div>
+    ${e !== 'fait' ? `<button class="btn ok" data-a="repDone" data-id="${id}">📷 C’est fait : prendre la photo</button>` : ''}
+    <div class="group">${info.map(([l, v]) => `<div class="prow ro"><span class="pr-t"><span class="muted sm">${l}</span><span>${esc(v)}</span></span></div>`).join('')}</div>
+    ${i.details || i.text ? `<div class="card"><p class="pre">${esc(i.details || i.text)}</p></div>` : ''}
+    ${i.photo || i.video || i.audio ? `<div class="card"><h3>${k.e} Signalement</h3>${mediaBlock(i.photo, 'photo')}${mediaBlock(i.video, 'video')}${mediaBlock(i.audio, 'audio')}</div>` : ''}
+    <div class="card"><div class="row between"><h3>Photos du travail</h3><button class="btn small soft" data-a="repPhoto" data-id="${id}">＋ Photo</button></div>
+      ${done.length ? `<div class="thumbs">${done.map((p) => `<button data-a="zoom" data-id="${esc(p.id)}" data-l="${esc(p.l)}"><img loading="lazy" alt="" src="${esc(mediaUrl(p.id) || '')}"></button>`).join('')}</div>` : '<p class="muted">Pas encore de photo.</p>'}</div>
+    <div class="card"><h3>Échanges</h3>
+      ${notes.length ? `<div class="notes">${notes.map((nn) => `<div class="note ${nn.by_staff === S.me.id ? 'me' : ''}"><span class="muted sm">${esc(nn.by_staff ? first(nameOf(nn.by_staff)) : 'Notion')} · ${when(nn.created_at)}</span>${nn.text ? `<p>${esc(nn.text)}</p>` : ''}${mediaBlock(nn.photo, 'photo')}</div>`).join('')}</div>` : '<p class="muted">Une question, une précision ? Écris-la ici : tout le monde la voit.</p>'}
+      <div class="row"><input id="rn-text" placeholder="Écrire un message…" style="flex:1"><button class="btn small pri" data-a="repNote" data-id="${id}">Envoyer</button></div></div>
+    <div class="row"><button class="btn ghost" data-a="repEdit" data-id="${id}">✏️ Modifier</button>${isMgr() ? `<button class="btn ghost bad-t" data-a="repDel" data-id="${id}">Supprimer</button>` : ''}</div>`);
+}
+function repForm(id) {
+  const i = id ? S.issues.find((x) => x.id === id) : { hotel: S.scope !== 'all' ? S.scope : S.hotel, origin: 'entretien', priority: 'normal' };
+  const places = [...roomsOf(i.hotel), ...communsOf(i.hotel)].map((r) => r.num);
+  openSheet('repf', `${sheetHead(id ? 'Modifier la réparation' : 'Nouvelle réparation')}
+    <div class="card form">
+      <label>Quoi ?<input id="rf-title" value="${esc(id ? repTitle(i) : '')}" placeholder="Ex. : remplacer la prise de la chambre 14"></label>
+      <div class="two"><label>Hôtel<select id="rf-hotel">${HOTELS.map((h) => opt(h.id, i.hotel, h.name)).join('')}</select></label><label>Où ?<input id="rf-room" list="rf-places" value="${esc(i.room || '')}" placeholder="Chambre, couloir…"></label></div>
+      <datalist id="rf-places">${places.map((p) => `<option value="${esc(p)}">`).join('')}</datalist>
+      <div class="two"><label>Priorité<select id="rf-prio">${Object.entries(PRIO).map(([k, l]) => opt(k, i.priority, l)).join('')}</select></label><label>Avant le<input id="rf-due" type="date" value="${esc(i.due || '')}"></label></div>
+      <div class="two"><label>Origine<select id="rf-orig">${Object.entries(ORIG).map(([k, l]) => opt(k, i.origin, l)).join('')}</select></label><label>Matériel, pièces<input id="rf-parts" value="${esc(i.parts || '')}"></label></div>
+      <label>Détails<textarea id="rf-details" rows="4">${esc(i.details || i.text || '')}</textarea></label>
+      ${id ? '' : `<button class="btn soft" data-a="repFormPhoto">${S.rfPhoto ? '✅ Photo ajoutée' : '📷 Ajouter une photo'}</button>`}
+      <button class="btn pri" data-a="repSave" data-id="${id || ''}">${id ? 'Enregistrer' : 'Créer la réparation'}</button></div>
+    ${id ? `<button class="btn ghost" data-a="repOpen" data-id="${id}">← Retour</button>` : ''}`);
+}
+
+/* ----- contacts et prestataires ----- */
+const CCATS = ['Électricité', 'Alarme / SSI', 'Travaux', 'Contrôle & sécurité', 'Administration', 'Banque & assurance', 'Comptabilité', 'Télécom', 'Équipe', 'Autre'];
+const CST = { actif: ['Actif', 'green'], relancer: ['À relancer', 'amber'], decline: ['A décliné', 'plain'], completer: ['Coordonnées à compléter', 'slate'] };
+function viewContacts() {
+  const q = S.cq.trim().toLowerCase();
+  const list = S.contacts.filter((c) => !q || [c.nom, c.societe, c.role, c.categorie, c.notes].join(' ').toLowerCase().includes(q));
+  const cats = [...new Set([...CCATS, ...list.map((c) => c.categorie || 'Autre')])].filter((k) => list.some((c) => (c.categorie || 'Autre') === k));
+  return `<input id="ctQ" type="search" placeholder="Chercher un nom, une société, un métier" value="${esc(S.cq)}" data-input="ctQ" style="width:100%">
+    ${cats.map((k) => `<h2 class="sec">${esc(k)}</h2><div class="group">${list.filter((c) => (c.categorie || 'Autre') === k).map((c) => `<button class="prow" data-a="ctOpen" data-id="${c.id}"><span class="pr-t"><b>${esc(c.nom)}</b><span class="muted">${esc([c.role, c.societe && c.societe !== c.nom ? c.societe : ''].filter(Boolean).join(' · '))}</span></span>${c.telephone ? '<span class="pill p-green">📞</span>' : ''}${c.statut === 'relancer' ? '<span class="pill p-amber">À relancer</span>' : ''}</button>`).join('')}</div>`).join('') || '<div class="card empty"><h3>Aucun contact</h3></div>'}`;
+}
+const telHref = (t) => 'tel:' + String(t).replace(/[^0-9+]/g, '');
+function ctSheet(id) {
+  const c = S.contacts.find((x) => x.id === id); if (!c) return;
+  const st = CST[c.statut] || CST.actif;
+  openSheet('ct', `${sheetHead(esc(c.nom))}<p class="muted">${esc([c.role, c.societe].filter(Boolean).join(' · '))}</p>
+    <div class="row">${c.telephone ? `<a class="btn ok" href="${telHref(c.telephone)}">📞 Appeler</a>` : ''}${c.email ? `<a class="btn soft" href="mailto:${esc(c.email)}">✉️ Écrire</a>` : ''}</div>
+    <div class="group">${[['Téléphone', c.telephone], ['E-mail', c.email], ['Adresse', c.adresse], ['Catégorie', c.categorie], ['Hôtels', (c.hotels || []).map(hotelName).join(', ')]].filter((x) => x[1]).map(([l, v]) => `<div class="prow ro"><span class="pr-t"><span class="muted sm">${l}</span><span>${esc(v)}</span></span></div>`).join('')}
+      <div class="prow ro"><span class="pr-t"><span class="muted sm">Statut</span></span><span class="pill p-${st[1]}">${st[0]}</span></div></div>
+    ${c.notes ? `<div class="card"><p class="pre">${esc(c.notes)}</p></div>` : ''}
+    ${isMgr() ? `<div class="row"><button class="btn ghost" data-a="ctEdit" data-id="${id}">✏️ Modifier</button><button class="btn ghost bad-t" data-a="ctDel" data-id="${id}">Supprimer</button></div>` : ''}`);
+}
+function ctForm(id) {
+  const c = id ? S.contacts.find((x) => x.id === id) : { categorie: 'Électricité', hotels: [], statut: 'actif' };
+  openSheet('ctf', `${sheetHead(id ? 'Modifier le contact' : 'Nouveau contact')}
+    <div class="card form">
+      <label>Nom<input id="cf-nom" value="${esc(c.nom || '')}"></label>
+      <div class="two"><label>Société<input id="cf-soc" value="${esc(c.societe || '')}"></label><label>Rôle, métier<input id="cf-role" value="${esc(c.role || '')}"></label></div>
+      <div class="two"><label>Téléphone<input id="cf-tel" inputmode="tel" value="${esc(c.telephone || '')}"></label><label>E-mail<input id="cf-mail" inputmode="email" value="${esc(c.email || '')}"></label></div>
+      <label>Adresse<input id="cf-adr" value="${esc(c.adresse || '')}"></label>
+      <div class="two"><label>Catégorie<select id="cf-cat">${CCATS.map((k) => opt(k, c.categorie)).join('')}</select></label><label>Statut<select id="cf-st">${Object.entries(CST).map(([k, v]) => opt(k, c.statut, v[0])).join('')}</select></label></div>
+      <div class="chips">${HOTELS.map((h) => `<label class="check"><input type="checkbox" class="cf-h" value="${h.id}" ${(c.hotels || []).includes(h.id) ? 'checked' : ''}> ${esc(h.name)}</label>`).join('')}</div>
+      <label>Notes<textarea id="cf-notes" rows="4">${esc(c.notes || '')}</textarea></label>
+      <button class="btn pri" data-a="ctSave" data-id="${id || ''}">Enregistrer</button></div>`);
 }
 
 /* ----- bricoleur : réparations + ménage en lecture ----- */
 function viewBrico() {
-  const un = unreadTotal(), open = S.issues.filter((i) => i.status === 'nouveau'), urg = open.filter((i) => i.urgent).length;
-  if (S.tab === 'issues' || S.tab === 'menage' || (S.tab === 'registre' && canReg('reg_pec'))) {
-    const body = S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : viewMenageRead());
-    const right = S.tab === 'issues' ? `<button class="nb-act" data-a="report" aria-label="Signaler">${ico('plus')}</button>` : (S.tab === 'registre' && canReg('reg_full') ? `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>` : '');
-    return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre' }[S.tab], right)}<div class="wrap">${body}</div>
+  const un = unreadTotal(), open = S.issues.filter((i) => repEtat(i) !== 'fait'), todo = open.filter((i) => repEtat(i) === 'a_faire'), urg = open.filter((i) => i.priority === 'urgent').length;
+  if (S.tab === 'issues' || S.tab === 'menage' || S.tab === 'contacts' || (S.tab === 'registre' && canReg('reg_pec'))) {
+    const body = S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : (S.tab === 'contacts' ? viewContacts() : viewMenageRead()));
+    const right = S.tab === 'issues' ? `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>` : (S.tab === 'registre' && canReg('reg_full') ? `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>` : '');
+    return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre', contacts: 'Prestataires' }[S.tab], right)}<div class="wrap">${body}</div>
       <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' non lus' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
   }
   const [, gt] = greet();
   return `<div class="wrap home">
     <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div></div>
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
-      <button class="stat" data-a="go" data-k="issues"><b class="${open.length ? 'n-blue' : ''}">${open.length}</b><span>à réparer</span></button>
+      <button class="stat" data-a="go" data-k="issues"><b class="${todo.length ? 'n-blue' : ''}">${todo.length}</b><span>à faire</span></button>
+      <button class="stat" data-a="go" data-k="issues"><b class="${open.length - todo.length ? 'n-green' : ''}">${open.length - todo.length}</b><span>en cours</span></button>
       <button class="stat" data-a="go" data-k="issues"><b class="${urg ? 'n-red' : ''}">${urg}</b><span>${urg > 1 ? 'urgences' : 'urgence'}</span></button></div></div>
     <div class="tiles">
-      <button class="tile" data-a="go" data-k="issues"><span class="ti-ic t-orange">${ico('tool')}</span>${open.length ? `<span class="badge">${open.length}</span>` : ''}<span class="ti-t">Réparations</span><span class="ti-s">${open.length ? open.length + ' à faire' : 'Rien à réparer'}</span></button>
+      <button class="tile" data-a="go" data-k="issues"><span class="ti-ic t-orange">${ico('tool')}</span>${open.length ? `<span class="badge">${open.length}</span>` : ''}<span class="ti-t">Réparations</span><span class="ti-s">${open.length ? open.length + ' en attente' : 'Rien à réparer'}</span></button>
       <button class="tile" data-a="go" data-k="menage"><span class="ti-ic t-blue">${ico('menage')}</span><span class="ti-t">Ménage</span><span class="ti-s">Qui a nettoyé quoi</span></button>
       ${canReg('reg_pec') ? `<button class="tile" data-a="go" data-k="registre"><span class="ti-ic t-purple">${ico('book')}</span>${inboxTodo().length ? `<span class="badge">${inboxTodo().length}</span>` : ''}<span class="ti-t">Registre</span><span class="ti-s">${inboxTodo().length ? inboxTodo().length + ' PEC à traiter' : presentOcc().length + ' présents'}</span></button>` : ''}
       <button class="tile" data-a="convList"><span class="ti-ic t-green">${ico('chat')}</span>${un ? `<span class="badge">${un}</span>` : ''}<span class="ti-t">Messages</span><span class="ti-s">${un ? un + ' non lu' + (un > 1 ? 's' : '') : 'Tout est lu'}</span></button>
-      <button class="tile" data-a="report"><span class="ti-ic t-red">${ico('plus')}</span><span class="ti-t">Signaler</span><span class="ti-s">Un problème vu</span></button>
+      <button class="tile" data-a="go" data-k="contacts"><span class="ti-ic t-brown">${ico('phone')}</span><span class="ti-t">Prestataires</span><span class="ti-s">Électriciens, alarme…</span></button>
+      <button class="tile" data-a="repNew"><span class="ti-ic t-red">${ico('plus')}</span><span class="ti-t">Nouvelle</span><span class="ti-s">réparation</span></button>
     </div></div>`;
 }
 // Ménage en lecture seule : l'état de chaque lieu et qui l'a nettoyé.
@@ -1262,7 +1347,6 @@ const A = {
   go(d) {
     if (d.k === 'menage' && S.scope !== 'all') { S.hotel = S.scope; LS.set('mh-hotel', S.hotel); }
     if (d.k === 'menage') { S.sub = d.s || 'rooms'; if (S.sub !== 'plan') S.proposal = null; }
-    if (d.k === 'issues' && S.issueFilter === 'notion') S.issueFilter = 'nouveau';
     S.tab = d.k; S.sel.clear(); render(); window.scrollTo(0, 0);
   },
   home() { S.tab = 'home'; S.sel.clear(); render(); window.scrollTo(0, 0); },
@@ -1378,8 +1462,34 @@ const A = {
     else if (el) el.classList.remove('busy');
   },
   /* problèmes */
-  issueFilter(d) { S.issueFilter = d.k; render(); },
-  async issueStatus(d) { await act(() => api('issue_status', { id: d.id, status: d.s }), d.s === 'regle' ? 'Marqué réglé' : null); },
+  repFilter(d) { S.rf = d.k; render(); },
+  repOpen(d) { repSheet(d.id); },
+  repNew() { S.rfPhoto = null; repForm(null); },
+  repEdit(d) { repForm(d.id); },
+  async repFormPhoto() { const p = await takePhoto(null, false); if (p) { S.rfPhoto = p; const t = $('rf-title'); const keep = t ? t.value : ''; toast('Photo ajoutée ✓'); const b = document.querySelector('[data-a="repFormPhoto"]'); if (b) b.textContent = '✅ Photo ajoutée'; if (t) t.value = keep; } },
+  async repSave(d) {
+    const v = (x) => ($(x) ? $(x).value.trim() : '');
+    const body = { id: d.id || undefined, title: v('rf-title'), hotel: v('rf-hotel'), room: v('rf-room'), priority: v('rf-prio'), due: v('rf-due'), origin: v('rf-orig'), parts: v('rf-parts'), details: v('rf-details'), photo: d.id ? undefined : S.rfPhoto };
+    if (!body.title) { toast('Écris ce qu’il faut faire.'); return; }
+    let newId = d.id;
+    const ok = await act(async () => { const r = await api('repair_save', body); newId = r.id; }, d.id ? 'Enregistré' : 'Réparation créée');
+    if (ok) { S.rfPhoto = null; if (newId) repSheet(newId); else closeSheet(); }
+  },
+  async repEtat(d) { if (await act(() => api('repair_etat', { id: d.id, etat: d.k }), RST[d.k].l)) repSheet(d.id); },
+  async repDone(d) { toast('Ouvre l’appareil photo…'); const p = await takePhoto(null, false); if (await act(() => api('repair_etat', { id: d.id, etat: 'fait', photo: p || undefined }), p ? 'Fait, avec la photo ✓' : 'Marqué fait')) repSheet(d.id); },
+  async repPhoto(d) { const p = await takePhoto(null, false); if (p && await act(() => api('repair_photo', { id: d.id, photo: p }), 'Photo ajoutée ✓')) repSheet(d.id); },
+  async repNote(d) { const t = ($('rn-text').value || '').trim(); if (!t) return; if (await act(() => api('repair_note', { id: d.id, text: t }), 'Envoyé')) repSheet(d.id); },
+  async repDel(d) { if (!S.confirmDel) { S.confirmDel = d.id; toast('Touche encore pour supprimer définitivement.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('repair_delete', { id: d.id }), 'Supprimée')) closeSheet(); },
+  ctOpen(d) { ctSheet(d.id); },
+  ctNew() { ctForm(null); },
+  ctEdit(d) { ctForm(d.id); },
+  async ctSave(d) {
+    const v = (x) => ($(x) ? $(x).value.trim() : '');
+    const body = { id: d.id || undefined, nom: v('cf-nom'), societe: v('cf-soc'), role: v('cf-role'), telephone: v('cf-tel'), email: v('cf-mail'), adresse: v('cf-adr'), categorie: v('cf-cat'), statut: v('cf-st'), notes: v('cf-notes'), hotels: [...document.querySelectorAll('.cf-h:checked')].map((x) => x.value) };
+    if (!body.nom) { toast('Indique un nom.'); return; }
+    let nid = d.id; if (await act(async () => { const r = await api('contact_save', body); nid = r.id; }, 'Enregistré')) ctSheet(nid);
+  },
+  async ctDel(d) { if (!S.confirmDel) { S.confirmDel = d.id; toast('Touche encore pour supprimer ce contact.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('contact_delete', { id: d.id }), 'Supprimé')) closeSheet(); },
   /* messages */
   threadOpen(d) { threadSheet(d.id); },
   newMsg() { newMsgSheet(); },
@@ -1511,6 +1621,7 @@ const C = {
 const I = {
   repText(el) { if (S.rep && S.rep.items && S.rep.items[el.dataset.k]) S.rep.items[el.dataset.k].text = el.value; },
   redoText(el) { if (S.rep) S.rep.text = el.value; },
+  ctQ(el) { S.cq = el.value; const pos = el.selectionStart; render(); const n = $('ctQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} } },
   regQ(el) { S.rq = el.value; const pos = el.selectionStart; render(); const n = $('regQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} } },
 };
 document.addEventListener('click', (e) => {

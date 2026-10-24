@@ -140,6 +140,20 @@ const isBrico = (me: any) => me.role === "bricoleur";
 // Accès donnés par le propriétaire à l'intendant (« reg_pec » : répartir les PEC reçues ; « reg_full » : tout le registre).
 const PERMS = ["reg_pec", "reg_full"];
 const can = (me: any, p: string) => isMgr(me) || (isBrico(me) && Array.isArray(me.perms) && (me.perms.includes(p) || (p === "reg_pec" && me.perms.includes("reg_full"))));
+// Réparations : états, origines, priorités ; contacts visibles par l'intendant.
+const ETATS = ["a_faire", "en_cours", "piece", "fait"];
+const ORIGINS = ["signalement", "dekra", "commission", "entretien"];
+const PRIOS = ["urgent", "normal", "plus_tard"];
+const PRESTA = ["Électricité", "Alarme / SSI", "Travaux", "Contrôle & sécurité"];
+const CSTATUTS = ["actif", "relancer", "decline", "completer"];
+async function bricoIds() { const { data } = await sb.from("staff").select("id").eq("role", "bricoleur").eq("active", true); return (data || []).map((b: any) => b.id); }
+async function issueNotes(issues: any[]) {
+  const ids = issues.map((i: any) => i.id); if (!ids.length) return [];
+  const out: any[] = [];
+  for (let i = 0; i < ids.length; i += 150) { const { data } = await sb.from("issue_notes").select("*").in("issue_id", ids.slice(i, i + 150)).order("created_at"); out.push(...(data || [])); }
+  return out;
+}
+const repTitle = (i: any) => i.title || "Problème signalé" + (i.room ? " · " + i.room : "");
 function needMgr(me: any) { if (!isMgr(me)) throw new E("forbidden", 403); }
 const UUID = /^[0-9a-f-]{36}$/;
 function convOk(me: any, conv: string) {
@@ -217,7 +231,7 @@ async function actState(me: any, device: any) {
       sb.from("devices").select("id,staff_id,label,created_at,last_seen").is("revoked_at", null),
       sb.from("invites").select("id,staff_id,created_at,expires_at").is("used_at", null).gt("expires_at", new Date().toISOString()),
       sb.from("plan").select("*").eq("day", parisDay()).maybeSingle(),
-      sb.from("issues").select("*").order("created_at", { ascending: false }).limit(150),
+      sb.from("issues").select("*").order("created_at", { ascending: false }).limit(300),
       visibleMsgs(me, 400),
       sb.from("conv_reads").select("*"),
     ]);
@@ -227,14 +241,16 @@ async function actState(me: any, device: any) {
     out.devices = devices || []; out.invites = invites || []; out.plan = plan || { day: parisDay(), avail: {} };
     out.issues = (issues || []).filter((i: any) => hotelOk(me, i.hotel));
     out.msgs = msgs || []; out.reads = reads || [];
-    out.issues.forEach((i: any) => paths.push(i.photo, i.video, i.audio));
+    out.issues.forEach((i: any) => { paths.push(i.photo, i.video, i.audio); (i.done_photos || []).forEach((p: any) => paths.push(p.id)); });
     out.msgs.forEach((m: any) => paths.push(m.media_path));
+    out.notes = await issueNotes(out.issues); out.notes.forEach((n: any) => paths.push(n.photo));
+    out.contacts = (await sb.from("contacts").select("*").order("nom")).data || [];
     out.reg = await regState();
   } else {
     const brico = isBrico(me);
     const [{ data: staff }, { data: issues }, msgs] = await Promise.all([
       sb.from("staff").select("id,label,role").eq("active", true),
-      brico ? sb.from("issues").select("*").order("created_at", { ascending: false }).limit(150)
+      brico ? sb.from("issues").select("*").order("created_at", { ascending: false }).limit(300)
         : sb.from("issues").select("*").eq("by_staff", me.id).order("created_at", { ascending: false }).limit(20),
       visibleMsgs(me, 150),
     ]);
@@ -243,7 +259,11 @@ async function actState(me: any, device: any) {
     out.staff = staff || [];
     out.issues = issues || []; out.msgs = msgs || []; out.reads = reads || [];
     out.msgs.forEach((m: any) => paths.push(m.media_path));
-    if (brico) out.issues.forEach((i: any) => paths.push(i.photo, i.video, i.audio));
+    if (brico) {
+      out.issues.forEach((i: any) => { paths.push(i.photo, i.video, i.audio); (i.done_photos || []).forEach((p: any) => paths.push(p.id)); });
+      out.notes = await issueNotes(out.issues); out.notes.forEach((n: any) => paths.push(n.photo));
+      out.contacts = (await sb.from("contacts").select("*").in("categorie", PRESTA).order("nom")).data || [];
+    }
     if (can(me, "reg_pec")) out.reg = await regState();
   }
   out.urls = await signUrls(paths);
@@ -375,6 +395,52 @@ async function regAction(me: any, a: string, body: any) {
   throw new E("unknown_action");
 }
 
+// ---------- réparations (gérants et intendant) ----------
+async function repairAction(me: any, a: string, body: any) {
+  if (!isMgr(me) && !isBrico(me)) throw new E("forbidden", 403);
+  const now = new Date().toISOString();
+  const own = (p: any) => (typeof p === "string" && p.startsWith(me.id + "/")) ? p : null;
+  const notify = async (ids: string[], title: string, text: string) => pushTo(ids.filter((x) => x !== me.id), { title, body: text.slice(0, 160), tag: "issue" });
+  const where = (i: any) => `${HOTEL_NAMES[i.hotel] || ""}${i.room ? (/^\d/.test(i.room) ? " · ch. " : " · ") + i.room : ""}`;
+  if (a === "repair_save") {
+    const hotel = HOTELS.includes(body.hotel) ? body.hotel : null; const title = S_(body.title, 140);
+    if (!hotel || !title) throw new E("bad");
+    const row: any = { title, hotel, room: S_(body.room, 60), details: S_(body.details, 3000), origin: ORIGINS.includes(body.origin) ? body.origin : "signalement", priority: PRIOS.includes(body.priority) ? body.priority : "normal", due: D_(body.due), parts: S_(body.parts, 300), updated_at: now };
+    row.urgent = row.priority === "urgent";
+    if (body.id) { const { error } = await sb.from("issues").update(row).eq("id", body.id); if (error) throw new E("db"); return { ok: true, id: body.id }; }
+    Object.assign(row, { kind: "autre", by_staff: me.id, etat: "a_faire", status: "nouveau", photo: own(body.photo) });
+    const { data, error } = await sb.from("issues").insert(row).select("id").single(); if (error) throw new E("db");
+    await notify(isMgr(me) ? await bricoIds() : await managerIds(hotel), `${row.urgent ? "🚨" : "🔧"} Nouvelle réparation`, `${title} · ${where(row)}`);
+    return { ok: true, id: data.id };
+  }
+  const { data: i } = await sb.from("issues").select("*").eq("id", body.id).maybeSingle(); if (!i) throw new E("bad");
+  if (a === "repair_etat") {
+    const etat = ETATS.includes(body.etat) ? body.etat : null; if (!etat) throw new E("bad");
+    const p: any = { etat, status: etat === "fait" ? "regle" : "nouveau", updated_at: now };
+    if (etat === "fait") { p.done_at = now; p.done_by = me.id; } else { p.done_at = null; p.done_by = null; }
+    const ph = own(body.photo); if (ph) p.done_photos = [...(i.done_photos || []), { id: ph, l: "Après", by: me.id, at: now }];
+    await sb.from("issues").update(p).eq("id", i.id);
+    if (isBrico(me) && etat === "fait") await notify(await managerIds(i.hotel), "✅ Réparation faite", `${repTitle(i)} · ${where(i)}${ph ? " · avec photo" : ""}`);
+    if (isBrico(me) && etat === "piece") await notify(await managerIds(i.hotel), "📦 Pièce à commander", `${repTitle(i)}${i.parts ? " · " + i.parts : ""}`);
+    if (isMgr(me) && etat === "a_faire" && i.etat === "fait") await notify(await bricoIds(), "🔁 Réparation à reprendre", repTitle(i));
+    return { ok: true };
+  }
+  if (a === "repair_photo") {
+    const ph = own(body.photo); if (!ph) throw new E("bad");
+    await sb.from("issues").update({ done_photos: [...(i.done_photos || []), { id: ph, l: "Après", by: me.id, at: now }], updated_at: now }).eq("id", i.id);
+    return { ok: true };
+  }
+  if (a === "repair_note") {
+    const text = S_(body.text, 1000), photo = own(body.photo); if (!text && !photo) throw new E("empty");
+    await sb.from("issue_notes").insert({ issue_id: i.id, by_staff: me.id, text, photo });
+    await sb.from("issues").update({ updated_at: now }).eq("id", i.id);
+    await notify([...(await managerIds(i.hotel)), ...(await bricoIds())], `💬 ${String(me.label).split(" ")[0]} · ${repTitle(i)}`.slice(0, 80), text || "Photo");
+    return { ok: true };
+  }
+  if (a === "repair_delete") { needMgr(me); await sb.from("issues").delete().eq("id", i.id); return { ok: true }; }
+  throw new E("unknown_action");
+}
+
 async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Record<string, any>) {
   needMgr(me);
   const clean: any = {};
@@ -424,7 +490,7 @@ async function handle(req: Request) {
       for (let i = 0; i < names.length; i += 100) await sb.storage.from("media").remove(names.slice(i, i + 100));
       const lim = new Date(Date.now() - days * 864e5).toISOString();
       await sb.from("messages").update({ media_path: null, media_type: "expired" }).lt("created_at", lim).not("media_path", "is", null);
-      await sb.from("issues").update({ photo: null, video: null, audio: null }).lt("created_at", lim);
+      await sb.from("issues").update({ video: null, audio: null }).lt("created_at", lim);
       await sb.from("invites").delete().lt("expires_at", new Date().toISOString());
       return { removed: names.length };
     }
@@ -527,6 +593,7 @@ async function handle(req: Request) {
         kind: String(it.kind || "autre").slice(0, 20), hotel, room: body.room ? String(body.room).slice(0, 40) : null,
         text: it.text ? String(it.text).slice(0, 1000) : null, urgent: !!it.urgent, photo: own(it.photo), video: own(it.video), audio: own(it.audio),
         by_staff: me.id, created_at: new Date(now + i).toISOString(),
+        etat: "a_faire", status: "nouveau", origin: "signalement", priority: it.urgent ? "urgent" : "normal",
       }));
       const { error } = await sb.from("issues").insert(rows); if (error) throw new E("db");
       const urg = rows.some((r: any) => r.urgent);
@@ -644,13 +711,17 @@ async function handle(req: Request) {
       needMgr(me);
       await sb.from("plan").upsert({ day: parisDay(), avail: body.avail || {}, updated_at: new Date().toISOString() }); return { ok: true };
     }
-    case "issue_status": {
-      if (!isMgr(me) && !isBrico(me)) throw new E("forbidden", 403);
-      const st = body.status; if (!["nouveau", "notion", "regle"].includes(st) || (!isMgr(me) && st === "notion")) throw new E("bad");
-      const p: any = { status: st }; if (st === "regle") { p.done_at = new Date().toISOString(); p.done_by = me.id; }
-      if (body.notion_url) p.notion_url = String(body.notion_url).slice(0, 300);
-      await sb.from("issues").update(p).eq("id", body.id); return { ok: true };
+    case "issue_status": return await repairAction(me, "repair_etat", { id: body.id, etat: body.status === "regle" ? "fait" : "a_faire" });
+    case "repair_save": case "repair_etat": case "repair_photo": case "repair_note": case "repair_delete": return await repairAction(me, a, body);
+    case "contact_save": {
+      needMgr(me);
+      const nom = S_(body.nom, 120); if (!nom) throw new E("bad");
+      const row: any = { nom, societe: S_(body.societe, 120), role: S_(body.role, 160), categorie: S_(body.categorie, 60), hotels: (Array.isArray(body.hotels) ? body.hotels : []).filter((h: string) => HOTELS.includes(h)), telephone: S_(body.telephone, 40), email: S_(body.email, 160), adresse: S_(body.adresse, 300), notes: S_(body.notes, 3000), statut: CSTATUTS.includes(body.statut) ? body.statut : "actif", updated_at: new Date().toISOString(), updated_by: me.id };
+      if (body.id) { await sb.from("contacts").update(row).eq("id", body.id); return { ok: true, id: body.id }; }
+      const { data, error } = await sb.from("contacts").insert(row).select("id").single(); if (error) throw new E("db");
+      return { ok: true, id: data.id };
     }
+    case "contact_delete": { needMgr(me); await sb.from("contacts").delete().eq("id", body.id); return { ok: true }; }
     case "staff_save": {
       needMgr(me);
       const label = String(body.label || "").trim().slice(0, 60); if (!label) throw new E("bad");
