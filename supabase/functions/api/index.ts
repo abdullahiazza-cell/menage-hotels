@@ -286,6 +286,7 @@ async function regState() {
     sb.from("pec_inbox").select("*").order("received_at", { ascending: false }).limit(300),
     sb.from("registre_log").select("*").order("ts", { ascending: false }).limit(300),
   ]);
+  await attachMailDocs((inbox || []).filter((i: any) => i.status === "a_traiter")).catch(() => {});
   return { occ: occ || [], pecs: pecs || [], inbox: inbox || [], log: log || [] };
 }
 const S_ = (v: any, n = 200) => (v === undefined || v === null || v === "") ? null : String(v).slice(0, n);
@@ -383,6 +384,7 @@ async function regAction(me: any, a: string, body: any) {
   }
   if (a === "reg_inbox_apply") {
     const { data: it } = await sb.from("pec_inbox").select("*").eq("id", body.id).single(); if (!it) throw new E("bad");
+    await attachMailDocs([it]).catch(() => {});
     let occId = body.occupant_id ? String(body.occupant_id) : null, who = "";
     if (occId) {
       const { data: o } = await sb.from("occupants").select("id,nom,prenom").eq("id", occId).single(); if (!o) throw new E("bad"); who = fullName(o);
@@ -597,6 +599,42 @@ async function taskReminders() {
   return Object.keys(per).length;
 }
 
+// ---------- PDF des PEC envoyés par le script Google de la boîte mail ----------
+// Le script lit les pièces jointes des mails du Département et les envoie ici ; le relevé Claude crée la fiche « À traiter ».
+async function attachMailDocs(rows: any[]) {
+  const ids = [...new Set(rows.map((r: any) => String(r.id).split("-")[0]).filter((x) => /^[0-9a-f]{12,24}$/.test(x)))];
+  if (!ids.length) return;
+  const { data: maps } = await sb.from("pec_mail_docs").select("msg_id,doc_id,name,created_at").in("msg_id", ids);
+  if (!maps || !maps.length) return;
+  for (const r of rows) {
+    const mine = maps.filter((m: any) => m.msg_id === String(r.id).split("-")[0]);
+    const docs = Array.isArray(r.docs) ? [...r.docs] : [];
+    let changed = false;
+    for (const m of mine) if (!docs.some((d: any) => d.id === m.doc_id)) { docs.push({ id: m.doc_id, name: m.name, type: "application/pdf", src: "gmail", at: m.created_at }); changed = true; }
+    if (changed) { r.docs = docs; await sb.from("pec_inbox").update({ docs }).eq("id", r.id); }
+  }
+}
+async function pecPdf(req: Request, body: any) {
+  const { data: s } = await sb.from("app_secrets").select("value").eq("name", "gas_secret").single();
+  if (!s || req.headers.get("x-gas") !== s.value) throw new E("forbidden", 403);
+  const msg = String(body.msg || ""); if (!/^[0-9a-f]{12,24}$/.test(msg)) throw new E("bad");
+  const b64 = String(body.b64 || ""); if (!b64 || b64.length > 14_000_000) throw new E("too_big");
+  const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  if (!(u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46)) throw new E("not_pdf");
+  const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", u8))].map((x) => x.toString(16).padStart(2, "0")).join("");
+  const id = sha.slice(0, 32), name = S_(body.name, 160) || "PEC.pdf";
+  const { data: ex } = await sb.from("doc_files").select("id").eq("id", id).maybeSingle();
+  if (!ex) {
+    let hex = ""; for (let i = 0; i < u8.length; i++) hex += u8[i].toString(16).padStart(2, "0");
+    const { error } = await sb.from("doc_files").insert({ id, name, type: "application/pdf", size: u8.length, sha256: sha, data: "\\x" + hex });
+    if (error) throw new E("db");
+  }
+  await sb.from("pec_mail_docs").upsert({ msg_id: msg, doc_id: id, name, subject: S_(body.subject, 300), mail_date: typeof body.date === "string" ? body.date : null }, { onConflict: "msg_id,doc_id" });
+  const { data: rows } = await sb.from("pec_inbox").select("id,docs").or(`id.eq.${msg},id.like.${msg}-%`);
+  await attachMailDocs(rows || []);
+  return { ok: true, id, linked: (rows || []).length };
+}
+
 async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Record<string, any>) {
   needMgr(me);
   const clean: any = {};
@@ -654,6 +692,8 @@ async function handle(req: Request) {
     }
     throw new E("bad");
   }
+
+  if (a === "pec_pdf") return await pecPdf(req, body);
 
   // --- activation (sans appareil) ---
   if (a === "invite_info") {
