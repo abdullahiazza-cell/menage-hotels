@@ -402,7 +402,7 @@ async function handle(req: Request) {
       const urg = rows.some((r: any) => r.urgent);
       const { data: bricos } = await sb.from("staff").select("id").eq("role", "bricoleur").eq("active", true);
       const notifyIds = [...new Set([...(await managerIds(hotel)), ...(bricos || []).map((b: any) => b.id)])];
-      await pushTo(notifyIds.filter((id) => id !== me.id), { title: `${urg ? "🚨" : "🔧"} ${rows.length} problème${rows.length > 1 ? "s" : ""} signalé${rows.length > 1 ? "s" : ""}`, body: `${HOTEL_NAMES[hotel]}${rows[0].room ? " · ch. " + rows[0].room : ""} · par ${me.label}`, tag: "issue" });
+      await pushTo(notifyIds.filter((id) => id !== me.id), { title: `${urg ? "🚨" : "🔧"} ${rows.length} problème${rows.length > 1 ? "s" : ""} signalé${rows.length > 1 ? "s" : ""}`, body: `${HOTEL_NAMES[hotel]}${rows[0].room ? (/^\d/.test(rows[0].room) ? " · ch. " : " · ") + rows[0].room : ""} · par ${me.label}`, tag: "issue" });
       return { ok: true };
     }
 
@@ -435,7 +435,7 @@ async function handle(req: Request) {
       const row = { conv, thread, from_staff: me.id, text, media_path: media, media_type: media ? String(body.media_type || "audio").slice(0, 10) : null, duration: body.duration ? Math.min(600, Math.round(body.duration)) : null, hotel, room: body.room ? String(body.room).slice(0, 40) : null };
       const { error } = await sb.from("messages").insert(row); if (error) throw new E("db");
       await sb.from("conv_reads").upsert({ staff_id: me.id, conv, read_at: new Date().toISOString() });
-      const where = row.room ? `${HOTEL_NAMES[hotel || ""] || ""} · Chambre ${row.room}` : "";
+      const where = row.room ? `${HOTEL_NAMES[hotel || ""] || ""} · ${/^\d/.test(row.room) ? "Chambre " : ""}${row.room}` : "";
       const what = text ? text.slice(0, 120) : "Message vocal";
       await pushTo(to.filter((id) => id !== me.id), {
         title: `${media ? "🎤" : "💬"} ${me.label}${label ? " · " + label : ""}`,
