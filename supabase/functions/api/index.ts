@@ -136,6 +136,7 @@ async function managerIds(hotel?: string | null) {
 function parisDay(d = new Date()) { return new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
 function parisHour(d = new Date()) { return Number(new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", hour12: false }).format(d)); }
 const isMgr = (me: any) => me.role === "owner" || me.role === "gerant";
+const isBrico = (me: any) => me.role === "bricoleur";
 function needMgr(me: any) { if (!isMgr(me)) throw new E("forbidden", 403); }
 const UUID = /^[0-9a-f-]{36}$/;
 function convOk(me: any, conv: string) {
@@ -157,8 +158,8 @@ async function visibleMsgs(me: any, limit: number) {
 function hotelOk(me: any, h: string) { return !me.only_hotel || me.only_hotel === h; }
 async function getConfig() { const { data } = await sb.from("config").select("data").eq("id", 1).single(); return data?.data || {}; }
 function estimate(r: any, cfg: any) {
-  const m = { blanc: 30, recouche: 15, fond: 15, ...(cfg.minutes || {}) };
-  if (r.type === "blanc") return m.blanc; if (r.type === "recouche") return m.recouche;
+  const m = { blanc: 30, recouche: 15, fond: 15, commun: 20, ...(cfg.minutes || {}) };
+  if (r.type === "blanc") return m.blanc; if (r.type === "recouche") return m.recouche; if (r.type === "commun") return m.commun;
   if (r.type === "fond") return m.fond * Math.max(1, (r.fond_tasks || []).length); return 0;
 }
 function fmtMin(m: number) { m = Math.round(m); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h ${String(m % 60).padStart(2, "0")}`; }
@@ -193,7 +194,7 @@ async function inviteRow(token: string) {
 }
 
 // ---------- actions ----------
-const ROOM_FIELDS = ["type", "status", "assignee", "blocked", "block_reason", "reject_note", "extras", "fond_tasks", "ref_photo", "started_at"];
+const ROOM_FIELDS = ["type", "status", "assignee", "blocked", "block_reason", "reject_note", "extras", "fond_tasks", "ref_photo", "started_at", "freq_days"];
 
 async function actState(me: any, device: any) {
   const mgr = isMgr(me);
@@ -226,9 +227,11 @@ async function actState(me: any, device: any) {
     out.issues.forEach((i: any) => paths.push(i.photo, i.video, i.audio));
     out.msgs.forEach((m: any) => paths.push(m.media_path));
   } else {
+    const brico = isBrico(me);
     const [{ data: staff }, { data: issues }, msgs] = await Promise.all([
       sb.from("staff").select("id,label,role").eq("active", true),
-      sb.from("issues").select("*").eq("by_staff", me.id).order("created_at", { ascending: false }).limit(20),
+      brico ? sb.from("issues").select("*").order("created_at", { ascending: false }).limit(150)
+        : sb.from("issues").select("*").eq("by_staff", me.id).order("created_at", { ascending: false }).limit(20),
       visibleMsgs(me, 150),
     ]);
     const convs = [...new Set(["team", `staff:${me.id}`, ...msgs.map((m: any) => m.conv)])];
@@ -236,6 +239,7 @@ async function actState(me: any, device: any) {
     out.staff = staff || [];
     out.issues = issues || []; out.msgs = msgs || []; out.reads = reads || [];
     out.msgs.forEach((m: any) => paths.push(m.media_path));
+    if (brico) out.issues.forEach((i: any) => paths.push(i.photo, i.video, i.audio));
   }
   out.urls = await signUrls(paths);
   return out;
@@ -390,13 +394,15 @@ async function handle(req: Request) {
       const own = (p: any) => (typeof p === "string" && p.startsWith(me.id + "/")) ? p : null;
       const now = Date.now();
       const rows = items.map((it: any, i: number) => ({
-        kind: String(it.kind || "autre").slice(0, 20), hotel, room: body.room ? String(body.room).slice(0, 12) : null,
+        kind: String(it.kind || "autre").slice(0, 20), hotel, room: body.room ? String(body.room).slice(0, 40) : null,
         text: it.text ? String(it.text).slice(0, 1000) : null, urgent: !!it.urgent, photo: own(it.photo), video: own(it.video), audio: own(it.audio),
         by_staff: me.id, created_at: new Date(now + i).toISOString(),
       }));
       const { error } = await sb.from("issues").insert(rows); if (error) throw new E("db");
       const urg = rows.some((r: any) => r.urgent);
-      await pushTo((await managerIds(hotel)).filter((id) => id !== me.id), { title: `${urg ? "🚨" : "🔧"} ${rows.length} problème${rows.length > 1 ? "s" : ""} signalé${rows.length > 1 ? "s" : ""}`, body: `${HOTEL_NAMES[hotel]}${rows[0].room ? " · ch. " + rows[0].room : ""} · par ${me.label}`, tag: "issue" });
+      const { data: bricos } = await sb.from("staff").select("id").eq("role", "bricoleur").eq("active", true);
+      const notifyIds = [...new Set([...(await managerIds(hotel)), ...(bricos || []).map((b: any) => b.id)])];
+      await pushTo(notifyIds.filter((id) => id !== me.id), { title: `${urg ? "🚨" : "🔧"} ${rows.length} problème${rows.length > 1 ? "s" : ""} signalé${rows.length > 1 ? "s" : ""}`, body: `${HOTEL_NAMES[hotel]}${rows[0].room ? " · ch. " + rows[0].room : ""} · par ${me.label}`, tag: "issue" });
       return { ok: true };
     }
 
@@ -416,7 +422,7 @@ async function handle(req: Request) {
       if (conv === "team") { to = act.map((x: any) => x.id); label = "📢 Toute l’équipe"; }
       else if (conv === "mgrs") { to = mgrIds(); label = "👔 Responsables"; }
       else if (conv.startsWith("staff:")) {
-        const x = conv.slice(6); if (!UUID.test(x) || !byId[x] || byId[x].role !== "menage") throw new E("bad");
+        const x = conv.slice(6); if (!UUID.test(x) || !byId[x] || !["menage", "bricoleur"].includes(byId[x].role)) throw new E("bad");
         thread = x; to = [x, ...mgrIds(hotel)];
       } else if (conv.startsWith("dm:")) {
         const pair = conv.slice(3).split("_");
@@ -426,7 +432,7 @@ async function handle(req: Request) {
         if (!mgr && !(byId[other].role === "owner" || byId[other].role === "gerant")) throw new E("forbidden", 403);
         to = [other];
       } else throw new E("bad");
-      const row = { conv, thread, from_staff: me.id, text, media_path: media, media_type: media ? String(body.media_type || "audio").slice(0, 10) : null, duration: body.duration ? Math.min(600, Math.round(body.duration)) : null, hotel, room: body.room ? String(body.room).slice(0, 12) : null };
+      const row = { conv, thread, from_staff: me.id, text, media_path: media, media_type: media ? String(body.media_type || "audio").slice(0, 10) : null, duration: body.duration ? Math.min(600, Math.round(body.duration)) : null, hotel, room: body.room ? String(body.room).slice(0, 40) : null };
       const { error } = await sb.from("messages").insert(row); if (error) throw new E("db");
       await sb.from("conv_reads").upsert({ staff_id: me.id, conv, read_at: new Date().toISOString() });
       const where = row.room ? `${HOTEL_NAMES[hotel || ""] || ""} · Chambre ${row.room}` : "";
@@ -465,11 +471,15 @@ async function handle(req: Request) {
     }
     case "room_create": {
       needMgr(me);
-      const hotel = body.hotel, num = String(body.num || "").trim().slice(0, 12);
+      const kind = body.kind === "commun" ? "commun" : "chambre";
+      const hotel = body.hotel, num = String(body.num || "").trim().slice(0, kind === "commun" ? 40 : 12);
       if (!HOTELS.includes(hotel) || !num || !hotelOk(me, hotel)) throw new E("bad");
-      const id = hotel + "__" + num.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const slug = num.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, "");
+      const id = hotel + "__" + (kind === "commun" ? "c_" : "") + slug;
       const { data: mx } = await sb.from("rooms").select("ord").eq("hotel", hotel).order("ord", { ascending: false }).limit(1);
-      const { error } = await sb.from("rooms").insert({ id, hotel, num, ord: ((mx || [])[0]?.ord || 0) + 1 });
+      const row: any = { id, hotel, num, ord: ((mx || [])[0]?.ord || 0) + 1, kind };
+      if (kind === "commun") row.freq_days = Math.max(1, Math.min(60, Number(body.freq_days) || 7));
+      const { error } = await sb.from("rooms").insert(row);
       if (error) throw new E("exists");
       return { ok: true };
     }
@@ -491,8 +501,8 @@ async function handle(req: Request) {
       await sb.from("plan").upsert({ day: parisDay(), avail: body.avail || {}, updated_at: new Date().toISOString() }); return { ok: true };
     }
     case "issue_status": {
-      needMgr(me);
-      const st = body.status; if (!["nouveau", "notion", "regle"].includes(st)) throw new E("bad");
+      if (!isMgr(me) && !isBrico(me)) throw new E("forbidden", 403);
+      const st = body.status; if (!["nouveau", "notion", "regle"].includes(st) || (!isMgr(me) && st === "notion")) throw new E("bad");
       const p: any = { status: st }; if (st === "regle") { p.done_at = new Date().toISOString(); p.done_by = me.id; }
       if (body.notion_url) p.notion_url = String(body.notion_url).slice(0, 300);
       await sb.from("issues").update(p).eq("id", body.id); return { ok: true };
@@ -501,7 +511,7 @@ async function handle(req: Request) {
       needMgr(me);
       const label = String(body.label || "").trim().slice(0, 60); if (!label) throw new E("bad");
       const hotels = (Array.isArray(body.hotels) ? body.hotels : HOTELS).filter((h: string) => HOTELS.includes(h));
-      const role = ["gerant", "menage"].includes(body.role) ? body.role : "menage";
+      const role = ["gerant", "menage", "bricoleur"].includes(body.role) ? body.role : "menage";
       const row: any = { label, hotels: hotels.length ? hotels : HOTELS, hours: Math.max(1, Math.min(12, Number(body.hours) || 6)), phone: body.phone ? String(body.phone).slice(0, 25) : null, only_hotel: HOTELS.includes(body.only_hotel) ? body.only_hotel : null };
       if (body.id) {
         const { data: t } = await sb.from("staff").select("role").eq("id", body.id).single();
