@@ -67,7 +67,8 @@ const touch = () => (navigator.maxTouchPoints || 0) > 0;
 const cfg = () => { const c = S.cfg || {}; return { ...DEFAULT_CFG, ...c, minutes: { ...DEFAULT_CFG.minutes, ...(c.minutes || {}) }, tasks: { ...DEFAULT_CFG.tasks, ...(c.tasks || {}) }, photos: { ...DEFAULT_CFG.photos, ...(c.photos || {}) }, periodic: c.periodic || [] }; };
 const staffById = (id) => S.staff.find((s) => s.id === id);
 const nameOf = (id) => { if (!id) return 'Personne'; const s = staffById(id); return s ? s.label : (S.me && id === S.me.id ? S.me.label : 'Ancien membre'); };
-const role = () => !S.me ? null : (S.me.role === 'menage' ? 'menage' : (S.me.role === 'bricoleur' ? 'brico' : (S.preview ? 'menage' : 'mgr')));
+// Les gérants peuvent passer en vue « ménage » ou « intendant » (S.preview) : ce qu'ils y font est réel.
+const role = () => !S.me ? null : (S.me.role === 'menage' ? 'menage' : (S.me.role === 'bricoleur' ? 'brico' : (S.preview === 'brico' ? 'brico' : (S.preview ? 'menage' : 'mgr'))));
 const isMgr = () => S.me && (S.me.role === 'owner' || S.me.role === 'gerant');
 const roomsOf = (h) => Object.values(S.rooms).filter((r) => r.hotel === h && r.kind !== 'commun').sort((a, b) => a.order - b.order);
 const communsOf = (h) => Object.values(S.rooms).filter((r) => r.hotel === h && r.kind === 'commun').sort((a, b) => a.order - b.order);
@@ -326,7 +327,7 @@ async function stopRec(send) {
 }
 async function sendVoice(ctx, blob, type, ext, secs) {
   const [kind, arg] = splitCtx(ctx);
-  if (S.me.role !== 'menage' && (kind === 'boss' || kind === 'room')) { toast('Mode test : en vrai, ce vocal partirait aux responsables.'); return; }
+  if (isMgr() && (kind === 'boss' || kind === 'room')) { toast('Mode test : en vrai, ce vocal partirait aux responsables.'); return; }
   toast('Envoi du vocal…', 8000);
   let path;
   try { path = await upload(blob, type, ext); } catch (e) { toast('Le vocal n’a pas pu partir. Vérifie la connexion et réessaie.'); return; }
@@ -375,8 +376,8 @@ function render() {
   if (!S.secret) { a.innerHTML = viewActivate(); return; }
   if (!S.loaded) { a.innerHTML = `<div class="wrap"><div class="empty"><div class="e">🛎️</div><h2>Chargement…</h2></div></div>`; return; }
   document.body.dataset.hotel = (S.open && S.rooms[S.open]) ? S.rooms[S.open].hotel : S.hotel;
-  const rl = role(); document.body.classList.toggle('mgr', rl === 'mgr' || rl === 'brico');
-  a.innerHTML = rl === 'mgr' ? viewManager() : (rl === 'brico' ? viewBrico() : (S.open ? viewCleanRoom() : viewCleanHome()));
+  const rl = role(); document.body.classList.toggle('mgr', (rl === 'mgr' || rl === 'brico') && !(rl === 'brico' && S.open));
+  a.innerHTML = rl === 'mgr' ? viewManager() : (S.open ? viewCleanRoom() : (rl === 'brico' ? viewBrico() : viewCleanHome()));
   updateBadge();
 }
 // Pastille rouge sur l'icône de l'appli (écran d'accueil) = messages non lus.
@@ -542,7 +543,10 @@ function viewHome() {
       ${tile('projets')}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
       ${tile('contacts', `${S.contacts.length} contacts`)}
-    </div></div>`;
+    </div>
+    <div class="group views"><div class="prow ro"><span class="pr-t"><b>Voir comme</b><span class="muted">et faire à leur place si besoin</span></span></div>
+      <button class="prow" data-a="preview" data-k="menage"><span class="pr-t"><b>🧹 Femme de ménage</b><span class="muted">${myCleanings().length ? myCleanings().length + ' nettoyage' + (myCleanings().length > 1 ? 's' : '') + ' pour vous' : 'Les nettoyages qui vous sont donnés'}</span></span><span class="chev">›</span></button>
+      <button class="prow" data-a="preview" data-k="brico"><span class="pr-t"><b>🔧 Intendant</b><span class="muted">Réparations, prendre un nettoyage</span></span><span class="chev">›</span></button></div></div>`;
 }
 
 /* ----- registre des occupants (gérants seulement) ----- */
@@ -747,10 +751,10 @@ function placeRow(r) {
 }
 function actionBar() {
   const ids = [...S.sel], rooms = ids.map((i) => S.rooms[i]).filter(Boolean);
-  const people = cleaners().map((s) => s.id); people.push(S.me.id);
+  const people = [...cleaners(), ...S.staff.filter((s) => s.active !== false && s.id !== S.me.id && (s.role === 'bricoleur' || isMgrRole(s.role)))].map((s) => s.id); people.push(S.me.id);
   const allBlocked = rooms.length && rooms.every((r) => r.blocked);
   const hasRoom = rooms.some((r) => !isCommun(r)), hasCom = rooms.some(isCommun);
-  const opt = (id) => `<option value="${id}" ${S.assignTo === id ? 'selected' : ''}>${esc(id === S.me.id ? 'Moi (test)' : nameOf(id))}${!habitual(id, S.hotel) ? ' (pas son hôtel habituel)' : ''}</option>`;
+  const opt = (id) => `<option value="${id}" ${S.assignTo === id ? 'selected' : ''}>${esc(id === S.me.id ? 'Moi' : nameOf(id) + (staffById(id) && staffById(id).role !== 'menage' ? ' (' + (ROLE_L[staffById(id).role] || '').toLowerCase() + ')' : ''))}${!habitual(id, S.hotel) ? ' (pas son hôtel habituel)' : ''}</option>`;
   return `<div class="bar"><div class="in">
     <div class="row between"><b>${ids.length} lieu${ids.length > 1 ? 'x' : ''} : ${rooms.map((r) => esc(isCommun(r) ? r.num : r.num)).join(', ')}</b><button class="btn small ghost" data-a="clearSel">Annuler</button></div>
     <div class="row"><label for="assignTo" class="muted">Pour</label><select id="assignTo" data-change="assignTo" style="flex:1"><option value="">Choisir…</option>
@@ -974,18 +978,21 @@ function ctForm(id) {
       <button class="btn pri" data-a="ctSave" data-id="${id || ''}">Enregistrer</button></div>`);
 }
 
+// Bandeau affiché quand un gérant utilise l'appli comme une femme de ménage ou l'intendant.
+const pvBar = () => S.preview ? `<div class="pvbar"><span>👁 Vue ${S.preview === 'brico' ? 'intendant' : 'femme de ménage'} · ce que vous faites ici compte vraiment</span><button class="btn small" data-a="unpreview">Revenir</button></div>` : '';
 /* ----- bricoleur : réparations + ménage en lecture ----- */
 function viewBrico() {
   const un = unreadTotal(), open = S.issues.filter((i) => repEtat(i) !== 'fait'), todo = open.filter((i) => repEtat(i) === 'a_faire'), urg = open.filter((i) => i.priority === 'urgent').length;
   if (S.tab === 'issues' || S.tab === 'menage' || S.tab === 'contacts' || (S.tab === 'registre' && canReg('reg_pec'))) {
     const body = S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : (S.tab === 'contacts' ? viewContacts() : viewMenageRead()));
     const right = S.tab === 'issues' ? `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>` : (S.tab === 'registre' && canReg('reg_full') ? `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>` : '');
-    return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre', contacts: 'Prestataires' }[S.tab], right)}<div class="wrap">${body}</div>
+    return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre', contacts: 'Prestataires' }[S.tab], right)}<div class="wrap">${pvBar()}${body}</div>
       <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' non lus' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
   }
-  const [, gt] = greet();
-  return `<div class="wrap home">
+  const [, gt] = greet(), myClean = myCleanings();
+  return `<div class="wrap home">${pvBar()}
     <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div></div>
+    ${myClean.length ? `<div class="card"><h3>🧹 Mes nettoyages</h3><div class="group">${myClean.map(cleanRow).join('')}</div></div>` : ''}
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
       <button class="stat" data-a="go" data-k="issues"><b class="${todo.length ? 'n-blue' : ''}">${todo.length}</b><span>à faire</span></button>
       <button class="stat" data-a="go" data-k="issues"><b class="${open.length - todo.length ? 'n-green' : ''}">${open.length - todo.length}</b><span>en cours</span></button>
@@ -1000,14 +1007,20 @@ function viewBrico() {
     </div></div>`;
 }
 // Ménage en lecture seule : l'état de chaque lieu et qui l'a nettoyé.
+const myCleanings = () => Object.values(S.rooms).filter((r) => r.assignee === S.me.id && !r.blocked && (r.status === 'a_faire' || r.status === 'en_cours'));
+const cleanRow = (r) => `<button class="prow" data-a="openClean" data-id="${r.id}"><span class="pr-t"><b>${esc(placeName(r))}</b><span class="muted">${esc(hotelName(r.hotel))} · ${TY[r.type] ? TY[r.type].e + ' ' + TY[r.type].l : ''}</span></span><span class="pill p-${(ST[r.status] || ST.a_faire).c}">${(ST[r.status] || ST.a_faire).l}</span></button>`;
 function viewMenageRead() {
   const row = (r) => {
     const st = ST[r.status] || ST.propre;
     const pill = r.blocked ? '<span class="pill p-plain">Bloqué</span>' : `<span class="pill p-${st.c}">${st.l}</span>`;
     const sub = r.status === 'en_cours' || r.status === 'a_faire' ? (r.assignee ? 'En charge : ' + esc(first(nameOf(r.assignee))) : 'Pas encore donné') : (r.doneAt ? 'Fait ' + when(r.doneAt) + (r.doneBy ? ' par ' + esc(first(nameOf(r.doneBy))) : '') : 'Pas encore suivi');
-    return `<div class="prow ro"><span class="pr-t"><b>${esc(placeName(r))}</b><span class="muted">${sub}</span></span>${pill}</div>`;
+    const open = !r.blocked && (r.status === 'a_faire' || r.status === 'en_cours');
+    const btn = !open ? '' : (r.assignee === S.me.id ? `<button class="btn small pri" data-a="openClean" data-id="${r.id}">Ouvrir</button>` : `<button class="btn small soft" data-a="roomTake" data-id="${r.id}">Je prends</button>`);
+    return `<div class="prow ro"><span class="pr-t"><b>${esc(placeName(r))}</b><span class="muted">${sub}</span></span>${btn || pill}</div>`;
   };
-  return `${hotelSeg()}<h2 class="sec">Chambres</h2><div class="group">${roomsOf(S.hotel).map(row).join('')}</div>
+  const mine = myCleanings();
+  return `${mine.length ? `<h2 class="sec">Mes nettoyages</h2><div class="group">${mine.map(cleanRow).join('')}</div>` : ''}
+    ${hotelSeg()}<p class="muted">Touchez « Je prends » pour faire un nettoyage à la place de quelqu’un.</p><h2 class="sec">Chambres</h2><div class="group">${roomsOf(S.hotel).map(row).join('')}</div>
     <h2 class="sec">Parties communes</h2><div class="group">${communsOf(S.hotel).map(row).join('') || '<p class="muted" style="padding:12px">Aucune.</p>'}</div>`;
 }
 
@@ -1193,7 +1206,8 @@ function viewSettings() {
       <h3>Parties communes</h3>
       <div class="list">${communsOf(S.hotel).map((r) => `<div class="li"><span class="t"><b>${esc(r.num)}</b></span><button class="x" data-a="delRoom" data-id="${r.id}" aria-label="Retirer ${esc(r.num)}">✕</button></div>`).join('') || '<p class="muted">Aucune.</p>'}</div>
       <div class="row"><input id="add-commun" placeholder="Ex. : Couloir 2e étage" style="flex:1"><button class="btn small" data-a="addCommun">Ajouter</button></div></div>
-    <div class="card"><h2>👁 Écran des femmes de ménage</h2><p class="muted">Pour voir l’appli comme elles la voient.</p><button class="btn" data-a="preview">Voir leur écran</button></div>
+    <div class="card"><h2>👁 Voir et faire comme l’équipe</h2><p class="muted">Vous passez sur leur écran. Ce que vous y faites compte vraiment : nettoyages qui vous sont donnés, réparations.</p>
+      <div class="row"><button class="btn" data-a="preview" data-k="menage">🧹 Femme de ménage</button><button class="btn" data-a="preview" data-k="brico">🔧 Intendant</button></div></div>
     <div class="card"><h2>🗂️ Photos et vocaux</h2><p class="muted">Effacés automatiquement après ${c.retentionDays || 30} jours (sauf les photos modèles des chambres).</p></div>`;
 }
 
@@ -1209,7 +1223,7 @@ function viewCleanHome() {
     return `<button class="job st-${r.status}" data-a="openClean" data-id="${r.id}"><span class="ph" style="background-image:${photoUrl(r.hotel)}" aria-hidden="true"></span>${isCommun(r) ? '<span class="num com" aria-hidden="true">🧽</span>' : `<span class="num">${esc(r.num)}</span>`}
       <span class="txt"><b>${isCommun(r) ? esc(r.num) : t.e + ' ' + t.l}</b><span class="muted">${esc(hotelName(r.hotel))}${r.status === 'en_cours' ? ' · en cours' : ''}${r.status === 'a_controler' ? ' · terminée ' + hm(r.doneAt) : ''}</span>${r.rejectNote ? '<span class="chip c-red">🔁 À refaire</span>' : ''}</span></button>`; };
   return `<div class="wrap">
-    ${S.preview ? `<button class="btn small" data-a="unpreview" style="align-self:flex-start">← Retour à l’écran gérant</button>` : ''}
+    ${pvBar()}
     <div class="card"><div class="hero"><h1>${ge} ${gt} ${esc(first(S.me.label))}</h1><span class="day">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
       ${total ? `<div class="row between"><b>${done.length} terminé${done.length > 1 ? 's' : ''} sur ${total}</b>${left ? `<span class="muted">Encore environ ${mn(left)}</span>` : ''}</div><div class="prog"><i style="width:${Math.round(100 * done.length / total)}%"></i></div>` : ''}</div>
     ${todo.length ? `<div class="col">${todo.map(card).join('')}</div>` : `<div class="card empty"><div class="e">${total ? '🎉' : '☕'}</div><h2>${total ? 'Tout est fait, bravo !' : 'Pas de chambre pour l’instant'}</h2><p class="muted">${total ? 'Le responsable va contrôler.' : 'Tu seras prévenue quand on te donne des chambres.'}</p></div>`}
@@ -1230,7 +1244,7 @@ function cleanItems(r) {
 }
 function viewCleanRoom() {
   const r = S.rooms[S.open];
-  if (!r || r.assignee !== S.me.id) { S.open = null; return viewCleanHome(); }
+  if (!r || r.assignee !== S.me.id) { S.open = null; return role() === 'brico' ? viewBrico() : viewCleanHome(); }
   const t = TY[r.type] || { e: '🧹', l: '' }, w = workOf(r.id), items = cleanItems(r), shots = cfg().photos[r.type] || [];
   const nChk = items.filter((i) => w.checks[i.key]).length, nPh = shots.filter((l) => w.photos[l]).length, ready = nChk === items.length && nPh === shots.length;
   let main = '';
@@ -1557,8 +1571,9 @@ const A = {
     if (S.confirmDel !== d.id) { S.confirmDel = d.id; toast('Touche ✕ encore une fois pour retirer : ' + placeName(r) + '.'); setTimeout(() => S.confirmDel = null, 5000); return; }
     await act(() => api('room_delete', { id: d.id }), placeName(r) + ' : retiré');
   },
-  preview() { S.preview = true; S.open = null; render(); window.scrollTo(0, 0); },
-  unpreview() { S.preview = false; S.open = null; render(); },
+  preview(d) { S.preview = d && d.k === 'brico' ? 'brico' : 'menage'; S.tab = 'home'; S.open = null; closeSheet(); render(); window.scrollTo(0, 0); },
+  unpreview() { S.preview = false; S.tab = 'home'; S.open = null; render(); window.scrollTo(0, 0); },
+  async roomTake(d) { const r = S.rooms[d.id]; const ok = await act(() => api('room_take', { id: d.id }), r && r.assignee ? 'Repris, c’est à vous' : 'C’est à vous'); if (ok) { S.open = d.id; render(); window.scrollTo(0, 0); } },
   /* ménage */
   openClean(d) { S.open = d.id; render(); window.scrollTo(0, 0); },
   back() { S.open = null; render(); window.scrollTo(0, 0); },
