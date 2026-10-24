@@ -560,7 +560,11 @@ const fdate = (iso) => iso ? String(iso).slice(0, 10).split('-').reverse().join(
 const presentOcc = () => S.reg.occ.filter((o) => o.statut !== 'sorti');
 // Accès au registre : gérants toujours ; intendant selon ce que le propriétaire lui a donné.
 const canReg = (p) => !!S.me && (isMgr() || (S.me.role === 'bricoleur' && (S.me.perms || []).some((x) => x === p || (p === 'reg_pec' && x === 'reg_full'))));
-const PERM_L = [['reg_pec', 'Répartir les prises en charge reçues', 'Voir qui dort où, loger ou rattacher les PEC reçues, les écarter'], ['reg_full', 'Gérer tout le registre', 'En plus : fiches, arrivées, départs, prises en charge']];
+const PERM_L = [['reg_pec', 'Répartir les prises en charge reçues', 'Voir qui dort où, loger ou rattacher les PEC reçues, les écarter'], ['reg_full', 'Gérer tout le registre', 'En plus : fiches, arrivées, départs, prises en charge'], ['contacts', 'Voir les prestataires', 'Électricité, alarme, travaux, contrôle : numéros et notes']];
+// Prestataires : l'intendant les voit seulement si le propriétaire lui a ouvert l'accès (vue intendant d'un gérant = mêmes droits que l'intendant).
+const PRESTA = ['Électricité', 'Alarme / SSI', 'Travaux', 'Contrôle & sécurité'];
+const bricoPerms = () => S.me.role === 'bricoleur' ? (S.me.perms || []) : ((S.staff.find((s) => s.role === 'bricoleur' && s.active !== false) || {}).perms || []);
+const canPresta = () => role() === 'mgr' || (role() === 'brico' && bricoPerms().includes('contacts'));
 const occById = (id) => S.reg.occ.find((o) => o.id === id);
 const occOfRoom = (rid) => presentOcc().filter((o) => o.room_id === rid);
 const occName = (o) => o ? ([o.prenom, o.nom].filter(Boolean).join(' ') || 'Sans nom') : 'Personne supprimée';
@@ -906,7 +910,7 @@ function viewIssues() {
   return `${scopeSeg(S.issues.filter((i) => repEtat(i) !== 'fait'))}
     <div class="segc" role="group" aria-label="État">${Object.entries(RST).map(([k, v]) => `<button data-a="repFilter" data-k="${k}" aria-pressed="${f === k}">${k === 'piece' ? 'Pièce' : v.l}${k !== 'fait' && n(k) ? ` <span class="cnt">${n(k)}</span>` : ''}</button>`).join('')}</div>
     ${list.length ? `<div class="group">${list.map(repRow).join('')}</div>` : `<div class="card empty"><div class="e">${f === 'fait' ? '📋' : '✅'}</div><h3>${f === 'fait' ? 'Rien de terminé pour l’instant' : 'Rien ici'}</h3><p class="muted">Les pannes signalées par l’équipe arrivent dans « À faire » avec leur photo ou leur vocal.</p></div>`}
-    ${role() === 'brico' || isMgr() ? `<button class="btn ghost" data-a="go" data-k="contacts">📇 ${isMgr() ? 'Contacts et prestataires' : 'Prestataires'}</button>` : ''}`;
+    ${canPresta() ? `<button class="btn ghost" data-a="go" data-k="contacts">📇 ${role() === 'mgr' ? 'Contacts et prestataires' : 'Prestataires'}</button>` : ''}`;
 }
 function repSheet(id) {
   const i = S.issues.find((x) => x.id === id); if (!i) return;
@@ -948,7 +952,7 @@ const CCATS = ['Électricité', 'Alarme / SSI', 'Travaux', 'Contrôle & sécurit
 const CST = { actif: ['Actif', 'green'], relancer: ['À relancer', 'amber'], decline: ['A décliné', 'plain'], completer: ['Coordonnées à compléter', 'slate'] };
 function viewContacts() {
   const q = S.cq.trim().toLowerCase();
-  const list = S.contacts.filter((c) => !q || [c.nom, c.societe, c.role, c.categorie, c.notes].join(' ').toLowerCase().includes(q));
+  const list = S.contacts.filter((c) => role() === 'mgr' || PRESTA.includes(c.categorie)).filter((c) => !q || [c.nom, c.societe, c.role, c.categorie, c.notes].join(' ').toLowerCase().includes(q));
   const cats = [...new Set([...CCATS, ...list.map((c) => c.categorie || 'Autre')])].filter((k) => list.some((c) => (c.categorie || 'Autre') === k));
   return `<input id="ctQ" type="search" placeholder="Chercher un nom, une société, un métier" value="${esc(S.cq)}" data-input="ctQ" style="width:100%">
     ${cats.map((k) => `<h2 class="sec">${esc(k)}</h2><div class="group">${list.filter((c) => (c.categorie || 'Autre') === k).map((c) => `<button class="prow" data-a="ctOpen" data-id="${c.id}"><span class="pr-t"><b>${esc(c.nom)}</b><span class="muted">${esc([c.role, c.societe && c.societe !== c.nom ? c.societe : ''].filter(Boolean).join(' · '))}</span></span>${c.telephone ? '<span class="pill p-green">📞</span>' : ''}${c.statut === 'relancer' ? '<span class="pill p-amber">À relancer</span>' : ''}</button>`).join('')}</div>`).join('') || '<div class="card empty"><h3>Aucun contact</h3></div>'}`;
@@ -983,7 +987,7 @@ const pvBar = () => S.preview ? `<div class="pvbar"><span>👁 Vue ${S.preview =
 /* ----- bricoleur : réparations + ménage en lecture ----- */
 function viewBrico() {
   const un = unreadTotal(), open = S.issues.filter((i) => repEtat(i) !== 'fait'), todo = open.filter((i) => repEtat(i) === 'a_faire'), urg = open.filter((i) => i.priority === 'urgent').length;
-  if (S.tab === 'issues' || S.tab === 'menage' || S.tab === 'contacts' || (S.tab === 'registre' && canReg('reg_pec'))) {
+  if (S.tab === 'issues' || S.tab === 'menage' || (S.tab === 'contacts' && canPresta()) || (S.tab === 'registre' && canReg('reg_pec'))) {
     const body = S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : (S.tab === 'contacts' ? viewContacts() : viewMenageRead()));
     const right = S.tab === 'issues' ? `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>` : (S.tab === 'registre' && canReg('reg_full') ? `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>` : '');
     return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre', contacts: 'Prestataires' }[S.tab], right)}<div class="wrap">${pvBar()}${body}</div>
@@ -1002,7 +1006,7 @@ function viewBrico() {
       <button class="tile" data-a="go" data-k="menage"><span class="ti-ic t-blue">${ico('menage')}</span><span class="ti-t">Ménage</span><span class="ti-s">Qui a nettoyé quoi</span></button>
       ${canReg('reg_pec') ? `<button class="tile" data-a="go" data-k="registre"><span class="ti-ic t-purple">${ico('book')}</span>${inboxTodo().length ? `<span class="badge">${inboxTodo().length}</span>` : ''}<span class="ti-t">Registre</span><span class="ti-s">${inboxTodo().length ? inboxTodo().length + ' PEC à traiter' : presentOcc().length + ' présents'}</span></button>` : ''}
       <button class="tile" data-a="convList"><span class="ti-ic t-green">${ico('chat')}</span>${un ? `<span class="badge">${un}</span>` : ''}<span class="ti-t">Messages</span><span class="ti-s">${un ? un + ' non lu' + (un > 1 ? 's' : '') : 'Tout est lu'}</span></button>
-      <button class="tile" data-a="go" data-k="contacts"><span class="ti-ic t-brown">${ico('phone')}</span><span class="ti-t">Prestataires</span><span class="ti-s">Électriciens, alarme…</span></button>
+      ${canPresta() ? `<button class="tile" data-a="go" data-k="contacts"><span class="ti-ic t-brown">${ico('phone')}</span><span class="ti-t">Prestataires</span><span class="ti-s">Électriciens, alarme…</span></button>` : ''}
       <button class="tile" data-a="repNew"><span class="ti-ic t-red">${ico('plus')}</span><span class="ti-t">Nouvelle</span><span class="ti-s">réparation</span></button>
     </div></div>`;
 }

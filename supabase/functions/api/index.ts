@@ -138,7 +138,7 @@ function parisHour(d = new Date()) { return Number(new Intl.DateTimeFormat("en-G
 const isMgr = (me: any) => me.role === "owner" || me.role === "gerant";
 const isBrico = (me: any) => me.role === "bricoleur";
 // Accès donnés par le propriétaire à l'intendant (« reg_pec » : répartir les PEC reçues ; « reg_full » : tout le registre).
-const PERMS = ["reg_pec", "reg_full"];
+const PERMS = ["reg_pec", "reg_full", "contacts"];
 const can = (me: any, p: string) => isMgr(me) || (isBrico(me) && Array.isArray(me.perms) && (me.perms.includes(p) || (p === "reg_pec" && me.perms.includes("reg_full"))));
 // Réparations : états, origines, priorités ; contacts visibles par l'intendant.
 const ETATS = ["a_faire", "en_cours", "piece", "fait"];
@@ -262,7 +262,7 @@ async function actState(me: any, device: any) {
     if (brico) {
       out.issues.forEach((i: any) => { paths.push(i.photo, i.video, i.audio); (i.done_photos || []).forEach((p: any) => paths.push(p.id)); });
       out.notes = await issueNotes(out.issues); out.notes.forEach((n: any) => paths.push(n.photo));
-      out.contacts = (await sb.from("contacts").select("*").in("categorie", PRESTA).order("nom")).data || [];
+      out.contacts = (me.perms || []).includes("contacts") ? ((await sb.from("contacts").select("*").in("categorie", PRESTA).order("nom")).data || []) : [];
     }
     if (can(me, "reg_pec")) out.reg = await regState();
   }
@@ -797,7 +797,7 @@ async function handle(req: Request) {
       const perms = (Array.isArray(body.perms) ? body.perms : []).filter((p: string) => PERMS.includes(p));
       await sb.from("staff").update({ perms }).eq("id", t.id);
       const added = perms.filter((p: string) => !(t.perms || []).includes(p)), removed = (t.perms || []).filter((p: string) => !perms.includes(p));
-      const L: Record<string, string> = { reg_pec: "répartir les PEC reçues", reg_full: "gérer tout le registre" };
+      const L: Record<string, string> = { reg_pec: "répartir les PEC reçues", reg_full: "gérer tout le registre", contacts: "voir les prestataires" };
       if (added.length || removed.length) await regLog(me, added.length ? "Accès donné" : "Accès repris", null, t.label, null, [...added.map((p: string) => "+ " + L[p]), ...removed.map((p: string) => "− " + L[p])].join(", "));
       return { ok: true };
     }
