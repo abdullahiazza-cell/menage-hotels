@@ -38,7 +38,7 @@ const LS = {
 };
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
-  me: null, cfg: DEFAULT_CFG, rooms: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
+  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
   hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, issueFilter: 'nouveau',
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
@@ -156,7 +156,7 @@ const ERR = {
   invite_invalid: 'Ce lien n’est plus valable. Demande un nouveau lien à ton responsable.', locked: 'Accès bloqué après 5 codes faux. Appelle ton responsable.',
   not_yours: 'Cette chambre n’est plus à toi.', not_started: 'Touche d’abord « Je commence ».', photos_missing: 'Il manque des photos.',
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
-  busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
+  reason: 'Indique la raison.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
 };
 async function api(a, payload = {}) {
   let r;
@@ -193,6 +193,7 @@ async function refresh(force) {
       S.me = d.me; S.device = d.device; S.cfg = d.cfg || DEFAULT_CFG; S.vapid = d.vapid; S.urls = d.urls || {};
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
+      S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
       S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || [];
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
@@ -481,7 +482,7 @@ const ico = (k, cls) => `<svg class="ico ${cls || ''}" viewBox="0 0 24 24" fill=
 /* ----- gérant : accueil à tuiles + écrans par thème ----- */
 const SECTIONS = {
   menage: { t: 'Ménage', i: 'menage', c: 't-blue' }, issues: { t: 'Réparations', i: 'tool', c: 't-orange' },
-  registre: { t: 'Registre', i: 'book', c: 't-purple', soon: 'Étape 2' }, securite: { t: 'Sécurité', i: 'shield', c: 't-red', soon: 'Étape 4' },
+  registre: { t: 'Registre', i: 'book', c: 't-purple' }, securite: { t: 'Sécurité', i: 'shield', c: 't-red', soon: 'Étape 4' },
   msgs: { t: 'Messages', i: 'chat', c: 't-green' }, projets: { t: 'Projets', i: 'check', c: 't-teal', soon: 'Étape 5' },
   team: { t: 'Équipe', i: 'users', c: 't-indigo' }, settings: { t: 'Réglages', i: 'sliders', c: 't-gray' },
 };
@@ -491,6 +492,7 @@ function viewManager() {
   const unread = unreadTotal();
   let body = '', right = '';
   if (S.tab === 'menage') { body = viewMenage(); }
+  else if (S.tab === 'registre') { body = viewRegistre(); right = `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>`; }
   else if (S.tab === 'issues') { body = viewIssues(); right = `<button class="nb-act" data-a="report" aria-label="Signaler">${ico('plus')}</button>`; }
   else if (S.tab === 'msgs') { body = viewThreads(); right = `<button class="nb-act" data-a="newMsg" aria-label="Nouveau message">${ico('plus')}</button>`; }
   else if (S.tab === 'team') { body = viewTeam(); right = `<button class="nb-act" data-a="personNew" aria-label="Ajouter une personne">${ico('plus')}</button>`; }
@@ -533,12 +535,139 @@ function viewHome() {
     <div class="tiles">
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
       ${tile('issues', c.open ? `${c.open} en cours` : 'Rien à réparer', c.newIss)}
-      ${tile('registre')}${tile('securite')}
+      ${tile('registre', `${presentOcc().filter(inScope).length} présents`, regBadge())}${tile('securite')}
       ${tile('msgs', un ? `${un} non lu${un > 1 ? 's' : ''}` : 'Tout est lu', un)}
       ${tile('projets')}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
       ${tile('settings', 'Routines, lieux')}
     </div></div>`;
+}
+
+/* ----- registre des occupants (gérants seulement) ----- */
+const CATS = ['MNA', 'Mineur ASE', 'Jeune majeur', 'Adulte (PARI)', 'Conventionnel', 'Autre'];
+const FINANCEURS = ['Conseil départemental', 'Association', 'Autre'];
+const REPAS = ['Non', 'Petit déjeuner seul', 'Oui'];
+const OLD_REG = 'https://claude.ai/code/artifact/d68a9a35-8b67-47f5-b68e-731d3a154178';
+const todayISO = () => dayStr(Date.now());
+const addDaysISO = (iso, n) => { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return dayStr(d.getTime()); };
+const fdate = (iso) => iso ? String(iso).slice(0, 10).split('-').reverse().join('/') : '—';
+const presentOcc = () => S.reg.occ.filter((o) => o.statut !== 'sorti');
+const occById = (id) => S.reg.occ.find((o) => o.id === id);
+const occOfRoom = (rid) => presentOcc().filter((o) => o.room_id === rid);
+const occName = (o) => o ? ([o.prenom, o.nom].filter(Boolean).join(' ') || 'Sans nom') : 'Personne supprimée';
+const pecsOf = (id) => S.reg.pecs.filter((p) => p.occupant_id === id);
+function pecState(o) {
+  const t = todayISO(), list = pecsOf(o.id);
+  const act = list.filter((p) => (!p.debut || p.debut <= t) && (!p.fin || p.fin >= t));
+  if (act.length) return act.every((p) => p.fin && p.fin <= addDaysISO(t, 7)) ? { c: 'amber', t: 'PEC expire bientôt' } : { c: 'green', t: 'PEC en cours' };
+  if (o.categorie === 'Conventionnel') return { c: 'plain', t: 'Sans PEC' };
+  return list.length ? { c: 'red', t: 'PEC expirée' } : { c: 'red', t: 'PEC manquante' };
+}
+const inboxTodo = () => S.reg.inbox.filter((i) => i.status === 'a_traiter');
+const regBadge = () => scoped(inboxTodo()).length + scoped(presentOcc()).filter((o) => pecState(o).c === 'red').length;
+const occPlace = (o) => { const r = o.room_id && S.rooms[o.room_id]; return r ? placeShort(r) : 'sans chambre'; };
+function viewRegistre() {
+  const todo = inboxTodo().length;
+  const subs = [['chambres', 'Chambres', 0], ['personnes', 'Personnes', 0], ['atraiter', 'À traiter', todo], ['journal', 'Journal', 0]];
+  const body = { chambres: regRooms, personnes: regPeople, atraiter: regInbox, journal: regJournal }[S.rsub] || regRooms;
+  return `<div class="segc" role="group" aria-label="Registre">${subs.map(([k, l, n]) => `<button data-a="rsub" data-k="${k}" aria-pressed="${S.rsub === k}">${l}${n ? ` <span class="badge sm">${n}</span>` : ''}</button>`).join('')}</div>${body()}`;
+}
+function occLine(o) { const ps = pecState(o); return `<span class="ol"><span>${esc(occName(o))}${o.categorie ? ` <span class="muted">· ${esc(o.categorie)}</span>` : ''}</span><span class="pill p-${ps.c}">${ps.t}</span></span>`; }
+function regRooms() {
+  const rooms = roomsOf(S.hotel), occ = presentOcc().filter((o) => o.hotel === S.hotel);
+  const free = rooms.filter((r) => !occOfRoom(r.id).length && !r.blocked).length;
+  const none = occ.filter((o) => !o.room_id || !S.rooms[o.room_id]);
+  const row = (r) => { const os = occOfRoom(r.id);
+    return `<button class="prow" data-a="regRoom" data-id="${r.id}"><span class="pr-t"><b>${esc(placeName(r))}</b>${os.length ? os.map(occLine).join('') : (r.blocked ? `<span class="muted">⛔ ${esc(r.blockReason || '')}</span>` : '')}</span>${os.length ? '' : `<span class="pill ${r.blocked ? 'p-plain' : 'p-slate'}">${r.blocked ? 'Bloquée' : 'Libre'}</span>`}</button>`; };
+  return `${hotelSeg()}<div class="chips"><span class="chip c-accent">Présents <b>${occ.length}</b></span><span class="chip c-slate">Chambres libres <b>${free}</b></span></div>
+    <div class="group">${rooms.map(row).join('')}</div>
+    ${none.length ? `<h2 class="sec">Sans chambre</h2><p class="muted">Repas seuls, ou à replacer.</p><div class="group">${none.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}${o.notes ? `<span class="muted">${esc(o.notes)}</span>` : ''}</span></button>`).join('')}</div>` : ''}`;
+}
+function regPeople() {
+  const q = S.rq.trim().toLowerCase();
+  let list = (S.rSortis ? S.reg.occ : presentOcc()).filter(inScope);
+  if (q) list = list.filter((o) => (occName(o) + ' ' + (o.categorie || '')).toLowerCase().includes(q));
+  list.sort((a, b) => (a.statut === 'sorti') - (b.statut === 'sorti') || String(a.nom || '').localeCompare(String(b.nom || ''), 'fr'));
+  return `<input id="regQ" type="search" placeholder="Chercher un nom" value="${esc(S.rq)}" data-input="regQ" style="width:100%">
+    <div class="row between"><span class="muted">${list.length} personne${list.length > 1 ? 's' : ''}</span><button class="toggle" data-a="rSortis" aria-pressed="${S.rSortis}">${S.rSortis ? '✓ ' : ''}Afficher les départs</button></div>
+    <div class="group">${list.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}<span class="muted">${esc(hotelName(o.hotel))} · ${esc(occPlace(o))}${o.statut === 'sorti' ? ' · parti le ' + fdate(o.sortie) : ' · depuis le ' + fdate(o.entree)}</span></span></button>`).join('') || '<p class="muted" style="padding:14px">Personne.</p>'}</div>`;
+}
+const docsHtml = (docs) => (docs || []).length ? `<div class="docs">${docs.map((d) => `<a class="doc" href="${OLD_REG}" target="_blank" rel="noopener">📄 ${esc(d.name || 'Document')}</a>`).join('')}<span class="muted">Les PDF s’ouvrent pour l’instant dans l’ancien registre.</span></div>` : '';
+function pecInCard(i) {
+  return `<div class="card"><div class="row between"><h3>${esc([i.nom, i.prenom].filter(Boolean).join(' '))}</h3><span class="pill p-plain">${esc(i.categorie || '')}</span></div>
+    <p class="muted">${esc(i.expediteur || '')} · reçu le ${fdate(i.received_at)} · ${esc(hotelName(i.hotel || ''))}</p>
+    ${i.resume ? `<p>${esc(i.resume)}</p>` : ''}${i.alerte ? `<div class="banner c-amber">${esc(i.alerte)}</div>` : ''}${docsHtml(i.docs)}
+    ${i.status === 'a_traiter' ? `<div class="row"><button class="btn small pri" data-a="inApply" data-id="${i.id}">Loger ou rattacher</button><button class="btn small" data-a="inDiscard" data-id="${i.id}">Écarter</button></div>`
+      : `<p class="muted">${i.status === 'ecarte' ? 'Écarté' : 'Traité'}${i.note ? ' : ' + esc(i.note) : ''}${i.treated_at ? ' · ' + fdate(i.treated_at) : ''}</p><button class="btn small ghost" data-a="inReopen" data-id="${i.id}" style="align-self:flex-start">Rouvrir</button>`}</div>`;
+}
+function regInbox() {
+  const todo = scoped(inboxTodo()), done = scoped(S.reg.inbox.filter((i) => i.status !== 'a_traiter'));
+  return `${todo.length ? `<p class="muted">Prises en charge reçues, pas encore rattachées à une personne du registre.</p><div class="col">${todo.map(pecInCard).join('')}</div>` : '<div class="card empty"><div class="e">✅</div><h3>Rien à traiter</h3></div>'}
+    ${done.length ? `<button class="btn ghost" data-a="rDone">${S.rDone ? 'Masquer' : 'Voir'} les ${done.length} déjà traitées</button>${S.rDone ? `<div class="col">${done.map(pecInCard).join('')}</div>` : ''}` : ''}`;
+}
+function regJournal() {
+  return `<p class="muted">Qui a fait quoi, quand et pourquoi.</p><div class="group">${S.reg.log.map((l) => `<div class="prow ro"><span class="pr-t"><b>${esc(l.action || '')}</b><span>${esc(l.cible || '')}</span><span class="muted">${esc(l.by_label || '?')} · ${when(l.ts)}${l.raison ? ' · « ' + esc(l.raison) + ' »' : ''}${l.details ? ' · ' + esc(l.details) : ''}</span></span></div>`).join('') || '<p class="muted" style="padding:14px">Vide.</p>'}</div>`;
+}
+const opt = (v, cur, l) => `<option value="${esc(v)}" ${String(cur ?? '') === String(v) ? 'selected' : ''}>${esc(l ?? v)}</option>`;
+const roomOpts = (hotel, cur) => `<option value="">Sans chambre (repas seul)</option>${roomsOf(hotel).map((r) => opt(r.id, cur, placeName(r) + (occOfRoom(r.id).filter((o) => o.room_id !== cur).length ? ' · occupée' : ''))).join('')}`;
+function occSheet(id, preset) {
+  const o = id ? occById(id) : { hotel: (preset && preset.hotel) || S.hotel, room_id: (preset && preset.room_id) || '', entree: todayISO(), categorie: '' };
+  const hs = HOTELS.map((h) => opt(h.id, o.hotel, h.name)).join('');
+  const pecs = id ? pecsOf(id) : [];
+  openSheet('occ:' + (id || ''), `${sheetHead(id ? esc(occName(o)) : 'Nouvelle arrivée')}
+    ${id && o.statut === 'sorti' ? `<div class="banner c-amber">Parti le ${fdate(o.sortie)}</div>` : ''}
+    <div class="card form">
+      <div class="two"><label>Prénom<input id="o-prenom" value="${esc(o.prenom || '')}"></label><label>Nom<input id="o-nom" value="${esc(o.nom || '')}"></label></div>
+      <div class="two"><label>Naissance<input id="o-naissance" type="date" value="${esc(o.naissance || '')}"></label><label>Catégorie<select id="o-cat"><option value="">—</option>${CATS.map((c) => opt(c, o.categorie)).join('')}</select></label></div>
+      <div class="two"><label>Hôtel<select id="o-hotel" data-change="oHotel">${hs}</select></label><label>Chambre<select id="o-room">${roomOpts(o.hotel, o.room_id)}</select></label></div>
+      <div class="two"><label>Arrivée<input id="o-entree" type="date" value="${esc(o.entree || '')}"></label><label>Téléphone<input id="o-tel" inputmode="tel" value="${esc(o.telephone || '')}"></label></div>
+      <label>Notes<textarea id="o-notes">${esc(o.notes || '')}</textarea></label>
+      <label>Pourquoi ce changement ?${id ? ' (facultatif)' : ''}<input id="o-raison" placeholder="${id ? 'Ex. : correction du prénom' : 'Ex. : arrivée envoyée par l’ASE'}"></label>
+      <button class="btn pri" data-a="occSave" data-id="${id || ''}">${id ? 'Enregistrer' : 'Ajouter au registre'}</button></div>
+    ${id ? `<div class="card"><div class="row between"><h3>Prises en charge</h3><button class="btn small soft" data-a="pecNew" data-id="${id}">＋ Ajouter</button></div>
+      ${pecs.length ? `<div class="group">${pecs.map((p) => { const t = todayISO(), on = (!p.debut || p.debut <= t) && (!p.fin || p.fin >= t);
+        return `<button class="prow" data-a="pecOpen" data-id="${p.id}"><span class="pr-t"><b>${esc(p.financeur || 'Financeur ?')}${p.reference ? ' · réf. ' + esc(p.reference) : ''}</b><span class="muted">${fdate(p.debut)} → ${fdate(p.fin)}${p.tarif ? ' · ' + esc(p.tarif) + ' €' : ''}${p.repas ? ' · repas : ' + esc(p.repas) : ''}</span></span><span class="pill ${on ? 'p-green' : 'p-plain'}">${on ? 'En cours' : (p.fin && p.fin < t ? 'Terminée' : 'À venir')}</span></button>`; }).join('')}</div>` : '<p class="muted">Aucune pour l’instant.</p>'}</div>
+      ${o.statut === 'sorti' ? `<button class="btn" data-a="occReturn" data-id="${id}">Annuler le départ</button>` : `<button class="btn bad" data-a="occExit" data-id="${id}">Départ</button>`}` : ''}`);
+}
+function pecSheet(occId, pecId) {
+  const p = pecId ? S.reg.pecs.find((x) => x.id === pecId) : { financeur: FINANCEURS[0], debut: todayISO(), repas: 'Non' };
+  const o = occById(occId || p.occupant_id);
+  openSheet('pec', `${sheetHead(pecId ? 'Prise en charge' : 'Nouvelle prise en charge')}<p class="muted">${esc(occName(o))}</p>
+    <div class="card form">
+      <div class="two"><label>Financeur<select id="p-fin">${FINANCEURS.map((f) => opt(f, p.financeur)).join('')}</select></label><label>Référence<input id="p-ref" value="${esc(p.reference || '')}"></label></div>
+      <div class="two"><label>Début<input id="p-debut" type="date" value="${esc(p.debut || '')}"></label><label>Fin<input id="p-finD" type="date" value="${esc(p.fin || '')}"></label></div>
+      <div class="two"><label>Tarif par nuit (€)<input id="p-tarif" inputmode="decimal" value="${esc(p.tarif || '')}"></label><label>Repas<select id="p-repas">${REPAS.map((r) => opt(r, p.repas)).join('')}</select></label></div>
+      <label>Notes<textarea id="p-notes">${esc(p.notes || '')}</textarea></label>${docsHtml(p.docs)}
+      <label>Pourquoi ?<input id="p-raison" placeholder="Ex. : renouvellement reçu par mail"></label>
+      <button class="btn pri" data-a="pecSave" data-occ="${o.id}" data-id="${pecId || ''}">Enregistrer</button>
+      ${pecId ? `<button class="btn ghost" data-a="pecDel" data-id="${pecId}" data-occ="${o.id}">Supprimer cette prise en charge</button>` : ''}</div>
+    <button class="btn ghost" data-a="occOpen" data-id="${o.id}">← Retour à la fiche</button>`);
+}
+function exitSheet(id) {
+  const o = occById(id), r = o.room_id && S.rooms[o.room_id], others = o.room_id ? occOfRoom(o.room_id).filter((x) => x.id !== id).length : 0;
+  openSheet('exit', `${sheetHead('Départ')}<p><b>${esc(occName(o))}</b> · ${esc(hotelName(o.hotel))} · ${esc(occPlace(o))}</p>
+    <div class="card form"><label>Date de départ<input id="x-date" type="date" value="${todayISO()}"></label>
+      <label>Raison (obligatoire)<input id="x-raison" placeholder="Ex. : fin de prise en charge, orienté ailleurs"></label>
+      ${r && !others ? `<label class="check"><input type="checkbox" id="x-clean" checked> Mettre la chambre ${esc(r.num)} à blanc, à répartir au ménage</label>` : ''}
+      <button class="btn bad" data-a="exitGo" data-id="${id}">Confirmer le départ</button></div>`);
+}
+function applySheet(inId) {
+  const it = S.reg.inbox.find((x) => x.id === inId); if (!it) return;
+  const key = String(it.nom || '').toLowerCase().split(/\s+/)[0];
+  const cands = presentOcc().slice().sort((a, b) => (String(b.nom || '').toLowerCase().includes(key)) - (String(a.nom || '').toLowerCase().includes(key)) || String(a.nom || '').localeCompare(String(b.nom || ''), 'fr'));
+  const h = it.hotel || S.hotel;
+  openSheet('apply', `${sheetHead('Loger ou rattacher')}<p><b>${esc([it.nom, it.prenom].filter(Boolean).join(' '))}</b> · ${esc(it.categorie || '')}</p><p class="muted">${esc(it.resume || '')}</p>
+    <div class="card form"><h3>Rattacher à une personne déjà au registre</h3>
+      <select id="a-occ"><option value="">— Choisir —</option>${cands.map((o) => opt(o.id, '', `${occName(o)} · ${hotelName(o.hotel)} · ${occPlace(o)}`)).join('')}</select>
+      <button class="btn" data-a="applyGo" data-id="${inId}" data-m="exist">Rattacher la prise en charge</button></div>
+    <div class="card form"><h3>Ou créer une nouvelle personne</h3>
+      <div class="two"><label>Hôtel<select id="a-hotel" data-change="aHotel">${HOTELS.map((x) => opt(x.id, h, x.name)).join('')}</select></label><label>Chambre<select id="a-room">${roomOpts(h, '')}</select></label></div>
+      <label>Arrivée<input id="a-entree" type="date" value="${esc(it.debut || todayISO())}"></label>
+      <button class="btn pri" data-a="applyGo" data-id="${inId}" data-m="new">Créer et loger</button></div>`);
+}
+function discardSheet(inId) {
+  openSheet('discard', `${sheetHead('Écarter')}<p class="muted">La prise en charge reste visible dans « déjà traitées ».</p>
+    <div class="card form"><label>Pourquoi ?<input id="d-note" placeholder="Ex. : parti, doublon, erreur du Département"></label><button class="btn bad" data-a="discardGo" data-id="${inId}">Écarter</button></div>`);
 }
 
 /* ----- ménage (gérant) : plan, répartir, contrôler ----- */
@@ -569,9 +698,9 @@ const hotelSeg = () => `<div class="segc" role="group" aria-label="Hôtel">${HOT
 function plate(r) {
   const st = ST[r.status] || ST.propre, sel = S.sel.has(r.id);
   const s = r.blocked ? '⛔ Bloquée' : (r.status !== 'propre' && TY[r.type] ? `${TY[r.type].e} ${st.l}` : st.l);
-  const who = r.blocked ? esc(r.blockReason || '') : (r.status !== 'propre' ? (r.assignee ? esc(first(nameOf(r.assignee))) : (r.status === 'a_faire' ? 'à répartir' : '&nbsp;')) : '&nbsp;');
+  const who = r.blocked ? esc(r.blockReason || '') : (r.status !== 'propre' ? (r.assignee ? esc(first(nameOf(r.assignee))) : (r.status === 'a_faire' ? 'à répartir' : '&nbsp;')) : (occOfRoom(r.id).length ? '● occupée' : '&nbsp;'));
   return `<button class="plate st-${r.status} ${r.blocked ? 'blocked' : ''} ${sel ? 'sel' : ''}" data-a="pick" data-id="${r.id}" aria-pressed="${sel}" aria-label="Chambre ${esc(r.num)}">
-    ${sel ? '<span class="tick">✓</span>' : ''}<span class="n">${esc(r.num)}</span><span class="s">${s}</span><span class="who">${who}</span></button>`;
+    ${sel ? '<span class="tick">✓</span>' : ''}<span class="n ${String(r.num).length > 4 ? 'long' : ''}">${esc(r.num)}</span><span class="s">${s}</span><span class="who">${who}</span></button>`;
 }
 function viewRooms() {
   const list = roomsOf(S.hotel), com = communsOf(S.hotel), all = [...list, ...com];
@@ -1030,6 +1159,7 @@ function refreshSheet() {
   if (S.sheet.startsWith('room:')) roomSheet(S.sheet.slice(5));
   else if (S.sheet.startsWith('thread:')) threadSheet(S.sheet.slice(7));
   else if (S.sheet === 'convs') convListSheet();
+  else if (S.sheet.startsWith('occ:') && S.sheet.length > 4 && !isTyping()) occSheet(S.sheet.slice(4));
 }
 const sheetHead = (t) => `<div class="row between"><h2>${t}</h2><button class="btn small" data-a="close">Fermer</button></div>`;
 function roomSheet(id) {
@@ -1121,6 +1251,50 @@ const A = {
   home() { S.tab = 'home'; S.sel.clear(); render(); window.scrollTo(0, 0); },
   sub(d) { S.sub = d.k; S.sel.clear(); if (d.k !== 'plan') S.proposal = null; render(); window.scrollTo(0, 0); },
   scope(d) { S.scope = d.k; LS.set('mh-scope', d.k); render(); },
+  rsub(d) { S.rsub = d.k; render(); window.scrollTo(0, 0); },
+  rSortis() { S.rSortis = !S.rSortis; render(); },
+  rDone() { S.rDone = !S.rDone; render(); },
+  regRoom(d) { const os = occOfRoom(d.id); if (os.length === 1) occSheet(os[0].id); else if (!os.length) occSheet(null, { hotel: S.rooms[d.id].hotel, room_id: d.id }); else openSheet('roomocc', `${sheetHead(esc(placeName(S.rooms[d.id])))}<div class="group">${os.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}</span></button>`).join('')}</div><button class="btn" data-a="occNewRoom" data-id="${d.id}">＋ Ajouter quelqu’un dans cette chambre</button>`); },
+  occNew() { occSheet(null, { hotel: S.scope !== 'all' ? S.scope : S.hotel }); },
+  occNewRoom(d) { occSheet(null, { hotel: S.rooms[d.id].hotel, room_id: d.id }); },
+  occOpen(d) { occSheet(d.id); },
+  async occSave(d) {
+    const v = (id) => ($(id) && $(id).value || '').trim();
+    const body = { id: d.id || undefined, prenom: v('o-prenom'), nom: v('o-nom'), naissance: v('o-naissance'), categorie: v('o-cat'), hotel: v('o-hotel'), room_id: v('o-room') || null, entree: v('o-entree'), telephone: v('o-tel'), notes: v('o-notes'), raison: v('o-raison') };
+    if (!body.nom && !body.prenom) { toast('Écris au moins un nom.'); return; }
+    if (!d.id && !body.raison) { toast('Indique pourquoi (ex. : arrivée envoyée par l’ASE).'); return; }
+    let id = d.id; if (await act(async () => { const r = await api('reg_occ_save', body); id = r.id; }, d.id ? 'Fiche enregistrée' : 'Ajouté au registre')) occSheet(id);
+  },
+  occExit(d) { exitSheet(d.id); },
+  async exitGo(d) {
+    const raison = ($('x-raison').value || '').trim(); if (!raison) { toast('Indique la raison du départ.'); return; }
+    const clean = $('x-clean') ? $('x-clean').checked : false;
+    let res = null; if (await act(async () => { res = await api('reg_occ_exit', { id: d.id, sortie: $('x-date').value, raison, clean }); }, 'Départ enregistré')) { closeSheet(); if (res && res.blanc) toast('Départ enregistré · chambre mise à blanc, à répartir'); }
+  },
+  async occReturn(d) { if (await act(() => api('reg_occ_return', { id: d.id, raison: 'Départ annulé' }), 'Départ annulé')) occSheet(d.id); },
+  pecNew(d) { pecSheet(d.id, null); },
+  pecOpen(d) { const p = S.reg.pecs.find((x) => x.id === d.id); pecSheet(p.occupant_id, d.id); },
+  async pecSave(d) {
+    const v = (id) => ($(id) && $(id).value || '').trim();
+    const body = { id: d.id || undefined, occupant_id: d.occ, financeur: v('p-fin'), reference: v('p-ref'), debut: v('p-debut'), fin: v('p-finD'), tarif: v('p-tarif'), repas: v('p-repas'), notes: v('p-notes'), raison: v('p-raison') };
+    if (body.debut && body.fin && body.fin < body.debut) { toast('La fin est avant le début.'); return; }
+    if (await act(() => api('reg_pec_save', body), 'Prise en charge enregistrée')) occSheet(d.occ);
+  },
+  async pecDel(d) {
+    const raison = ($('p-raison').value || '').trim(); if (!raison) { toast('Écris d’abord pourquoi tu la supprimes.'); return; }
+    if (S.confirmPec !== d.id) { S.confirmPec = d.id; toast('Touche encore « Supprimer » pour confirmer.'); setTimeout(() => S.confirmPec = null, 5000); return; }
+    if (await act(() => api('reg_pec_delete', { id: d.id, raison }), 'Supprimée')) occSheet(d.occ);
+  },
+  inApply(d) { applySheet(d.id); },
+  async applyGo(d) {
+    const body = { id: d.id };
+    if (d.m === 'exist') { body.occupant_id = $('a-occ').value; if (!body.occupant_id) { toast('Choisis la personne.'); return; } }
+    else { body.hotel = $('a-hotel').value; body.room_id = $('a-room').value || null; body.entree = $('a-entree').value; }
+    let id = null; if (await act(async () => { id = (await api('reg_inbox_apply', body)).id; }, 'Prise en charge appliquée')) occSheet(id);
+  },
+  inDiscard(d) { discardSheet(d.id); },
+  async discardGo(d) { const note = ($('d-note').value || '').trim(); if (!note) { toast('Indique pourquoi.'); return; } if (await act(() => api('reg_inbox_set', { id: d.id, status: 'ecarte', note }), 'Écartée')) closeSheet(); },
+  async inReopen(d) { await act(() => api('reg_inbox_set', { id: d.id, status: 'a_traiter', note: null, raison: 'Rouverte' }), 'Rouverte'); },
   soon(d) { toast(`${SECTIONS[d.k].t} arrive à l’${SECTIONS[d.k].soon.toLowerCase()}.`); },
   async lateGo(d) { const ids = d.ids.split(','); await act(() => roomsPatch(ids, { type: 'commun', status: 'a_faire', assignee: null, rejectNote: null, startedAt: null, fondTasks: null }), `${ids.length} à répartir`); },
   hotel(d) { S.hotel = d.k; S.sel.clear(); document.body.dataset.hotel = d.k; LS.set('mh-hotel', d.k); render(); },
@@ -1291,6 +1465,8 @@ const A = {
 };
 const C = {
   assignTo(el) { S.assignTo = el.value; },
+  oHotel(el) { $('o-room').innerHTML = roomOpts(el.value, ''); },
+  aHotel(el) { $('a-room').innerHTML = roomOpts(el.value, ''); },
   async freq(el) { await act(() => roomsPatch([el.dataset.id], { freqDays: parseInt(el.value, 10) || null }), 'Fréquence enregistrée'); },
   repHotel(el) { S.rep.hotel = el.value; S.rep.room = ''; drawReport(); },
   repRoom(el) { S.rep.room = el.value; },
@@ -1302,6 +1478,7 @@ const C = {
 const I = {
   repText(el) { if (S.rep && S.rep.items && S.rep.items[el.dataset.k]) S.rep.items[el.dataset.k].text = el.value; },
   redoText(el) { if (S.rep) S.rep.text = el.value; },
+  regQ(el) { S.rq = el.value; const pos = el.selectionStart; render(); const n = $('regQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} } },
 };
 document.addEventListener('click', (e) => {
   if (e.target.closest('[data-hold]')) return;

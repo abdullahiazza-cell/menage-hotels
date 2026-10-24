@@ -226,6 +226,7 @@ async function actState(me: any, device: any) {
     out.msgs = msgs || []; out.reads = reads || [];
     out.issues.forEach((i: any) => paths.push(i.photo, i.video, i.audio));
     out.msgs.forEach((m: any) => paths.push(m.media_path));
+    out.reg = await regState();
   } else {
     const brico = isBrico(me);
     const [{ data: staff }, { data: issues }, msgs] = await Promise.all([
@@ -243,6 +244,124 @@ async function actState(me: any, device: any) {
   }
   out.urls = await signUrls(paths);
   return out;
+}
+
+// ---------- registre (gérants seulement) ----------
+async function regState() {
+  const since = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
+  const [{ data: occ }, { data: pecs }, { data: inbox }, { data: log }] = await Promise.all([
+    sb.from("occupants").select("*").or(`statut.eq.present,sortie.gte.${since}`).order("nom"),
+    sb.from("pecs").select("*").order("debut", { ascending: false }),
+    sb.from("pec_inbox").select("*").order("received_at", { ascending: false }).limit(300),
+    sb.from("registre_log").select("*").order("ts", { ascending: false }).limit(300),
+  ]);
+  return { occ: occ || [], pecs: pecs || [], inbox: inbox || [], log: log || [] };
+}
+const S_ = (v: any, n = 200) => (v === undefined || v === null || v === "") ? null : String(v).slice(0, n);
+const D_ = (v: any) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : null;
+const fullName = (o: any) => [o.prenom, o.nom].filter(Boolean).join(" ") || "Sans nom";
+async function placeLabel(roomId: string | null, hotel: string) {
+  if (!roomId) return `${HOTEL_NAMES[hotel] || hotel} · sans chambre`;
+  const { data: r } = await sb.from("rooms").select("num").eq("id", roomId).maybeSingle();
+  return `${HOTEL_NAMES[hotel] || hotel} · ${r ? (/^\d/.test(r.num) ? "ch. " + r.num : r.num) : "?"}`;
+}
+async function regLog(me: any, action: string, occId: string | null, cible: string, raison: string | null, details = "") {
+  await sb.from("registre_log").insert({ by_staff: me.id, by_label: String(me.label).split(" ")[0], action, occupant_id: occId, cible, raison: raison || "", details });
+}
+async function roomCheck(roomId: any, hotel: string) {
+  if (!roomId) return null;
+  const { data: r } = await sb.from("rooms").select("id,hotel,kind").eq("id", roomId).maybeSingle();
+  if (!r || r.hotel !== hotel || r.kind === "commun") throw new E("bad");
+  return r.id;
+}
+// Départ : si plus personne dans la chambre, elle passe « à blanc » à répartir.
+async function maybeBlanc(roomId: string | null, me: any) {
+  if (!roomId) return false;
+  const { data: left } = await sb.from("occupants").select("id").eq("room_id", roomId).eq("statut", "present");
+  if (left && left.length) return false;
+  const { data: r } = await sb.from("rooms").select("status").eq("id", roomId).single();
+  if (r && (r.status === "a_faire" || r.status === "en_cours")) return false;
+  await sb.from("rooms").update({ type: "blanc", status: "a_faire", assignee: null, reject_note: null, started_at: null, fond_tasks: null, updated_at: new Date().toISOString(), assigned_by: me.id }).eq("id", roomId);
+  return true;
+}
+async function regAction(me: any, a: string, body: any) {
+  needMgr(me);
+  const now = new Date().toISOString(); const raison = S_(body.raison, 300);
+  if (a === "reg_occ_save") {
+    const hotel = HOTELS.includes(body.hotel) ? body.hotel : null; if (!hotel) throw new E("bad");
+    const room_id = await roomCheck(body.room_id, hotel);
+    const row: any = { hotel, room_id, nom: S_(body.nom, 80), prenom: S_(body.prenom, 80), naissance: D_(body.naissance), categorie: S_(body.categorie, 40), telephone: S_(body.telephone, 25), entree: D_(body.entree), notes: S_(body.notes, 1000) || "", updated_at: now, updated_by: me.id };
+    if (!row.nom && !row.prenom) throw new E("bad");
+    if (body.id) {
+      const { data: old } = await sb.from("occupants").select("*").eq("id", body.id).single(); if (!old) throw new E("bad");
+      await sb.from("occupants").update(row).eq("id", body.id);
+      const ch = Object.keys(row).filter((k) => !["updated_at", "updated_by"].includes(k) && String(old[k] ?? "") !== String(row[k] ?? ""));
+      await regLog(me, old.room_id !== room_id ? "Changement de chambre" : "Fiche modifiée", body.id, `${fullName(row)} · ${await placeLabel(room_id, hotel)}`, raison, ch.join(", "));
+      return { ok: true, id: body.id };
+    }
+    row.created_by = me.id; row.statut = "present"; if (!row.entree) row.entree = now.slice(0, 10);
+    const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
+    await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${await placeLabel(room_id, hotel)}`, raison, row.categorie || "");
+    return { ok: true, id: data.id };
+  }
+  if (a === "reg_occ_exit") {
+    const { data: o } = await sb.from("occupants").select("*").eq("id", body.id).single(); if (!o) throw new E("bad");
+    if (!raison) throw new E("reason");
+    const sortie = D_(body.sortie) || now.slice(0, 10);
+    await sb.from("occupants").update({ statut: "sorti", sortie, updated_at: now, updated_by: me.id }).eq("id", o.id);
+    const blanc = body.clean !== false ? await maybeBlanc(o.room_id, me) : false;
+    await regLog(me, "Départ", o.id, `${fullName(o)} · ${await placeLabel(o.room_id, o.hotel)}`, raison, `le ${sortie.split("-").reverse().join("/")}${blanc ? " · chambre mise à blanc" : ""}`);
+    return { ok: true, blanc };
+  }
+  if (a === "reg_occ_return") {
+    const { data: o } = await sb.from("occupants").select("*").eq("id", body.id).single(); if (!o) throw new E("bad");
+    await sb.from("occupants").update({ statut: "present", sortie: null, updated_at: now, updated_by: me.id }).eq("id", o.id);
+    await regLog(me, "Départ annulé", o.id, fullName(o), raison);
+    return { ok: true };
+  }
+  if (a === "reg_pec_save") {
+    const { data: o } = await sb.from("occupants").select("id,nom,prenom").eq("id", body.occupant_id).single(); if (!o) throw new E("bad");
+    const row: any = { occupant_id: o.id, financeur: S_(body.financeur, 80), reference: S_(body.reference, 40) || "", debut: D_(body.debut), fin: D_(body.fin), tarif: S_(body.tarif, 20) || "", repas: S_(body.repas, 40), notes: S_(body.notes, 1000) || "", updated_at: now, updated_by: me.id };
+    if (body.id) { await sb.from("pecs").update(row).eq("id", body.id); await regLog(me, "PEC modifiée", o.id, `${fullName(o)} · ${row.financeur || ""}`, raison, `${row.debut || "?"} → ${row.fin || "?"}`); return { ok: true }; }
+    row.created_by = me.id; if (Array.isArray(body.docs)) row.docs = body.docs.slice(0, 10);
+    const { error } = await sb.from("pecs").insert(row); if (error) throw new E("db");
+    await regLog(me, "PEC ajoutée", o.id, `${fullName(o)} · ${row.financeur || ""}`, raison, `${row.debut || "?"} → ${row.fin || "?"}`);
+    return { ok: true };
+  }
+  if (a === "reg_pec_delete") {
+    if (!raison) throw new E("reason");
+    const { data: p } = await sb.from("pecs").select("*").eq("id", body.id).single(); if (!p) throw new E("bad");
+    const { data: o } = await sb.from("occupants").select("nom,prenom").eq("id", p.occupant_id).single();
+    await sb.from("pecs").delete().eq("id", p.id);
+    await regLog(me, "PEC supprimée", p.occupant_id, `${o ? fullName(o) : "?"} · ${p.financeur || ""}`, raison, `${p.debut || "?"} → ${p.fin || "?"}`);
+    return { ok: true };
+  }
+  if (a === "reg_inbox_set") {
+    const st = ["traite", "ecarte", "a_traiter"].includes(body.status) ? body.status : null; if (!st) throw new E("bad");
+    const { data: it } = await sb.from("pec_inbox").select("*").eq("id", body.id).single(); if (!it) throw new E("bad");
+    await sb.from("pec_inbox").update({ status: st, note: S_(body.note, 300), treated_at: st === "a_traiter" ? null : now, treated_by: st === "a_traiter" ? null : me.id }).eq("id", it.id);
+    await regLog(me, st === "ecarte" ? "PEC reçue écartée" : (st === "traite" ? "PEC reçue traitée" : "PEC reçue rouverte"), it.occupant_id, `${it.nom || ""} ${it.prenom || ""}`.trim(), raison || S_(body.note, 300));
+    return { ok: true };
+  }
+  if (a === "reg_inbox_apply") {
+    const { data: it } = await sb.from("pec_inbox").select("*").eq("id", body.id).single(); if (!it) throw new E("bad");
+    let occId = body.occupant_id ? String(body.occupant_id) : null, who = "";
+    if (occId) {
+      const { data: o } = await sb.from("occupants").select("id,nom,prenom").eq("id", occId).single(); if (!o) throw new E("bad"); who = fullName(o);
+    } else {
+      const hotel = HOTELS.includes(body.hotel) ? body.hotel : (it.hotel || "arc");
+      const room_id = await roomCheck(body.room_id, hotel);
+      const row: any = { hotel, room_id, nom: it.nom, prenom: it.prenom, naissance: it.naissance, categorie: it.categorie, entree: D_(body.entree) || it.debut || now.slice(0, 10), statut: "present", notes: "", created_by: me.id, updated_by: me.id };
+      const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
+      occId = data.id; who = fullName(row);
+      await regLog(me, "Arrivée", occId, `${who} · ${await placeLabel(room_id, hotel)}`, raison || "Depuis une PEC reçue", it.categorie || "");
+    }
+    await sb.from("pecs").insert({ occupant_id: occId, financeur: it.financeur, reference: it.reference || "", debut: it.debut, fin: it.fin, tarif: it.tarif || "", repas: it.repas, notes: `Créée depuis le document reçu le ${String(it.received_at || now).slice(0, 10).split("-").reverse().join("/")}`, docs: it.docs || [], created_by: me.id, updated_by: me.id });
+    await sb.from("pec_inbox").update({ status: "traite", note: `appliqué à ${who}`, treated_at: now, treated_by: me.id, occupant_id: occId }).eq("id", it.id);
+    await regLog(me, "PEC ajoutée", occId, `${who} · ${it.financeur || ""}`, raison || "Depuis une PEC reçue", `${it.debut || "?"} → ${it.fin || "?"}`);
+    return { ok: true, id: occId };
+  }
+  throw new E("unknown_action");
 }
 
 async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Record<string, any>) {
@@ -449,6 +568,10 @@ async function handle(req: Request) {
       await sb.from("conv_reads").upsert({ staff_id: me.id, conv, read_at: new Date().toISOString() });
       return { ok: true };
     }
+
+    // --- registre ---
+    case "reg_occ_save": case "reg_occ_exit": case "reg_occ_return": case "reg_pec_save": case "reg_pec_delete": case "reg_inbox_set": case "reg_inbox_apply":
+      return await regAction(me, a, body);
 
     // --- gestion (gérants) ---
     case "rooms_patch": return await roomsPatch(me, (body.ids || []).slice(0, 200), body.patch || {});
