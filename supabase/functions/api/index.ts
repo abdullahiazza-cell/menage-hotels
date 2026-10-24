@@ -264,13 +264,19 @@ async function regState() {
 const S_ = (v: any, n = 200) => (v === undefined || v === null || v === "") ? null : String(v).slice(0, n);
 const D_ = (v: any) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : null;
 const fullName = (o: any) => [o.prenom, o.nom].filter(Boolean).join(" ") || "Sans nom";
-async function placeLabel(roomId: string | null, hotel: string) {
+async function placeLabel(roomId: string | null, hotel: string, formule?: string) {
+  if (formule === "restauration") return `${HOTEL_NAMES.par} · restauration`;
   if (!roomId) return `${HOTEL_NAMES[hotel] || hotel} · sans chambre`;
   const { data: r } = await sb.from("rooms").select("num").eq("id", roomId).maybeSingle();
   return `${HOTEL_NAMES[hotel] || hotel} · ${r ? (/^\d/.test(r.num) ? "ch. " + r.num : r.num) : "?"}`;
 }
 async function regLog(me: any, action: string, occId: string | null, cible: string, raison: string | null, details = "") {
   await sb.from("registre_log").insert({ by_staff: me.id, by_label: String(me.label).split(" ")[0], action, occupant_id: occId, cible, raison: raison || "", details });
+}
+// Lieu choisi : une chambre, « resto » (repas seuls, toujours sur l'Hôtel de Paris) ou rien.
+async function placeOf(roomId: any, hotel: string) {
+  if (roomId === "resto") return { hotel: "par", room_id: null, formule: "restauration" };
+  return { hotel, room_id: await roomCheck(roomId, hotel), formule: "hebergement" };
 }
 async function roomCheck(roomId: any, hotel: string) {
   if (!roomId) return null;
@@ -293,20 +299,20 @@ async function regAction(me: any, a: string, body: any) {
   if (!can(me, need)) throw new E("forbidden", 403);
   const now = new Date().toISOString(); const raison = S_(body.raison, 300);
   if (a === "reg_occ_save") {
-    const hotel = HOTELS.includes(body.hotel) ? body.hotel : null; if (!hotel) throw new E("bad");
-    const room_id = await roomCheck(body.room_id, hotel);
-    const row: any = { hotel, room_id, nom: S_(body.nom, 80), prenom: S_(body.prenom, 80), naissance: D_(body.naissance), categorie: S_(body.categorie, 40), telephone: S_(body.telephone, 25), entree: D_(body.entree), notes: S_(body.notes, 1000) || "", updated_at: now, updated_by: me.id };
+    const h0 = HOTELS.includes(body.hotel) ? body.hotel : null; if (!h0) throw new E("bad");
+    const { hotel, room_id, formule } = await placeOf(body.room_id, h0);
+    const row: any = { hotel, room_id, formule, nom: S_(body.nom, 80), prenom: S_(body.prenom, 80), naissance: D_(body.naissance), categorie: S_(body.categorie, 40), telephone: S_(body.telephone, 25), entree: D_(body.entree), notes: S_(body.notes, 1000) || "", updated_at: now, updated_by: me.id };
     if (!row.nom && !row.prenom) throw new E("bad");
     if (body.id) {
       const { data: old } = await sb.from("occupants").select("*").eq("id", body.id).single(); if (!old) throw new E("bad");
       await sb.from("occupants").update(row).eq("id", body.id);
       const ch = Object.keys(row).filter((k) => !["updated_at", "updated_by"].includes(k) && String(old[k] ?? "") !== String(row[k] ?? ""));
-      await regLog(me, old.room_id !== room_id ? "Changement de chambre" : "Fiche modifiée", body.id, `${fullName(row)} · ${await placeLabel(room_id, hotel)}`, raison, ch.join(", "));
+      await regLog(me, (old.room_id !== room_id || old.formule !== formule) ? "Changement de chambre" : "Fiche modifiée", body.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, ch.join(", "));
       return { ok: true, id: body.id };
     }
     row.created_by = me.id; row.statut = "present"; if (!row.entree) row.entree = now.slice(0, 10);
     const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
-    await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${await placeLabel(room_id, hotel)}`, raison, row.categorie || "");
+    await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, row.categorie || "");
     return { ok: true, id: data.id };
   }
   if (a === "reg_occ_exit") {
@@ -315,7 +321,7 @@ async function regAction(me: any, a: string, body: any) {
     const sortie = D_(body.sortie) || now.slice(0, 10);
     await sb.from("occupants").update({ statut: "sorti", sortie, updated_at: now, updated_by: me.id }).eq("id", o.id);
     const blanc = body.clean !== false ? await maybeBlanc(o.room_id, me) : false;
-    await regLog(me, "Départ", o.id, `${fullName(o)} · ${await placeLabel(o.room_id, o.hotel)}`, raison, `le ${sortie.split("-").reverse().join("/")}${blanc ? " · chambre mise à blanc" : ""}`);
+    await regLog(me, "Départ", o.id, `${fullName(o)} · ${await placeLabel(o.room_id, o.hotel, o.formule)}`, raison, `le ${sortie.split("-").reverse().join("/")}${blanc ? " · chambre mise à blanc" : ""}`);
     return { ok: true, blanc };
   }
   if (a === "reg_occ_return") {
@@ -354,12 +360,12 @@ async function regAction(me: any, a: string, body: any) {
     if (occId) {
       const { data: o } = await sb.from("occupants").select("id,nom,prenom").eq("id", occId).single(); if (!o) throw new E("bad"); who = fullName(o);
     } else {
-      const hotel = HOTELS.includes(body.hotel) ? body.hotel : (it.hotel || "arc");
-      const room_id = await roomCheck(body.room_id, hotel);
-      const row: any = { hotel, room_id, nom: it.nom, prenom: it.prenom, naissance: it.naissance, categorie: it.categorie, entree: D_(body.entree) || it.debut || now.slice(0, 10), statut: "present", notes: "", created_by: me.id, updated_by: me.id };
+      const h0 = HOTELS.includes(body.hotel) ? body.hotel : (it.hotel || "arc");
+      const { hotel, room_id, formule } = await placeOf(body.room_id, h0);
+      const row: any = { hotel, room_id, formule, nom: it.nom, prenom: it.prenom, naissance: it.naissance, categorie: it.categorie, entree: D_(body.entree) || it.debut || now.slice(0, 10), statut: "present", notes: "", created_by: me.id, updated_by: me.id };
       const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
       occId = data.id; who = fullName(row);
-      await regLog(me, "Arrivée", occId, `${who} · ${await placeLabel(room_id, hotel)}`, raison || "Depuis une PEC reçue", it.categorie || "");
+      await regLog(me, "Arrivée", occId, `${who} · ${await placeLabel(room_id, hotel, formule)}`, raison || "Depuis une PEC reçue", it.categorie || "");
     }
     await sb.from("pecs").insert({ occupant_id: occId, financeur: it.financeur, reference: it.reference || "", debut: it.debut, fin: it.fin, tarif: it.tarif || "", repas: it.repas, notes: `Créée depuis le document reçu le ${String(it.received_at || now).slice(0, 10).split("-").reverse().join("/")}`, docs: it.docs || [], created_by: me.id, updated_by: me.id });
     await sb.from("pec_inbox").update({ status: "traite", note: `appliqué à ${who}`, treated_at: now, treated_by: me.id, occupant_id: occId }).eq("id", it.id);

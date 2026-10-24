@@ -568,7 +568,9 @@ function pecState(o) {
 }
 const inboxTodo = () => S.reg.inbox.filter((i) => i.status === 'a_traiter');
 const regBadge = () => scoped(inboxTodo()).length + scoped(presentOcc()).filter((o) => pecState(o).c === 'red').length;
-const occPlace = (o) => { const r = o.room_id && S.rooms[o.room_id]; return r ? placeShort(r) : 'sans chambre'; };
+// Restauration : repas seuls, toujours facturés sur l'Hôtel de Paris.
+const isResto = (o) => o.formule === 'restauration';
+const occPlace = (o) => { if (isResto(o)) return 'restauration'; const r = o.room_id && S.rooms[o.room_id]; return r ? placeShort(r) : 'sans chambre'; };
 function viewRegistre() {
   const todo = inboxTodo().length;
   const subs = [['chambres', 'Chambres', 0], ['personnes', 'Personnes', 0], ['atraiter', 'À traiter', todo], ...(canReg('reg_full') ? [['journal', 'Journal', 0]] : [])];
@@ -579,12 +581,14 @@ function occLine(o) { const ps = pecState(o); return `<span class="ol"><span>${e
 function regRooms() {
   const rooms = roomsOf(S.hotel), occ = presentOcc().filter((o) => o.hotel === S.hotel);
   const free = rooms.filter((r) => !occOfRoom(r.id).length && !r.blocked).length;
-  const none = occ.filter((o) => !o.room_id || !S.rooms[o.room_id]);
+  const resto = occ.filter(isResto), none = occ.filter((o) => !isResto(o) && (!o.room_id || !S.rooms[o.room_id]));
+  const lite = (o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}${o.notes ? `<span class="muted">${esc(o.notes)}</span>` : ''}</span></button>`;
   const row = (r) => { const os = occOfRoom(r.id);
     return `<button class="prow" data-a="regRoom" data-id="${r.id}"><span class="pr-t"><b>${esc(placeName(r))}</b>${os.length ? os.map(occLine).join('') : (r.blocked ? `<span class="muted">⛔ ${esc(r.blockReason || '')}</span>` : '')}</span>${os.length ? '' : `<span class="pill ${r.blocked ? 'p-plain' : 'p-slate'}">${r.blocked ? 'Bloquée' : 'Libre'}</span>`}</button>`; };
-  return `${hotelSeg()}<div class="chips"><span class="chip c-accent">Présents <b>${occ.length}</b></span><span class="chip c-slate">Chambres libres <b>${free}</b></span></div>
+  return `${hotelSeg()}<div class="chips"><span class="chip c-accent">Présents <b>${occ.length}</b></span><span class="chip c-slate">Chambres libres <b>${free}</b></span>${S.hotel === 'par' ? `<span class="chip c-amber">Restauration <b>${resto.length}</b></span>` : ''}</div>
     <div class="group">${rooms.map(row).join('')}</div>
-    ${none.length ? `<h2 class="sec">Sans chambre</h2><p class="muted">Repas seuls, ou à replacer.</p><div class="group">${none.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}${o.notes ? `<span class="muted">${esc(o.notes)}</span>` : ''}</span></button>`).join('')}</div>` : ''}`;
+    ${S.hotel === 'par' ? `<h2 class="sec">Restauration</h2><p class="muted">Repas seuls, sans chambre. Facturés sur l’Hôtel de Paris.</p>${resto.length ? `<div class="group">${resto.map(lite).join('')}</div>` : '<p class="muted">Personne pour l’instant.</p>'}` : ''}
+    ${none.length ? `<h2 class="sec">Sans chambre</h2><p class="muted">À replacer dans une chambre.</p><div class="group">${none.map(lite).join('')}</div>` : ''}`;
 }
 // Filtre d'hôtel visible (le même que celui de l'accueil), avec le nombre par hôtel.
 function scopeSeg(list) {
@@ -617,7 +621,7 @@ function regJournal() {
   return `<p class="muted">Qui a fait quoi, quand et pourquoi.</p><div class="group">${S.reg.log.map((l) => `<div class="prow ro"><span class="pr-t"><b>${esc(l.action || '')}</b><span>${esc(l.cible || '')}</span><span class="muted">${esc(l.by_label || '?')} · ${when(l.ts)}${l.raison ? ' · « ' + esc(l.raison) + ' »' : ''}${l.details ? ' · ' + esc(l.details) : ''}</span></span></div>`).join('') || '<p class="muted" style="padding:14px">Vide.</p>'}</div>`;
 }
 const opt = (v, cur, l) => `<option value="${esc(v)}" ${String(cur ?? '') === String(v) ? 'selected' : ''}>${esc(l ?? v)}</option>`;
-const roomOpts = (hotel, cur) => `<option value="">Sans chambre (repas seul)</option>${roomsOf(hotel).map((r) => opt(r.id, cur, placeName(r) + (occOfRoom(r.id).filter((o) => o.room_id !== cur).length ? ' · occupée' : ''))).join('')}`;
+const roomOpts = (hotel, cur) => `${opt('resto', cur, 'Restauration (repas seuls)')}${opt('', cur, 'Sans chambre (à replacer)')}${roomsOf(hotel).map((r) => opt(r.id, cur, placeName(r) + (occOfRoom(r.id).filter((o) => o.room_id !== cur).length ? ' · occupée' : ''))).join('')}`;
 function occSheet(id, preset) {
   const o = id ? occById(id) : { hotel: (preset && preset.hotel) || S.hotel, room_id: (preset && preset.room_id) || '', entree: todayISO(), categorie: '' };
   const hs = HOTELS.map((h) => opt(h.id, o.hotel, h.name)).join('');
@@ -627,7 +631,7 @@ function occSheet(id, preset) {
     <fieldset class="card form" ${ro ? 'disabled' : ''}>
       <div class="two"><label>Prénom<input id="o-prenom" value="${esc(o.prenom || '')}"></label><label>Nom<input id="o-nom" value="${esc(o.nom || '')}"></label></div>
       <div class="two"><label>Naissance<input id="o-naissance" type="date" value="${esc(o.naissance || '')}"></label><label>Catégorie<select id="o-cat"><option value="">—</option>${CATS.map((c) => opt(c, o.categorie)).join('')}</select></label></div>
-      <div class="two"><label>Hôtel<select id="o-hotel" data-change="oHotel">${hs}</select></label><label>Chambre<select id="o-room">${roomOpts(o.hotel, o.room_id)}</select></label></div>
+      <div class="two"><label>Hôtel<select id="o-hotel" data-change="oHotel">${hs}</select></label><label>Chambre<select id="o-room">${roomOpts(o.hotel, isResto(o) ? 'resto' : (o.room_id || ''))}</select></label></div>
       <div class="two"><label>Arrivée<input id="o-entree" type="date" value="${esc(o.entree || '')}"></label><label>Téléphone<input id="o-tel" inputmode="tel" value="${esc(o.telephone || '')}"></label></div>
       <label>Notes<textarea id="o-notes">${esc(o.notes || '')}</textarea></label>
       ${ro ? '' : `<label>Pourquoi ce changement ?${id ? ' (facultatif)' : ''}<input id="o-raison" placeholder="${id ? 'Ex. : correction du prénom' : 'Ex. : arrivée envoyée par l’ASE'}"></label>
@@ -669,7 +673,7 @@ function applySheet(inId) {
       <select id="a-occ"><option value="">— Choisir —</option>${cands.map((o) => opt(o.id, '', `${occName(o)} · ${hotelName(o.hotel)} · ${occPlace(o)}`)).join('')}</select>
       <button class="btn" data-a="applyGo" data-id="${inId}" data-m="exist">Rattacher la prise en charge</button></div>
     <div class="card form"><h3>Ou créer une nouvelle personne</h3>
-      <div class="two"><label>Hôtel<select id="a-hotel" data-change="aHotel">${HOTELS.map((x) => opt(x.id, h, x.name)).join('')}</select></label><label>Chambre<select id="a-room">${roomOpts(h, '')}</select></label></div>
+      <div class="two"><label>Hôtel<select id="a-hotel" data-change="aHotel">${HOTELS.map((x) => opt(x.id, h, x.name)).join('')}</select></label><label>Chambre<select id="a-room">${roomOpts(h, (it.kind === 'repas' || it.prestation === 'Repas') ? 'resto' : '')}</select></label></div>
       <label>Arrivée<input id="a-entree" type="date" value="${esc(it.debut || todayISO())}"></label>
       <button class="btn pri" data-a="applyGo" data-id="${inId}" data-m="new">Créer et loger</button></div>`);
 }
