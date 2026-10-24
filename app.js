@@ -38,7 +38,7 @@ const LS = {
 };
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
-  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
+  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
   hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, issueFilter: 'nouveau',
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
@@ -604,11 +604,14 @@ function regPeople() {
     <div class="row between"><span class="muted">${list.length} personne${list.length > 1 ? 's' : ''}</span><button class="toggle" data-a="rSortis" aria-pressed="${S.rSortis}">${S.rSortis ? '✓ ' : ''}Afficher les départs</button></div>
     <div class="group">${list.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}<span class="muted">${esc(hotelName(o.hotel))} · ${esc(occPlace(o))}${o.statut === 'sorti' ? ' · parti le ' + fdate(o.sortie) : ' · depuis le ' + fdate(o.entree)}</span></span></button>`).join('') || '<p class="muted" style="padding:14px">Personne.</p>'}</div>`;
 }
-const docsHtml = (docs) => (docs || []).length ? `<div class="docs">${docs.map((d) => `<a class="doc" href="${OLD_REG}" target="_blank" rel="noopener">📄 ${esc(d.name || 'Document')}</a>`).join('')}<span class="muted">Les PDF s’ouvrent pour l’instant dans l’ancien registre.</span></div>` : '';
+// PDF des prises en charge : gardés dans Ma Réception (ou dans le Drive pour ceux relevés automatiquement).
+const docLink = (d) => S.docUrls[d.id] ? `<a class="doc" href="${S.docUrls[d.id]}" target="_blank" rel="noopener" download="${esc(d.name || 'document.pdf')}">📄 ${esc(d.name || 'Document')} · Ouvrir</a>`
+  : `<button class="doc" data-a="docOpen" data-id="${esc(d.id)}" data-n="${esc(d.name || 'document.pdf')}">📄 ${esc(d.name || 'Document')}</button>`;
+const docsHtml = (docs, drive) => ((docs || []).length || drive) ? `<div class="docs">${(docs || []).map(docLink).join('')}${drive ? `<a class="doc" href="https://drive.google.com/file/d/${encodeURIComponent(drive.id)}/view" target="_blank" rel="noopener">📄 ${esc(drive.name || 'PDF dans le Drive')}</a>` : ''}</div>` : '';
 function pecInCard(i) {
   return `<div class="card"><div class="row between"><h3>${esc([i.nom, i.prenom].filter(Boolean).join(' '))}</h3><span class="pill p-plain">${esc(i.categorie || '')}</span></div>
     <p class="muted">${esc(i.expediteur || '')} · reçu le ${fdate(i.received_at)} · ${esc(hotelName(i.hotel || ''))}</p>
-    ${i.resume ? `<p>${esc(i.resume)}</p>` : ''}${i.alerte ? `<div class="banner c-amber">${esc(i.alerte)}</div>` : ''}${docsHtml(i.docs)}
+    ${i.resume ? `<p>${esc(i.resume)}</p>` : ''}${i.alerte ? `<div class="banner c-amber">${esc(i.alerte)}</div>` : ''}${docsHtml(i.docs, i.drive_file_id ? { id: i.drive_file_id, name: i.drive_file_name } : null)}
     ${i.status === 'a_traiter' ? `<div class="row"><button class="btn small pri" data-a="inApply" data-id="${i.id}">Loger ou rattacher</button><button class="btn small" data-a="inDiscard" data-id="${i.id}">Écarter</button></div>`
       : `<p class="muted">${i.status === 'ecarte' ? 'Écarté' : 'Traité'}${i.note ? ' : ' + esc(i.note) : ''}${i.treated_at ? ' · ' + fdate(i.treated_at) : ''}</p><button class="btn small ghost" data-a="inReopen" data-id="${i.id}" style="align-self:flex-start">Rouvrir</button>`}</div>`;
 }
@@ -1314,6 +1317,15 @@ const A = {
     let id = null; if (await act(async () => { id = (await api('reg_inbox_apply', body)).id; }, 'Prise en charge appliquée')) occSheet(id);
   },
   inDiscard(d) { discardSheet(d.id); },
+  async docOpen(d, el) {
+    if (el) { el.disabled = true; el.textContent = '⏳ ' + d.n; }
+    try {
+      const r = await api('doc_get', { id: d.id });
+      const bin = atob(r.b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+      S.docUrls[d.id] = URL.createObjectURL(new Blob([u8], { type: r.type || 'application/pdf' }));
+      if (el) { const a = document.createElement('div'); a.innerHTML = docLink({ id: d.id, name: d.n }); const link = a.firstChild; el.replaceWith(link); try { link.click(); } catch (e) { /* l'utilisateur touchera le lien */ } }
+    } catch (e) { toast(errMsg(e)); if (el) { el.disabled = false; el.textContent = '📄 ' + d.n; } }
+  },
   async discardGo(d) { const note = ($('d-note').value || '').trim(); if (!note) { toast('Indique pourquoi.'); return; } if (await act(() => api('reg_inbox_set', { id: d.id, status: 'ecarte', note }), 'Écartée')) closeSheet(); },
   async inReopen(d) { await act(() => api('reg_inbox_set', { id: d.id, status: 'a_traiter', note: null, raison: 'Rouverte' }), 'Rouverte'); },
   soon(d) { toast(`${SECTIONS[d.k].t} arrive à l’${SECTIONS[d.k].soon.toLowerCase()}.`); },

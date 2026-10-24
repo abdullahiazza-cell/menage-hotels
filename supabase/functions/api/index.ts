@@ -583,6 +583,16 @@ async function handle(req: Request) {
     // --- registre ---
     case "reg_occ_save": case "reg_occ_exit": case "reg_occ_return": case "reg_pec_save": case "reg_pec_delete": case "reg_inbox_set": case "reg_inbox_apply":
       return await regAction(me, a, body);
+    case "doc_get": {
+      if (!can(me, "reg_pec")) throw new E("forbidden", 403);
+      const id = String(body.id || ""); if (!/^[0-9a-z_-]{8,64}$/i.test(id)) throw new E("bad");
+      const { data: f } = await sb.from("doc_files").select("name,type,data").eq("id", id).maybeSingle();
+      if (!f) throw new E("bad");
+      const hex = String(f.data).replace(/^\\x/, ""); const u8 = new Uint8Array(hex.length / 2);
+      for (let i = 0; i < u8.length; i++) u8[i] = parseInt(hex.substr(i * 2, 2), 16);
+      let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000));
+      return { name: f.name, type: f.type || "application/pdf", b64: btoa(s) };
+    }
 
     // --- gestion (gérants) ---
     case "rooms_patch": return await roomsPatch(me, (body.ids || []).slice(0, 200), body.patch || {});
