@@ -39,7 +39,7 @@ const LS = {
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
   me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
-  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [] }, sl: null,
+  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [] }, sl: null, projects: [], tasks: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
 };
@@ -195,7 +195,7 @@ async function refresh(force) {
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
-      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [] }; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || [];
+      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || [];
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
@@ -485,7 +485,7 @@ const ico = (k, cls) => `<svg class="ico ${cls || ''}" viewBox="0 0 24 24" fill=
 const SECTIONS = {
   menage: { t: 'Ménage', i: 'menage', c: 't-blue' }, issues: { t: 'Réparations', i: 'tool', c: 't-orange' },
   registre: { t: 'Registre', i: 'book', c: 't-purple' }, securite: { t: 'Sécurité', i: 'shield', c: 't-red' },
-  msgs: { t: 'Messages', i: 'chat', c: 't-green' }, projets: { t: 'Projets', i: 'check', c: 't-teal', soon: 'Étape 5' },
+  msgs: { t: 'Messages', i: 'chat', c: 't-green' }, projets: { t: 'Projets', i: 'check', c: 't-teal' },
   team: { t: 'Équipe', i: 'users', c: 't-indigo' }, contacts: { t: 'Contacts', i: 'phone', c: 't-brown' }, settings: { t: 'Réglages', i: 'sliders', c: 't-gray' },
 };
 const scoped = (list) => list.filter(inScope);
@@ -497,6 +497,7 @@ function viewManager() {
   else if (S.tab === 'registre') { body = viewRegistre(); right = `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>`; }
   else if (S.tab === 'issues') { body = viewIssues(); right = `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>`; }
   else if (S.tab === 'securite') { body = viewSecurite(); }
+  else if (S.tab === 'projets') { body = viewProjets(); right = `<button class="nb-act" data-a="${S.psub === 'taches' ? 'taskNew' : 'projNew'}" aria-label="Ajouter">${ico('plus')}</button>`; }
   else if (S.tab === 'contacts') { body = viewContacts(); right = `<button class="nb-act" data-a="ctNew" aria-label="Nouveau contact">${ico('plus')}</button>`; }
   else if (S.tab === 'msgs') { body = viewThreads(); right = `<button class="nb-act" data-a="newMsg" aria-label="Nouveau message">${ico('plus')}</button>`; }
   else if (S.tab === 'team') { body = viewTeam(); right = `<button class="nb-act" data-a="personNew" aria-label="Ajouter une personne">${ico('plus')}</button>`; }
@@ -541,12 +542,13 @@ function viewHome() {
     <div class="segc" role="group" aria-label="Hôtel">${scopes.map(([k, l]) => `<button data-a="scope" data-k="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
       ${stat(c.todo, 'à nettoyer', 'n-blue', ['menage', 'rooms'])}${stat(c.check, 'à contrôler', 'n-green', ['menage', 'check'])}${stat(c.urgent, c.urgent > 1 ? 'urgences' : 'urgence', 'n-red', ['issues'])}</div></div>
+    ${myTasksCard()}
     <div class="tiles">
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
       ${tile('issues', c.open ? `${c.open} à faire ou en cours` : 'Rien à réparer', c.newIss)}
       ${tile('registre', `${presentOcc().filter(inScope).length} présents`, regBadge())}${secTile()}
       ${tile('msgs', un ? `${un} non lu${un > 1 ? 's' : ''}` : 'Tout est lu', un)}
-      ${tile('projets')}
+      ${tile('projets', myTasks().length ? `${myTasks().length} tâche${myTasks().length > 1 ? 's' : ''} pour vous` : `${S.projects.filter((p) => p.statut !== 'termine').length} projets`, myTasks().filter((t) => tLate(t) || tToday(t)).length)}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
       ${tile('contacts', `${S.contacts.length} contacts`)}
     </div>
@@ -1121,6 +1123,121 @@ function secDossier(h) {
     <p class="muted sm">Avant la visite : faire le tour des locaux (rien de stocké dans les couloirs, locaux techniques identifiés).</p>`);
 }
 
+/* ----- projets et tâches (gérants) ----- */
+const PST = { urgent: { l: 'Urgent', s: 'Urgent', c: 'red' }, en_cours: { l: 'En cours', s: 'En cours', c: 'accent' }, reflexion: { l: 'En réflexion', s: 'Réflexion', c: 'amber' }, pause: { l: 'En pause', s: 'Pause', c: 'plain' }, termine: { l: 'Terminé', s: 'Terminé', c: 'green' } };
+const TST = { a_faire: { l: 'À faire', c: 'red' }, en_attente: { l: 'En attente', c: 'amber' }, a_verifier: { l: 'À vérifier', c: 'slate' }, fait: { l: 'Fait', c: 'green' } };
+const TPR = { haute: 'Haute', moyenne: 'Moyenne', basse: 'Basse' };
+const PHOTEL = { all: 'Les 3 hôtels', arc: 'Archange', par: 'Hôtel de Paris', cha: 'Châteaudun' };
+const projById = (id) => S.projects.find((p) => p.id === id);
+const projTasks = (id) => S.tasks.filter((t) => t.project_id === id);
+const tOpen = (t) => t.etat !== 'fait';
+const tLate = (t) => tOpen(t) && t.due && t.due < todayISO();
+const tToday = (t) => tOpen(t) && t.due === todayISO();
+const myTasks = () => S.tasks.filter((t) => tOpen(t) && t.owner === S.me.id);
+const tSort = (a, b) => String(a.due || '9999').localeCompare(String(b.due || '9999')) || ((b.prio === 'haute') - (a.prio === 'haute')) || String(b.created_at || '').localeCompare(String(a.created_at || ''));
+const mgrStaff = () => S.staff.filter((s) => (s.role === 'owner' || s.role === 'gerant') && s.active !== false);
+function dueTxt(t) {
+  if (!t.due) return '';
+  const n = daysTo(t.due);
+  if (!tOpen(t)) return '';
+  if (n < 0) return `⏰ en retard · ${fdate(t.due).slice(0, 5)}`;
+  if (n === 0) return 'aujourd’hui';
+  if (n === 1) return 'demain';
+  return n < 7 ? new Date(t.due + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long' }) : 'avant le ' + fdate(t.due).slice(0, 5);
+}
+function taskRow(t, showProj) {
+  const p = t.project_id && projById(t.project_id), done = !tOpen(t);
+  const sub = [showProj && p ? `${p.emoji || '📁'} ${p.title}` : '', t.owner && t.owner !== S.me.id ? '👤 ' + first(nameOf(t.owner)) : (t.owner ? '' : '👤 à attribuer'), done ? (t.done_at ? 'fait le ' + fdate(t.done_at) : '') : (t.etat !== 'a_faire' ? TST[t.etat].l : '')].filter(Boolean).join(' · ');
+  const due = dueTxt(t);
+  return `<div class="prow task ${done ? 'done' : ''}"><button class="tcheck ${done ? 'on' : ''}" data-a="taskTick" data-id="${t.id}" aria-label="${done ? 'Rouvrir' : 'Marquer fait'}">${done ? '✓' : ''}</button>
+    <button class="pr-t tbody" data-a="taskOpen" data-id="${t.id}"><b>${t.prio === 'haute' && !done ? '❗ ' : ''}${esc(t.title)}</b>${sub ? `<span class="muted sm">${esc(sub)}</span>` : ''}</button>
+    ${due ? `<span class="pill p-${tLate(t) ? 'red' : (tToday(t) ? 'amber' : 'slate')}">${esc(due)}</span>` : ''}</div>`;
+}
+function projRow(p) {
+  const ts = projTasks(p.id), open = ts.filter(tOpen), late = open.filter(tLate).length;
+  const meta = [open.length ? `${open.length} tâche${open.length > 1 ? 's' : ''} à faire` : (ts.length ? 'Toutes les tâches sont faites' : 'Pas de tâche'), late ? `⏰ ${late} en retard` : '', p.hotel ? PHOTEL[p.hotel] : ''].filter(Boolean).join(' · ');
+  return `<button class="prow" data-a="projOpen" data-id="${p.id}"><span class="pemoji">${esc(p.emoji || '📁')}</span><span class="pr-t"><b>${esc(p.title)}</b>${p.resume ? `<span class="muted sm clamp2">${esc(p.resume)}</span>` : ''}<span class="muted sm">${esc(meta)}</span></span><span class="chev">›</span></button>`;
+}
+function viewProjets() {
+  const mine = myTasks().length;
+  const seg = `<div class="segc" role="group" aria-label="Vue">${[['projets', 'Projets', S.projects.filter((p) => p.statut !== 'termine').length], ['taches', 'Tâches', mine]].map(([k, l, n]) => `<button data-a="psub" data-k="${k}" aria-pressed="${S.psub === k}">${l} <span class="cnt">${n}</span></button>`).join('')}</div>`;
+  if (S.psub === 'taches') return seg + viewTaches();
+  const groups = ['urgent', 'en_cours', 'reflexion', 'pause'].map((k) => [k, S.projects.filter((p) => p.statut === k).sort((a, b) => a.ord - b.ord)]).filter(([, l]) => l.length);
+  const fin = S.projects.filter((p) => p.statut === 'termine');
+  return `${seg}${groups.map(([k, l]) => `<h2 class="sec">${PST[k].l}</h2><div class="group">${l.map(projRow).join('')}</div>`).join('') || '<div class="card empty"><div class="e">📁</div><h3>Aucun projet</h3></div>'}
+    ${fin.length ? `<button class="btn ghost" data-a="pFin">${S.pFin ? 'Masquer' : 'Voir'} les ${fin.length} projet${fin.length > 1 ? 's' : ''} terminé${fin.length > 1 ? 's' : ''}</button>${S.pFin ? `<div class="group">${fin.map(projRow).join('')}</div>` : ''}` : ''}`;
+}
+function viewTaches() {
+  const f = S.tf || 'mine';
+  const seg = `<div class="segc" role="group" aria-label="Filtre">${[['mine', 'Mes tâches'], ['all', 'Toutes'], ['done', 'Faites']].map(([k, l]) => `<button data-a="tf" data-k="${k}" aria-pressed="${f === k}">${l}</button>`).join('')}</div>`;
+  if (f === 'done') { const L = S.tasks.filter((t) => !tOpen(t)).sort((a, b) => String(b.done_at || '').localeCompare(String(a.done_at || ''))).slice(0, 80); return seg + (L.length ? `<div class="group">${L.map((t) => taskRow(t, true)).join('')}</div>` : '<p class="muted">Rien encore.</p>'); }
+  const L = (f === 'mine' ? myTasks() : S.tasks.filter(tOpen)).sort(tSort);
+  const B = [['⏰ En retard', (t) => tLate(t)], ['Aujourd’hui', (t) => tToday(t)], ['Cette semaine', (t) => t.due && daysTo(t.due) > 0 && daysTo(t.due) <= 7], ['Plus tard', (t) => t.due && daysTo(t.due) > 7], ['Sans date', (t) => !t.due]];
+  return seg + (L.length ? B.map(([l, fn]) => { const x = L.filter(fn); return x.length ? `<h2 class="sec">${l}</h2><div class="group">${x.map((t) => taskRow(t, true)).join('')}</div>` : ''; }).join('') : `<div class="card empty"><div class="e">✅</div><h3>${f === 'mine' ? 'Rien pour vous' : 'Rien à faire'}</h3></div>`);
+}
+// Texte d'un projet : « ## Titre » pour une partie, « - » pour un point.
+function mdLite(txt) {
+  let html = '', inList = false;
+  String(txt || '').split('\n').forEach((line) => {
+    const l = line.trim();
+    if (/^-\s+/.test(l)) { if (!inList) { html += '<ul class="pbul">'; inList = true; } html += `<li>${esc(l.replace(/^-\s+/, ''))}</li>`; return; }
+    if (inList) { html += '</ul>'; inList = false; }
+    if (/^##\s+/.test(l)) html += `<h3>${esc(l.replace(/^##\s+/, ''))}</h3>`;
+    else if (l) html += `<p>${esc(l)}</p>`;
+  });
+  return html + (inList ? '</ul>' : '');
+}
+function projSheet(id) {
+  const p = projById(id); if (!p) { closeSheet(); return; }
+  const ts = projTasks(id), open = ts.filter(tOpen).sort(tSort), done = ts.filter((t) => !tOpen(t));
+  const cts = (p.contact_ids || []).map((c) => S.contacts.find((x) => x.id === c)).filter(Boolean);
+  openSheet('proj:' + id, `${sheetHead(`${esc(p.emoji || '📁')} ${esc(p.title)}`)}
+    ${p.resume ? `<p class="muted">${esc(p.resume)}</p>` : ''}
+    <div class="segc five" role="group" aria-label="Statut">${Object.entries(PST).map(([k, v]) => `<button data-a="projStatut" data-id="${id}" data-k="${k}" aria-pressed="${p.statut === k}">${v.s}</button>`).join('')}</div>
+    <div class="card"><div class="row between"><h3>Tâches${open.length ? ` · ${open.length}` : ''}</h3><button class="btn small soft" data-a="taskNew" data-id="${id}">＋ Tâche</button></div>
+      ${open.length ? `<div class="group flat">${open.map((t) => taskRow(t, false)).join('')}</div>` : '<p class="muted">Aucune tâche en cours.</p>'}
+      ${done.length ? `<button class="btn small ghost" data-a="pDone">${S.pDone ? 'Masquer' : 'Voir'} les ${done.length} faite${done.length > 1 ? 's' : ''}</button>${S.pDone ? `<div class="group flat">${done.map((t) => taskRow(t, false)).join('')}</div>` : ''}` : ''}</div>
+    ${p.body ? `<div class="card pbody">${mdLite(p.body)}</div>` : ''}
+    ${cts.length ? `<h2 class="sec">Contacts</h2><div class="group">${cts.map((c) => `<button class="prow" data-a="ctOpen" data-id="${c.id}"><span class="pr-t"><b>${esc(c.nom)}</b><span class="muted sm">${esc([c.role, c.societe && c.societe !== c.nom ? c.societe : ''].filter(Boolean).join(' · '))}</span></span>${c.telephone ? '<span class="pill p-green">📞</span>' : ''}</button>`).join('')}</div>` : ''}
+    <p class="muted sm">${p.hotel ? esc(PHOTEL[p.hotel]) + ' · ' : ''}Mis à jour le ${fdate(p.updated_at)}</p>
+    <div class="row"><button class="btn ghost" data-a="projEdit" data-id="${id}">✏️ Modifier</button><button class="btn ghost bad-t" data-a="projDel" data-id="${id}">Supprimer</button></div>`);
+}
+function projForm(id) {
+  const p = id ? projById(id) : { statut: 'en_cours', hotel: S.scope !== 'all' ? S.scope : null, emoji: '📁', contact_ids: [], body: '## Objectif\n- \n\n## Décisions\n- \n\n## Questions ouvertes\n- ' };
+  const cs = [...S.contacts].sort((a, b) => ((p.contact_ids || []).includes(b.id) - (p.contact_ids || []).includes(a.id)) || String(a.nom).localeCompare(String(b.nom), 'fr'));
+  openSheet('projf', `${sheetHead(id ? 'Modifier le projet' : 'Nouveau projet')}
+    <div class="card form">
+      <div class="two narrow1"><label>Icône<input id="pf-emoji" value="${esc(p.emoji || '')}" maxlength="4"></label><label>Nom du projet<input id="pf-title" value="${esc(p.title || '')}"></label></div>
+      <div class="two"><label>Hôtel<select id="pf-hotel">${opt('', p.hotel || '', 'Autre')}${Object.entries(PHOTEL).map(([k, l]) => opt(k, p.hotel, l)).join('')}</select></label><label>Statut<select id="pf-statut">${Object.entries(PST).map(([k, v]) => opt(k, p.statut, v.l)).join('')}</select></label></div>
+      <label>En une phrase<input id="pf-resume" value="${esc(p.resume || '')}"></label>
+      <label>Objectif, décisions, questions<textarea id="pf-body" rows="14">${esc(p.body || '')}</textarea></label>
+      <p class="muted sm">« ## » au début d’une ligne pour un titre, « - » pour un point.</p>
+      <details><summary>Contacts liés (${(p.contact_ids || []).length})</summary><div class="chips" style="margin-top:8px">${cs.map((c) => `<label class="check"><input type="checkbox" class="pf-ct" value="${c.id}" ${(p.contact_ids || []).includes(c.id) ? 'checked' : ''}> ${esc(c.nom)}</label>`).join('')}</div></details>
+      <button class="btn pri" data-a="projSave" data-id="${id || ''}">Enregistrer</button></div>
+    ${id ? `<button class="btn ghost" data-a="projOpen" data-id="${id}">← Retour</button>` : ''}`);
+}
+function taskForm(id, preset) {
+  const t = id ? S.tasks.find((x) => x.id === id) : { etat: 'a_faire', prio: 'moyenne', owner: S.me.id, ...(preset || {}) };
+  if (!t) return;
+  const back = S.sheet && S.sheet.startsWith('proj:') ? S.sheet.slice(5) : (t.project_id && preset ? t.project_id : null);
+  openSheet('task' + (id ? ':' + id : ''), `${sheetHead(id ? 'Tâche' : 'Nouvelle tâche')}
+    ${id ? `<div class="segc four" role="group" aria-label="État">${Object.entries(TST).map(([k, v]) => `<button data-a="taskEtat" data-id="${id}" data-k="${k}" aria-pressed="${t.etat === k}">${v.l}</button>`).join('')}</div>` : ''}
+    <div class="card form">
+      <label>Quoi ?<input id="tf-title" value="${esc(t.title || '')}" placeholder="Ex. : appeler l’assurance pour le dossier"></label>
+      <label>Projet<select id="tf-proj">${opt('', t.project_id || '', 'Sans projet')}${S.projects.filter((p) => p.statut !== 'termine' || p.id === t.project_id).map((p) => opt(p.id, t.project_id, `${p.emoji || '📁'} ${p.title}`)).join('')}</select></label>
+      <div class="two"><label>Qui s’en occupe<select id="tf-owner">${opt('', t.owner || '', 'À attribuer')}${mgrStaff().map((s) => opt(s.id, t.owner, s.id === S.me.id ? 'Moi' : s.label)).join('')}</select></label><label>Pour le<input id="tf-due" type="date" value="${esc(t.due || '')}"></label></div>
+      <label>Priorité<select id="tf-prio">${Object.entries(TPR).map(([k, l]) => opt(k, t.prio, l)).join('')}</select></label>
+      <label>Notes<textarea id="tf-note" rows="4">${esc(t.note || '')}</textarea></label>
+      <button class="btn pri" data-a="taskSave" data-id="${id || ''}" data-p="${back || ''}">${id ? 'Enregistrer' : 'Créer la tâche'}</button></div>
+    ${id ? `<p class="muted sm">Créée le ${fdate(t.created_at)}${t.created_by ? ' par ' + esc(first(nameOf(t.created_by))) : ''}${t.done_at ? ' · faite le ' + fdate(t.done_at) + (t.done_by ? ' par ' + esc(first(nameOf(t.done_by))) : '') : ''}</p>` : ''}
+    <div class="row">${back ? `<button class="btn ghost" data-a="projOpen" data-id="${back}">← Projet</button>` : ''}${id ? `<button class="btn ghost bad-t" data-a="taskDel" data-id="${id}">Supprimer</button>` : ''}</div>`);
+}
+function myTasksCard() {
+  const L = myTasks().sort(tSort); if (!L.length) return '';
+  const late = L.filter(tLate).length;
+  return `<div class="card"><div class="row between"><h3>📌 Mes tâches${late ? ` · <span class="bad-t">${late} en retard</span>` : ''}</h3><button class="btn small ghost" data-a="go" data-k="projets" data-s="taches">Tout voir</button></div><div class="group flat">${L.slice(0, 4).map((t) => taskRow(t, true)).join('')}</div></div>`;
+}
+
 // Bandeau affiché quand un gérant utilise l'appli comme une femme de ménage ou l'intendant.
 const pvBar = () => S.preview ? `<div class="pvbar"><span>👁 Vue ${S.preview === 'brico' ? 'intendant' : 'femme de ménage'} · ce que vous faites ici compte vraiment</span><button class="btn small" data-a="unpreview">Revenir</button></div>` : '';
 /* ----- bricoleur : réparations + ménage en lecture ----- */
@@ -1421,6 +1538,7 @@ function refreshSheet() {
   else if (S.sheet === 'convs') convListSheet();
   else if (S.sheet.startsWith('occ:') && S.sheet.length > 4 && !isTyping()) occSheet(S.sheet.slice(4));
   else if (S.sheet.startsWith('sec:') && !isTyping()) secSheet(S.sheet.slice(4));
+  else if (S.sheet.startsWith('proj:') && !isTyping()) projSheet(S.sheet.slice(5));
 }
 const sheetHead = (t) => `<div class="row between"><h2>${t}</h2><button class="btn small" data-a="close">Fermer</button></div>`;
 function roomSheet(id) {
@@ -1506,6 +1624,7 @@ const A = {
   go(d) {
     if (d.k === 'menage' && S.scope !== 'all') { S.hotel = S.scope; LS.set('mh-hotel', S.hotel); }
     if (d.k === 'menage') { S.sub = d.s || 'rooms'; if (S.sub !== 'plan') S.proposal = null; }
+    if (d.k === 'projets' && d.s) S.psub = d.s;
     S.tab = d.k; S.sel.clear(); render(); window.scrollTo(0, 0);
   },
   home() { S.tab = 'home'; S.sel.clear(); render(); window.scrollTo(0, 0); },
@@ -1620,6 +1739,34 @@ const A = {
     if (await act(() => api('plan_apply', { assign, fond: P.fond, unassign }), 'Répartition envoyée. Chacune est prévenue sur son téléphone.')) { S.proposal = null; render(); }
     else if (el) el.classList.remove('busy');
   },
+  /* projets et tâches */
+  psub(d) { S.psub = d.k; render(); window.scrollTo(0, 0); },
+  tf(d) { S.tf = d.k; render(); },
+  pFin() { S.pFin = !S.pFin; render(); },
+  pDone() { S.pDone = !S.pDone; refreshSheet(); },
+  projOpen(d) { projSheet(d.id); },
+  projNew() { projForm(null); },
+  projEdit(d) { projForm(d.id); },
+  async projStatut(d) { if (await act(() => api('proj_save', { id: d.id, statut: d.k }), PST[d.k].l)) projSheet(d.id); },
+  async projSave(d) {
+    const v = (x) => ($(x) ? $(x).value.trim() : '');
+    const body = { id: d.id || undefined, title: v('pf-title'), emoji: v('pf-emoji'), hotel: v('pf-hotel') || null, statut: v('pf-statut'), resume: v('pf-resume'), body: $('pf-body') ? $('pf-body').value : '', contact_ids: [...document.querySelectorAll('.pf-ct:checked')].map((x) => x.value) };
+    if (!body.title) { toast('Donne un nom au projet.'); return; }
+    let nid = d.id; if (await act(async () => { nid = (await api('proj_save', body)).id; }, 'Enregistré')) projSheet(nid);
+  },
+  async projDel(d) { if (!S.confirmDel) { S.confirmDel = d.id; toast('Touche encore : le projet est supprimé, ses tâches restent sans projet.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('proj_delete', { id: d.id }), 'Projet supprimé')) closeSheet(); },
+  taskNew(d) { taskForm(null, d && d.id ? { project_id: d.id } : {}); },
+  taskOpen(d) { taskForm(d.id); },
+  async taskTick(d) { const t = S.tasks.find((x) => x.id === d.id); if (!t) return; const etat = tOpen(t) ? 'fait' : 'a_faire'; t.etat = etat; t.done_at = etat === 'fait' ? new Date().toISOString() : null; render(); refreshSheet(); await act(() => api('task_save', { id: d.id, etat }), etat === 'fait' ? 'Fait ✓' : 'Rouverte'); },
+  async taskEtat(d) { if (await act(() => api('task_save', { id: d.id, etat: d.k }), TST[d.k].l)) taskForm(d.id); },
+  async taskSave(d) {
+    const v = (x) => ($(x) ? $(x).value.trim() : '');
+    const body = { id: d.id || undefined, title: v('tf-title'), project_id: v('tf-proj') || null, owner: v('tf-owner') || null, due: v('tf-due') || null, prio: v('tf-prio'), note: v('tf-note') };
+    if (!body.title) { toast('Écris la tâche.'); return; }
+    const owner = body.owner && body.owner !== S.me.id ? first(nameOf(body.owner)) : '';
+    if (await act(() => api('task_save', body), d.id ? 'Enregistré' : (owner ? `Tâche créée, ${owner} est prévenu(e)` : 'Tâche créée'))) { if (d.p) projSheet(d.p); else closeSheet(); }
+  },
+  async taskDel(d) { if (!S.confirmDel) { S.confirmDel = d.id; toast('Touche encore pour supprimer la tâche.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('task_delete', { id: d.id }), 'Supprimée')) closeSheet(); },
   /* sécurité */
   secOpen(d) { S.sl = null; secSheet(d.id); },
   secDossier(d) { secDossier(d.k); },

@@ -247,6 +247,11 @@ async function actState(me: any, device: any) {
     out.contacts = (await sb.from("contacts").select("*").order("nom")).data || [];
     out.reg = await regState();
     out.sec = await secState(me, paths);
+    const [{ data: projects }, { data: tasks }] = await Promise.all([
+      sb.from("projects").select("*").order("ord"),
+      sb.from("tasks").select("*").order("created_at", { ascending: false }).limit(1000),
+    ]);
+    out.projects = projects || []; out.tasks = tasks || [];
   } else {
     const brico = isBrico(me);
     const [{ data: staff }, { data: issues }, msgs] = await Promise.all([
@@ -536,6 +541,62 @@ async function secReminders() {
   return sent;
 }
 
+// ---------- projets et tâches (gérants seulement) ----------
+const PSTATUTS = ["urgent", "en_cours", "reflexion", "pause", "termine"];
+const TETATS = ["a_faire", "en_attente", "a_verifier", "fait"];
+const TPRIOS = ["haute", "moyenne", "basse"];
+async function projAction(me: any, a: string, body: any) {
+  needMgr(me);
+  const now = new Date().toISOString();
+  if (a === "proj_save") {
+    const row: any = { updated_at: now };
+    if ("title" in body) { row.title = S_(body.title, 160); if (!row.title) throw new E("bad"); }
+    if ("emoji" in body) row.emoji = S_(body.emoji, 8);
+    if ("hotel" in body) row.hotel = [...HOTELS, "all"].includes(body.hotel) ? body.hotel : null;
+    if ("statut" in body) row.statut = PSTATUTS.includes(body.statut) ? body.statut : "en_cours";
+    if ("resume" in body) row.resume = S_(body.resume, 400);
+    if ("body" in body) row.body = S_(body.body, 20000);
+    if ("contact_ids" in body) row.contact_ids = (Array.isArray(body.contact_ids) ? body.contact_ids : []).filter((x: string) => UUID.test(String(x))).slice(0, 30);
+    if (body.id) { await sb.from("projects").update(row).eq("id", body.id); return { ok: true, id: body.id }; }
+    if (!row.title) throw new E("bad");
+    const { data, error } = await sb.from("projects").insert({ ...row, created_by: me.id, ord: 100 }).select("id").single(); if (error) throw new E("db");
+    return { ok: true, id: data.id };
+  }
+  if (a === "proj_delete") { await sb.from("projects").delete().eq("id", body.id); return { ok: true }; }
+  if (a === "task_save") {
+    const row: any = { updated_at: now };
+    if ("title" in body) { row.title = S_(body.title, 200); if (!row.title) throw new E("bad"); }
+    if ("note" in body) row.note = S_(body.note, 3000);
+    if ("project_id" in body) row.project_id = UUID.test(String(body.project_id || "")) ? body.project_id : null;
+    if ("owner" in body) row.owner = UUID.test(String(body.owner || "")) ? body.owner : null;
+    if ("due" in body) { row.due = D_(body.due); row.reminded_on = null; }
+    if ("prio" in body) row.prio = TPRIOS.includes(body.prio) ? body.prio : "moyenne";
+    if ("etat" in body) { row.etat = TETATS.includes(body.etat) ? body.etat : "a_faire"; row.done_at = row.etat === "fait" ? now : null; row.done_by = row.etat === "fait" ? me.id : null; }
+    let old: any = null;
+    if (body.id) { old = (await sb.from("tasks").select("*").eq("id", body.id).maybeSingle()).data; if (!old) throw new E("bad"); await sb.from("tasks").update(row).eq("id", body.id); }
+    else { if (!row.title) throw new E("bad"); const { data, error } = await sb.from("tasks").insert({ ...row, created_by: me.id, owner: "owner" in row ? row.owner : me.id }).select("id").single(); if (error) throw new E("db"); body.id = data.id; }
+    const owner = "owner" in row ? row.owner : old?.owner;
+    if (owner && owner !== me.id && (!old || old.owner !== owner)) await pushTo([owner], { title: "📌 Nouvelle tâche pour toi", body: `${row.title || old?.title}${row.due ? " · avant le " + row.due.split("-").reverse().join("/") : ""} · de ${String(me.label).split(" ")[0]}`, tag: "task" });
+    if (old && row.etat === "fait" && old.etat !== "fait" && old.created_by && old.created_by !== me.id) await pushTo([old.created_by], { title: "✅ Tâche faite", body: `${old.title} · par ${String(me.label).split(" ")[0]}`, tag: "task" });
+    return { ok: true, id: body.id };
+  }
+  if (a === "task_delete") { await sb.from("tasks").delete().eq("id", body.id); return { ok: true }; }
+  throw new E("unknown_action");
+}
+// Rappels du matin : tâche à rendre aujourd'hui, ou en retard (le lundi).
+async function taskReminders() {
+  const today = parisDay(), monday = new Date(today + "T12:00:00Z").getUTCDay() === 1;
+  const { data } = await sb.from("tasks").select("id,title,owner,due,reminded_on").neq("etat", "fait").not("owner", "is", null).not("due", "is", null).lte("due", today);
+  const per: Record<string, string[]> = {};
+  for (const t of data || []) {
+    if (t.reminded_on === today || (t.due < today && !monday)) continue;
+    (per[t.owner] ||= []).push(t.due < today ? `${t.title} (en retard)` : t.title);
+    await sb.from("tasks").update({ reminded_on: today }).eq("id", t.id);
+  }
+  for (const [uid, list] of Object.entries(per)) await pushTo([uid], { title: `📌 ${list.length} tâche${list.length > 1 ? "s" : ""} pour aujourd’hui`, body: list.slice(0, 3).join("\n"), tag: "task" });
+  return Object.keys(per).length;
+}
+
 async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Record<string, any>) {
   needMgr(me);
   const clean: any = {};
@@ -573,11 +634,12 @@ async function handle(req: Request) {
       (rooms || []).forEach((r: any) => { const p = per[r.assignee] ||= { n: 0, min: 0 }; p.n++; p.min += estimate(r, cfg); });
       const { data: staff } = await sb.from("staff").select("id,label").in("id", Object.keys(per));
       const secSent = await secReminders().catch(() => 0);
+      const taskSent = await taskReminders().catch(() => 0);
       for (const st of staff || []) {
         const p = per[st.id];
         await pushTo([st.id], { title: `☀️ Bonjour ${String(st.label).split(" ")[0]}`, body: `${p.n} chambre${p.n > 1 ? "s" : ""} aujourd’hui, environ ${fmtMin(p.min)}.`, tag: "morning" });
       }
-      return { sent: Object.keys(per).length, sec: secSent };
+      return { sent: Object.keys(per).length, sec: secSent, tasks: taskSent };
     }
     if (body.kind === "purge") {
       const cfg = await getConfig(); const days = Number(cfg.retentionDays) || 30;
@@ -827,6 +889,7 @@ async function handle(req: Request) {
     case "issue_status": return await repairAction(me, "repair_etat", { id: body.id, etat: body.status === "regle" ? "fait" : "a_faire" });
     case "repair_save": case "repair_etat": case "repair_photo": case "repair_note": case "repair_delete": return await repairAction(me, a, body);
     case "sec_log": case "sec_obs": case "sec_save": case "sec_add": case "sec_log_delete": case "sec_delete": return await secAction(me, a, body);
+    case "proj_save": case "proj_delete": case "task_save": case "task_delete": return await projAction(me, a, body);
     case "contact_save": {
       needMgr(me);
       const nom = S_(body.nom, 120); if (!nom) throw new E("bad");
