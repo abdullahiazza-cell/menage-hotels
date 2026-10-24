@@ -28,7 +28,7 @@ const TY = { blanc: { l: 'À blanc', e: '🛏️' }, recouche: { l: 'Recouche', 
 const FREQS = [[1, 'Tous les jours'], [2, 'Tous les 2 jours'], [3, 'Tous les 3 jours'], [7, 'Une fois par semaine'], [14, 'Toutes les 2 semaines'], [30, 'Une fois par mois']];
 const REASONS = [['Personnel', '👷'], ['Nous-mêmes', '🏠'], ['Panne ou travaux', '🛠️'], ['Salle petit déjeuner', '☕']];
 const REDO = ['Lit mal fait', 'Salle de bain sale', 'Poussière', 'Sol pas propre', 'Poubelle pleine', 'Produits manquants'];
-const ROLE_L = { owner: 'Propriétaire', gerant: 'Gérant / associé', menage: 'Femme de ménage', bricoleur: 'Bricoleur' };
+const ROLE_L = { owner: 'Propriétaire', gerant: 'Gérant / associé', menage: 'Femme de ménage', bricoleur: 'Intendant' };
 
 /* ---------- état ---------- */
 const LS = {
@@ -797,7 +797,7 @@ function viewThreads() {
       <div class="list">${groups.map(convRow).join('')}</div></div>
     ${dms.length ? `<div class="card"><h3>🔒 Privés</h3><div class="list">${dms.map(convRow).join('')}</div></div>` : ''}
     <div class="card"><h3>🧺 Équipe terrain</h3><p class="muted">Chaque conversation : la personne + tous les responsables.</p>
-      ${staffC.length ? `<div class="list">${staffC.map(convRow).join('')}</div>` : '<p class="muted">Pas encore de femme de ménage ni de bricoleur dans l’équipe.</p>'}</div>`;
+      ${staffC.length ? `<div class="list">${staffC.map(convRow).join('')}</div>` : '<p class="muted">Pas encore de femme de ménage ni d’intendant dans l’équipe.</p>'}</div>`;
 }
 function newMsgSheet() {
   const others = S.staff.filter((s) => s.active !== false && s.id !== S.me.id);
@@ -888,7 +888,7 @@ function personSheet(id) {
   const s = id ? staffById(id) : null, rl = s ? s.role : 'menage', hs = s ? (s.hotels || []) : HOTELS.map((h) => h.id);
   openSheet('person', `<div class="row between"><h2>${s ? 'Modifier' : 'Nouvelle personne'}</h2><button class="btn small" data-a="close">Fermer</button></div>
     <div class="card"><label class="muted" for="p-label">Prénom affiché</label><input id="p-label" value="${esc(s ? s.label : '')}" placeholder="Ex. : Fatima">
-      ${s && s.role === 'owner' ? '<p class="muted">Rôle : propriétaire (protégé)</p>' : `<label class="muted" for="p-role">Rôle</label><select id="p-role" data-change="pRole"><option value="menage" ${rl === 'menage' ? 'selected' : ''}>Femme de ménage</option><option value="bricoleur" ${rl === 'bricoleur' ? 'selected' : ''}>Bricoleur (réparations, ménage en lecture)</option><option value="gerant" ${rl === 'gerant' ? 'selected' : ''}>Gérant / associé (tous les droits)</option></select>`}
+      ${s && s.role === 'owner' ? '<p class="muted">Rôle : propriétaire (protégé)</p>' : `<label class="muted" for="p-role">Rôle</label><select id="p-role" data-change="pRole"><option value="menage" ${rl === 'menage' ? 'selected' : ''}>Femme de ménage</option><option value="bricoleur" ${rl === 'bricoleur' ? 'selected' : ''}>Intendant (réparations, ménage en lecture)</option><option value="gerant" ${rl === 'gerant' ? 'selected' : ''}>Gérant / associé (tous les droits)</option></select>`}
       <p id="p-brico" ${rl === 'bricoleur' ? '' : 'hidden'} class="muted">Il voit les réparations des 3 hôtels et peut les marquer réglées. Il voit qui a nettoyé quoi, sans pouvoir rien changer.</p>
       <div id="p-menage" ${rl === 'menage' ? '' : 'hidden'} class="col">
         <p class="muted">Hôtels habituels (les trois = polyvalente)</p>
