@@ -361,7 +361,7 @@ async function testMic() {
 function render() {
   const a = $('app');
   if (!S.secret) { a.innerHTML = viewActivate(); return; }
-  if (!S.loaded) { a.innerHTML = `<div class="wrap"><div class="empty"><div class="e">🧺</div><h2>Chargement…</h2></div></div>`; return; }
+  if (!S.loaded) { a.innerHTML = `<div class="wrap"><div class="empty"><div class="e">🛎️</div><h2>Chargement…</h2></div></div>`; return; }
   document.body.dataset.hotel = (S.open && S.rooms[S.open]) ? S.rooms[S.open].hotel : S.hotel;
   a.innerHTML = role() === 'mgr' ? viewManager() : (S.open ? viewCleanRoom() : viewCleanHome());
   updateBadge();
@@ -384,7 +384,7 @@ function viewActivate() {
   if (A.code && !A.checked) {
     A.checked = true;
     api('invite_info', { token: A.code }).then((r) => { A.info = r; render(); }).catch(() => { A.info = { valid: false, net: true }; render(); });
-    return `<div class="wrap"><div class="empty"><div class="e">🧺</div><h2>Un instant…</h2></div></div>`;
+    return `<div class="wrap"><div class="empty"><div class="e">🛎️</div><h2>Un instant…</h2></div></div>`;
   }
   const head = `<div class="logo" style="justify-content:center"><img src="icons/icon-192.png" alt=""><h1>Ma Réception</h1></div>`;
   if (!A.code) {
@@ -393,7 +393,7 @@ function viewActivate() {
       <input id="codeIn" autocomplete="off" autocapitalize="characters" placeholder="Ex. : K7M2-Q9XD" style="font-size:24px;text-align:center;letter-spacing:.1em">
       <button class="btn big pri" data-a="codeGo">Continuer</button></div></div>`;
   }
-  if (!A.info) return `<div class="wrap"><div class="empty"><div class="e">🧺</div><h2>Un instant…</h2></div></div>`;
+  if (!A.info) return `<div class="wrap"><div class="empty"><div class="e">🛎️</div><h2>Un instant…</h2></div></div>`;
   if (!A.info.valid) {
     return `<div class="wrap" style="max-width:480px">${head}<div class="card empty"><div class="e">${A.info.net ? '📶' : '⛔'}</div>
       <h2>${A.info.net ? 'Pas de connexion' : 'Lien plus valable'}</h2><p>${A.info.net ? 'Vérifie internet puis réessaie.' : 'Ce lien a déjà servi ou a expiré. Demande un nouveau lien à ton responsable.'}</p>
@@ -1060,7 +1060,7 @@ const A = {
     try { const res = await api('invite_create', { staff_id: d.id, pin }); inviteSheet(d.id, { token: res.token, pin }); refresh(true); }
     catch (e) { toast(errMsg(e)); }
   },
-  async invShare() { const L = S.lastInvite; try { await navigator.share({ title: 'Ménage Hôtels', text: 'Ton lien pour installer l’appli ménage :', url: L.url }); } catch (e) {} },
+  async invShare() { const L = S.lastInvite; try { await navigator.share({ title: 'Ma Réception', text: 'Ton lien pour installer l’appli Ma Réception :', url: L.url }); } catch (e) {} },
   async invCopy() { const L = S.lastInvite; try { await navigator.clipboard.writeText(L.url); toast('Lien copié'); } catch (e) { prompt('Copie ce lien :', L.url); } },
   invPrint() { printFiche(); },
   async devRevoke(d) {
