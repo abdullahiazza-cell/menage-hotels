@@ -280,14 +280,15 @@ async function actState(me: any, device: any) {
 // ---------- registre (gérants seulement) ----------
 async function regState() {
   const since = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
-  const [{ data: occ }, { data: pecs }, { data: inbox }, { data: log }] = await Promise.all([
+  const [{ data: occ }, { data: pecs }, { data: inbox }, { data: log }, { data: relances }] = await Promise.all([
     sb.from("occupants").select("*").or(`statut.eq.present,sortie.gte.${since}`).order("nom"),
     sb.from("pecs").select("*").order("debut", { ascending: false }),
     sb.from("pec_inbox").select("*").order("received_at", { ascending: false }).limit(300),
     sb.from("registre_log").select("*").order("ts", { ascending: false }).limit(300),
+    sb.from("pec_relances").select("*"),
   ]);
   await attachMailDocs((inbox || []).filter((i: any) => i.status === "a_traiter")).catch(() => {});
-  return { occ: occ || [], pecs: pecs || [], inbox: inbox || [], log: log || [] };
+  return { occ: occ || [], pecs: pecs || [], inbox: inbox || [], log: log || [], relances: relances || [] };
 }
 const S_ = (v: any, n = 200) => (v === undefined || v === null || v === "") ? null : String(v).slice(0, n);
 const D_ = (v: any) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : null;
@@ -396,7 +397,7 @@ async function regAction(me: any, a: string, body: any) {
       occId = data.id; who = fullName(row);
       await regLog(me, "Arrivée", occId, `${who} · ${await placeLabel(room_id, hotel, formule)}`, raison || "Depuis une PEC reçue", it.categorie || "");
     }
-    await sb.from("pecs").insert({ occupant_id: occId, financeur: it.financeur, reference: it.reference || "", debut: it.debut, fin: it.fin, tarif: it.tarif || "", repas: it.repas, notes: `Créée depuis le document reçu le ${String(it.received_at || now).slice(0, 10).split("-").reverse().join("/")}`, docs: it.docs || [], created_by: me.id, updated_by: me.id });
+    await sb.from("pecs").insert({ occupant_id: occId, financeur: it.financeur, reference: it.reference || "", debut: it.debut, fin: it.fin, tarif: it.tarif || "", repas: it.repas, notes: `Créée depuis le document reçu le ${String(it.received_at || now).slice(0, 10).split("-").reverse().join("/")}`, docs: it.docs || [], source_msg: /^[0-9a-f]{12,24}$/.test(String(it.id).split("-")[0]) ? String(it.id).split("-")[0] : null, created_by: me.id, updated_by: me.id });
     await sb.from("pec_inbox").update({ status: "traite", note: `appliqué à ${who}`, treated_at: now, treated_by: me.id, occupant_id: occId }).eq("id", it.id);
     await regLog(me, "PEC ajoutée", occId, `${who} · ${it.financeur || ""}`, raison || "Depuis une PEC reçue", `${it.debut || "?"} → ${it.fin || "?"}`);
     return { ok: true, id: occId };
@@ -615,8 +616,7 @@ async function attachMailDocs(rows: any[]) {
   }
 }
 async function pecPdf(req: Request, body: any) {
-  const { data: s } = await sb.from("app_secrets").select("value").eq("name", "gas_secret").single();
-  if (!s || req.headers.get("x-gas") !== s.value) throw new E("forbidden", 403);
+  await gasAuth(req);
   const msg = String(body.msg || ""); if (!/^[0-9a-f]{12,24}$/.test(msg)) throw new E("bad");
   const b64 = String(body.b64 || ""); if (!b64 || b64.length > 14_000_000) throw new E("too_big");
   const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
@@ -629,10 +629,62 @@ async function pecPdf(req: Request, body: any) {
     const { error } = await sb.from("doc_files").insert({ id, name, type: "application/pdf", size: u8.length, sha256: sha, data: "\\x" + hex });
     if (error) throw new E("db");
   }
-  await sb.from("pec_mail_docs").upsert({ msg_id: msg, doc_id: id, name, subject: S_(body.subject, 300), mail_date: typeof body.date === "string" ? body.date : null }, { onConflict: "msg_id,doc_id" });
+  const text = await pdfText(u8);
+  await sb.from("pec_mail_docs").upsert({ msg_id: msg, doc_id: id, name, subject: S_(body.subject, 300), mail_date: typeof body.date === "string" ? body.date : null, text }, { onConflict: "msg_id,doc_id" });
   const { data: rows } = await sb.from("pec_inbox").select("id,docs").or(`id.eq.${msg},id.like.${msg}-%`);
   await attachMailDocs(rows || []);
-  return { ok: true, id, linked: (rows || []).length };
+  return { ok: true, id, linked: (rows || []).length, text: !!text };
+}
+
+// Texte d'un PDF (pour que le relevé se fie à ce qui est écrit sur la PEC, pas à l'objet du mail).
+async function pdfText(u8: Uint8Array) {
+  try {
+    const { extractText, getDocumentProxy } = await import("npm:unpdf@0.12.1");
+    const pdf = await getDocumentProxy(u8);
+    const { text } = await extractText(pdf, { mergePages: true });
+    return String(text || "").replace(/\s+/g, " ").trim().slice(0, 20000) || null;
+  } catch (e) { console.warn("pdfText", e); return null; }
+}
+async function gasAuth(req: Request) {
+  const { data: s } = await sb.from("app_secrets").select("value").eq("name", "gas_secret").single();
+  if (!s || req.headers.get("x-gas") !== s.value) throw new E("forbidden", 403);
+}
+const SIGN: Record<string, string> = {
+  arc: "SARL Hôtel Archange – 1 boulevard de Verdun, 45000 Orléans",
+  par: "SARL Hôtel de Paris – 29 rue du Faubourg Bannier, 45000 Orléans",
+  cha: "SARL Hôtel de Paris – 29 rue du Faubourg Bannier, 45000 Orléans",
+};
+const LIEU: Record<string, string> = { arc: "à l’Hôtel Archange", par: "à l’Hôtel de Paris", cha: "à l’annexe de l’Hôtel de Paris (46 bis boulevard de Châteaudun)" };
+const longFr = (iso: string) => new Date(iso + "T12:00:00Z").toLocaleDateString("fr-FR", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" });
+// Relances de fin de PEC : liste à préparer en brouillon par le script Google (7 jours avant, puis après la fin).
+async function relancesTodo() {
+  const today = parisDay(), lim = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
+  const [{ data: occ }, { data: pecs }, { data: done }, { data: inbox }] = await Promise.all([
+    sb.from("occupants").select("id,nom,prenom,hotel,formule,categorie").eq("statut", "present"),
+    sb.from("pecs").select("id,occupant_id,fin,reference,financeur,source_msg").not("fin", "is", null),
+    sb.from("pec_relances").select("pec_id,stage"),
+    sb.from("pec_inbox").select("nom,prenom").eq("status", "a_traiter"),
+  ]);
+  const seen = new Set((done || []).map((d: any) => d.pec_id + ":" + d.stage));
+  const out: any[] = [];
+  for (const o of occ || []) {
+    if (o.categorie === "Conventionnel") continue;
+    const p = (pecs || []).filter((x: any) => x.occupant_id === o.id).sort((a: any, b: any) => String(b.fin).localeCompare(String(a.fin)))[0];
+    if (!p || p.fin > lim) continue;
+    const stage = p.fin < today ? "expiree" : "bientot";
+    if (seen.has(p.id + ":" + stage)) continue;
+    const up = (x: any) => String(x || "").trim().toUpperCase();
+    if ((inbox || []).some((i: any) => up(i.nom) === up(o.nom))) continue;
+    const who = [o.prenom, up(o.nom)].filter(Boolean).join(" ");
+    const quoi = o.formule === "restauration" ? `des repas de ${who} à l’Hôtel de Paris` : `de l’hébergement de ${who} ${LIEU[o.hotel] || ""}`;
+    const ref = p.reference ? ` (réf. ${p.reference})` : "";
+    const corps = stage === "bientot"
+      ? `La prise en charge ${quoi}${ref} arrive à échéance le ${longFr(p.fin)}.\n\nPourriez-vous nous indiquer si elle sera renouvelée ? Si c’est le cas, merci de nous transmettre la nouvelle attestation de prise en charge. Dans le cas contraire, pouvez-vous nous confirmer la date de départ prévue ?`
+      : `La prise en charge ${quoi}${ref} est arrivée à échéance le ${longFr(p.fin)} et nous n’avons pas reçu de renouvellement à ce jour. Nous continuons pour l’instant d’accueillir ${who}.\n\nPourriez-vous nous indiquer si la prise en charge sera renouvelée et, le cas échéant, nous transmettre la nouvelle attestation ? Dans le cas contraire, pouvez-vous nous confirmer la date de départ prévue ?`;
+    const body = `Bonjour,\n\n${corps}\n\nJe vous remercie par avance.\n\nBien cordialement,\n\nAbdullah Iazza\n${SIGN[o.hotel] || SIGN.par}\n06 19 74 94 07`;
+    out.push({ pec_id: p.id, stage, msg: p.source_msg || null, nom: up(o.nom), prenom: o.prenom || "", body });
+  }
+  return { items: out };
 }
 
 async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Record<string, any>) {
@@ -694,6 +746,21 @@ async function handle(req: Request) {
   }
 
   if (a === "pec_pdf") return await pecPdf(req, body);
+  if (a === "pec_relances") { await gasAuth(req); return await relancesTodo(); }
+  if (a === "pec_relance_done") {
+    await gasAuth(req);
+    const st = ["brouillon", "introuvable"].includes(body.status) ? body.status : null;
+    if (!st || !["bientot", "expiree"].includes(body.stage) || !body.pec_id) throw new E("bad");
+    await sb.from("pec_relances").upsert({ pec_id: String(body.pec_id).slice(0, 80), stage: body.stage, status: st, to_email: S_(body.to, 200) }, { onConflict: "pec_id,stage" });
+    return { ok: true };
+  }
+  if (a === "doc_text") {
+    await gasAuth(req);
+    const { data: f } = await sb.from("doc_files").select("data").eq("id", String(body.id || "")).maybeSingle(); if (!f) throw new E("bad");
+    const hex = String(f.data).replace(/^\\x/, ""); const u8 = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < u8.length; i++) u8[i] = parseInt(hex.substr(i * 2, 2), 16);
+    return { text: await pdfText(u8) };
+  }
 
   // --- activation (sans appareil) ---
   if (a === "invite_info") {
