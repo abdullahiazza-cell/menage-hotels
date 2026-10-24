@@ -39,7 +39,7 @@ const LS = {
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
   me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
-  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [] }, sl: null, projects: [], tasks: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
+  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [] }, sl: null, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), psub: 'projets', tf: 'mine', pFin: false, pDone: false,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
 };
@@ -546,7 +546,7 @@ function viewHome() {
     <div class="tiles">
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
       ${tile('issues', c.open ? `${c.open} à faire ou en cours` : 'Rien à réparer', c.newIss)}
-      ${tile('registre', `${presentOcc().filter(inScope).length} présents`, regBadge())}${secTile()}
+      ${tile('registre', finsCount() ? `<span class="ora">${finsCount()} fin${finsCount() > 1 ? 's' : ''} de PEC à suivre</span>` : `${presentOcc().filter(inScope).length} présents`, regBadge())}${secTile()}
       ${tile('msgs', un ? `${un} non lu${un > 1 ? 's' : ''}` : 'Tout est lu', un)}
       ${tile('projets', myTasks().length ? `${myTasks().length} tâche${myTasks().length > 1 ? 's' : ''} pour vous` : `${S.projects.filter((p) => p.statut !== 'termine').length} projets`, myTasks().filter((t) => tLate(t) || tToday(t)).length)}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
@@ -589,10 +589,39 @@ const regBadge = () => scoped(inboxTodo()).length + scoped(presentOcc()).filter(
 // Restauration : repas seuls, toujours facturés sur l'Hôtel de Paris.
 const isResto = (o) => o.formule === 'restauration';
 const occPlace = (o) => { if (isResto(o)) return 'restauration'; const r = o.room_id && S.rooms[o.room_id]; return r ? placeShort(r) : 'sans chambre'; };
+// Fins de PEC : orange à moins d'une semaine, rouge une fois dépassée ; un brouillon de relance est préparé dans Gmail.
+const lastPec = (o) => pecsOf(o.id).filter((p) => p.fin).sort((a, b) => String(b.fin).localeCompare(String(a.fin)))[0] || null;
+const pendingRenew = (o) => inboxTodo().find((i) => String(i.nom || '').trim().toUpperCase() === String(o.nom || '').trim().toUpperCase() && (!i.prenom || !o.prenom || first(i.prenom).toLowerCase() === first(o.prenom).toLowerCase()));
+const relanceOf = (p, stage) => (S.reg.relances || []).filter((r) => r.pec_id === p.id && (!stage || r.stage === stage)).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null;
+function finsList() {
+  const t = todayISO(), lim = addDaysISO(t, 7);
+  return presentOcc().filter((o) => o.categorie !== 'Conventionnel').map((o) => { const p = lastPec(o); return p && p.fin <= lim ? { o, p, late: p.fin < t, n: daysTo(p.fin) } : null; }).filter(Boolean)
+    .sort((a, b) => String(a.p.fin).localeCompare(String(b.p.fin)));
+}
+function relanceTxt(f) {
+  const ren = pendingRenew(f.o); if (ren) return { c: 'green', t: '📨 Renouvellement reçu le ' + fdate(ren.received_at) + ' : à appliquer dans « À traiter »' };
+  const r = relanceOf(f.p, f.late ? 'expiree' : 'bientot');
+  if (r && r.status === 'brouillon') return { c: 'accent', t: `✉️ Brouillon de relance prêt dans Gmail depuis le ${fdate(r.created_at)}${r.to_email ? ' · pour ' + r.to_email : ''}` };
+  if (r && r.status === 'introuvable') return { c: 'amber', t: '⚠️ Pas de mail du référent trouvé : relance à faire à la main' };
+  return { c: 'slate', t: '✉️ Brouillon de relance préparé automatiquement au prochain passage (chaque matin à 8 h)' };
+}
+function regFins() {
+  const L = scoped(finsList().map((f) => ({ ...f, hotel: f.o.hotel })));
+  const row = (f) => { const rt = relanceTxt(f);
+    return `<button class="prow" data-a="occOpen" data-id="${f.o.id}"><span class="pr-t"><b>${esc(occName(f.o))}</b><span class="muted sm">${esc(hotelName(f.o.hotel))} · ${esc(occPlace(f.o))} · ${esc(f.p.financeur || '')}${f.p.reference ? ' · réf. ' + esc(f.p.reference) : ''}</span><span class="sm rel-${rt.c}">${esc(rt.t)}</span></span>
+      <span class="pill p-${f.late ? 'red' : 'amber'}">${f.late ? `Finie le ${fdate(f.p.fin).slice(0, 5)}` : (f.n === 0 ? 'Finit aujourd’hui' : `Finit le ${fdate(f.p.fin).slice(0, 5)}`)}</span></button>`; };
+  const late = L.filter((f) => f.late), soon = L.filter((f) => !f.late);
+  return `${scopeSeg(finsList().map((f) => ({ hotel: f.o.hotel })))}
+    <p class="muted sm">Chaque matin, un brouillon de relance au référent est préparé dans la boîte Gmail « Hôtel de Paris ADM » : une semaine avant la fin, puis le lendemain si rien n’est arrivé. Il n’est jamais envoyé tout seul : vous le relisez et l’envoyez.</p>
+    ${late.length ? `<h2 class="sec">🔴 PEC dépassées · ${late.length}</h2><div class="group">${late.map(row).join('')}</div>` : ''}
+    ${soon.length ? `<h2 class="sec">🟠 Finissent dans moins d’une semaine · ${soon.length}</h2><div class="group">${soon.map(row).join('')}</div>` : ''}
+    ${L.length ? '' : '<div class="card empty"><div class="e">✅</div><h3>Aucune PEC ne finit cette semaine</h3></div>'}`;
+}
+const finsCount = () => scoped(finsList().map((f) => ({ ...f, hotel: f.o.hotel }))).length;
 function viewRegistre() {
   const todo = inboxTodo().length;
-  const subs = [['chambres', 'Chambres', 0], ['personnes', 'Personnes', 0], ['atraiter', 'À traiter', todo], ...(canReg('reg_full') ? [['journal', 'Journal', 0]] : [])];
-  const body = { chambres: regRooms, personnes: regPeople, atraiter: regInbox, journal: regJournal }[S.rsub] || regRooms;
+  const subs = [['chambres', 'Chambres', 0], ['personnes', 'Personnes', 0], ['atraiter', 'À traiter', todo], ['fins', 'Fins PEC', finsCount()], ...(canReg('reg_full') ? [['journal', 'Journal', 0]] : [])];
+  const body = { chambres: regRooms, personnes: regPeople, atraiter: regInbox, fins: regFins, journal: regJournal }[S.rsub] || regRooms;
   return `<div class="segc" role="group" aria-label="Registre">${subs.map(([k, l, n]) => `<button data-a="rsub" data-k="${k}" aria-pressed="${S.rsub === k}">${l}${n ? ` <span class="badge sm">${n}</span>` : ''}</button>`).join('')}</div>${body()}`;
 }
 function occLine(o) { const ps = pecState(o); return `<span class="ol"><span>${esc(occName(o))}${o.categorie ? ` <span class="muted">· ${esc(o.categorie)}</span>` : ''}</span><span class="pill p-${ps.c}">${ps.t}</span></span>`; }
@@ -649,6 +678,7 @@ function occSheet(id, preset) {
   const pecs = id ? pecsOf(id) : [], ro = !canReg('reg_full');
   openSheet('occ:' + (id || ''), `${sheetHead(id ? esc(occName(o)) : 'Nouvelle arrivée')}
     ${id && o.statut === 'sorti' ? `<div class="banner c-amber">Parti le ${fdate(o.sortie)}</div>` : ''}
+    ${id && o.statut !== 'sorti' ? (() => { const f = finsList().find((x) => x.o.id === id); if (!f) return ''; const rt = relanceTxt(f); return `<div class="banner c-${f.late ? 'red' : 'amber'}">${f.late ? `PEC finie le ${fdate(f.p.fin)}` : `PEC finit le ${fdate(f.p.fin)}`}<br><span class="sm">${esc(rt.t)}</span></div>`; })() : ''}
     <fieldset class="card form" ${ro ? 'disabled' : ''}>
       <div class="two"><label>Prénom<input id="o-prenom" value="${esc(o.prenom || '')}"></label><label>Nom<input id="o-nom" value="${esc(o.nom || '')}"></label></div>
       <div class="two"><label>Naissance<input id="o-naissance" type="date" value="${esc(o.naissance || '')}"></label><label>Catégorie<select id="o-cat"><option value="">—</option>${CATS.map((c) => opt(c, o.categorie)).join('')}</select></label></div>
@@ -1234,8 +1264,9 @@ function taskForm(id, preset) {
 }
 function myTasksCard() {
   const L = myTasks().sort(tSort); if (!L.length) return '';
-  const late = L.filter(tLate).length;
-  return `<div class="card"><div class="row between"><h3>📌 Mes tâches${late ? ` · <span class="bad-t">${late} en retard</span>` : ''}</h3><button class="btn small ghost" data-a="go" data-k="projets" data-s="taches">Tout voir</button></div><div class="group flat">${L.slice(0, 4).map((t) => taskRow(t, true)).join('')}</div></div>`;
+  const late = L.filter(tLate).length, today = L.filter(tToday).length, open = !!S.mtOpen;
+  return `<div class="card mt ${open ? 'open' : ''}"><button class="mt-head" data-a="mtToggle" aria-expanded="${open}"><span>📌 <b>Mes tâches</b> <span class="cnt">${L.length}</span>${late ? ` <span class="pill p-red">${late} en retard</span>` : ''}${today ? ` <span class="pill p-amber">${today} aujourd’hui</span>` : ''}</span><span class="chev">${open ? '▴' : '▾'}</span></button>
+    ${open ? `<div class="group flat">${L.slice(0, 5).map((t) => taskRow(t, true)).join('')}</div><button class="btn small ghost" data-a="go" data-k="projets" data-s="taches">Voir toutes mes tâches</button>` : ''}</div>`;
 }
 
 // Bandeau affiché quand un gérant utilise l'appli comme une femme de ménage ou l'intendant.
@@ -1740,6 +1771,7 @@ const A = {
     else if (el) el.classList.remove('busy');
   },
   /* projets et tâches */
+  mtToggle() { S.mtOpen = !S.mtOpen; LS.set('mh-mt', S.mtOpen); render(); },
   psub(d) { S.psub = d.k; render(); window.scrollTo(0, 0); },
   tf(d) { S.tf = d.k; render(); },
   pFin() { S.pFin = !S.pFin; render(); },
