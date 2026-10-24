@@ -137,6 +137,9 @@ function parisDay(d = new Date()) { return new Intl.DateTimeFormat("en-CA", { ti
 function parisHour(d = new Date()) { return Number(new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", hour12: false }).format(d)); }
 const isMgr = (me: any) => me.role === "owner" || me.role === "gerant";
 const isBrico = (me: any) => me.role === "bricoleur";
+// Accès donnés par le propriétaire à l'intendant (« reg_pec » : répartir les PEC reçues ; « reg_full » : tout le registre).
+const PERMS = ["reg_pec", "reg_full"];
+const can = (me: any, p: string) => isMgr(me) || (isBrico(me) && Array.isArray(me.perms) && (me.perms.includes(p) || (p === "reg_pec" && me.perms.includes("reg_full"))));
 function needMgr(me: any) { if (!isMgr(me)) throw new E("forbidden", 403); }
 const UUID = /^[0-9a-f-]{36}$/;
 function convOk(me: any, conv: string) {
@@ -179,7 +182,7 @@ async function authDevice(req: Request) {
   const h = await sha256hex(secret);
   const { data: dev } = await sb.from("devices").select("id,staff_id,last_seen,revoked_at").eq("secret_hash", h).maybeSingle();
   if (!dev || dev.revoked_at) throw new E("auth", 401);
-  const { data: me } = await sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked").eq("id", dev.staff_id).single();
+  const { data: me } = await sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked,perms").eq("id", dev.staff_id).single();
   if (!me || !me.active) throw new E("auth", 401);
   if (Date.now() - new Date(dev.last_seen).getTime() > 5 * 60000) await sb.from("devices").update({ last_seen: new Date().toISOString() }).eq("id", dev.id);
   return { me, device: dev };
@@ -210,7 +213,7 @@ async function actState(me: any, device: any) {
   });
   if (mgr) {
     const [{ data: staff }, { data: devices }, { data: invites }, { data: plan }, { data: issues }, msgs, { data: reads }] = await Promise.all([
-      sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked,fails,created_at").order("created_at"),
+      sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked,fails,created_at,perms").order("created_at"),
       sb.from("devices").select("id,staff_id,label,created_at,last_seen").is("revoked_at", null),
       sb.from("invites").select("id,staff_id,created_at,expires_at").is("used_at", null).gt("expires_at", new Date().toISOString()),
       sb.from("plan").select("*").eq("day", parisDay()).maybeSingle(),
@@ -241,6 +244,7 @@ async function actState(me: any, device: any) {
     out.issues = issues || []; out.msgs = msgs || []; out.reads = reads || [];
     out.msgs.forEach((m: any) => paths.push(m.media_path));
     if (brico) out.issues.forEach((i: any) => paths.push(i.photo, i.video, i.audio));
+    if (can(me, "reg_pec")) out.reg = await regState();
   }
   out.urls = await signUrls(paths);
   return out;
@@ -285,7 +289,8 @@ async function maybeBlanc(roomId: string | null, me: any) {
   return true;
 }
 async function regAction(me: any, a: string, body: any) {
-  needMgr(me);
+  const need = (a === "reg_inbox_apply" || a === "reg_inbox_set") ? "reg_pec" : "reg_full";
+  if (!can(me, need)) throw new E("forbidden", 403);
   const now = new Date().toISOString(); const raison = S_(body.raison, 300);
   if (a === "reg_occ_save") {
     const hotel = HOTELS.includes(body.hotel) ? body.hotel : null; if (!hotel) throw new E("bad");
@@ -680,6 +685,17 @@ async function handle(req: Request) {
       await sb.from("staff").update({ pin_hash: await hashPin(pin), fails: 0, locked: false }).eq("id", t.id);
       await sb.from("invites").insert({ staff_id: t.id, token_hash: await sha256hex(token), created_by: me.id });
       return { token };
+    }
+    case "staff_perms": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      const { data: t } = await sb.from("staff").select("id,label,role,perms").eq("id", body.id).single();
+      if (!t || t.role !== "bricoleur") throw new E("bad");
+      const perms = (Array.isArray(body.perms) ? body.perms : []).filter((p: string) => PERMS.includes(p));
+      await sb.from("staff").update({ perms }).eq("id", t.id);
+      const added = perms.filter((p: string) => !(t.perms || []).includes(p)), removed = (t.perms || []).filter((p: string) => !perms.includes(p));
+      const L: Record<string, string> = { reg_pec: "répartir les PEC reçues", reg_full: "gérer tout le registre" };
+      if (added.length || removed.length) await regLog(me, added.length ? "Accès donné" : "Accès repris", null, t.label, null, [...added.map((p: string) => "+ " + L[p]), ...removed.map((p: string) => "− " + L[p])].join(", "));
+      return { ok: true };
     }
     case "device_revoke": {
       needMgr(me);
