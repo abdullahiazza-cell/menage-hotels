@@ -586,12 +586,17 @@ function regRooms() {
     <div class="group">${rooms.map(row).join('')}</div>
     ${none.length ? `<h2 class="sec">Sans chambre</h2><p class="muted">Repas seuls, ou à replacer.</p><div class="group">${none.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}${o.notes ? `<span class="muted">${esc(o.notes)}</span>` : ''}</span></button>`).join('')}</div>` : ''}`;
 }
+// Filtre d'hôtel visible (le même que celui de l'accueil), avec le nombre par hôtel.
+function scopeSeg(list) {
+  const n = (k) => k === 'all' ? list.length : list.filter((x) => x.hotel === k).length;
+  return `<div class="segc" role="group" aria-label="Hôtel">${[['all', 'Tous'], ...HOTELS.map((h) => [h.id, h.id === 'par' ? 'Paris' : h.name])].map(([k, l]) => `<button data-a="scope" data-k="${k}" aria-pressed="${S.scope === k}">${esc(l)} <span class="cnt">${n(k)}</span></button>`).join('')}</div>`;
+}
 function regPeople() {
   const q = S.rq.trim().toLowerCase();
   let list = (S.rSortis ? S.reg.occ : presentOcc()).filter(inScope);
   if (q) list = list.filter((o) => (occName(o) + ' ' + (o.categorie || '')).toLowerCase().includes(q));
   list.sort((a, b) => (a.statut === 'sorti') - (b.statut === 'sorti') || String(a.nom || '').localeCompare(String(b.nom || ''), 'fr'));
-  return `<input id="regQ" type="search" placeholder="Chercher un nom" value="${esc(S.rq)}" data-input="regQ" style="width:100%">
+  return `${scopeSeg(S.rSortis ? S.reg.occ : presentOcc())}<input id="regQ" type="search" placeholder="Chercher un nom" value="${esc(S.rq)}" data-input="regQ" style="width:100%">
     <div class="row between"><span class="muted">${list.length} personne${list.length > 1 ? 's' : ''}</span><button class="toggle" data-a="rSortis" aria-pressed="${S.rSortis}">${S.rSortis ? '✓ ' : ''}Afficher les départs</button></div>
     <div class="group">${list.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}<span class="muted">${esc(hotelName(o.hotel))} · ${esc(occPlace(o))}${o.statut === 'sorti' ? ' · parti le ' + fdate(o.sortie) : ' · depuis le ' + fdate(o.entree)}</span></span></button>`).join('') || '<p class="muted" style="padding:14px">Personne.</p>'}</div>`;
 }
@@ -605,7 +610,7 @@ function pecInCard(i) {
 }
 function regInbox() {
   const todo = scoped(inboxTodo()), done = scoped(S.reg.inbox.filter((i) => i.status !== 'a_traiter'));
-  return `${todo.length ? `<p class="muted">Prises en charge reçues, pas encore rattachées à une personne du registre.</p><div class="col">${todo.map(pecInCard).join('')}</div>` : '<div class="card empty"><div class="e">✅</div><h3>Rien à traiter</h3></div>'}
+  return `${scopeSeg(inboxTodo())}${todo.length ? `<p class="muted">Prises en charge reçues, pas encore rattachées à une personne du registre.</p><div class="col">${todo.map(pecInCard).join('')}</div>` : '<div class="card empty"><div class="e">✅</div><h3>Rien à traiter</h3></div>'}
     ${done.length ? `<button class="btn ghost" data-a="rDone">${S.rDone ? 'Masquer' : 'Voir'} les ${done.length} déjà traitées</button>${S.rDone ? `<div class="col">${done.map(pecInCard).join('')}</div>` : ''}` : ''}`;
 }
 function regJournal() {
