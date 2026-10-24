@@ -610,6 +610,7 @@ async function attachMailDocs(rows: any[]) {
   for (const r of rows) {
     const mine = maps.filter((m: any) => m.msg_id === String(r.id).split("-")[0]);
     const docs = Array.isArray(r.docs) ? [...r.docs] : [];
+    if (docs.some((d: any) => d.src === "registre")) continue; // repris de l'ancien registre : les PDF y sont déjà
     let changed = false;
     for (const m of mine) if (!docs.some((d: any) => d.id === m.doc_id)) { docs.push({ id: m.doc_id, name: m.name, type: "application/pdf", src: "gmail", at: m.created_at }); changed = true; }
     if (changed) { r.docs = docs; await sb.from("pec_inbox").update({ docs }).eq("id", r.id); }
@@ -629,7 +630,8 @@ async function pecPdf(req: Request, body: any) {
     const { error } = await sb.from("doc_files").insert({ id, name, type: "application/pdf", size: u8.length, sha256: sha, data: "\\x" + hex });
     if (error) throw new E("db");
   }
-  const text = await pdfText(u8);
+  // PDF scanné (sans texte) : on garde le texte lu par la reconnaissance de caractères de Google, envoyé par le script.
+  const text = (await pdfText(u8)) || (S_(body.text, 20000)?.replace(/\s+/g, " ").trim() || null);
   await sb.from("pec_mail_docs").upsert({ msg_id: msg, doc_id: id, name, subject: S_(body.subject, 300), mail_date: typeof body.date === "string" ? body.date : null, text }, { onConflict: "msg_id,doc_id" });
   const { data: rows } = await sb.from("pec_inbox").select("id,docs").or(`id.eq.${msg},id.like.${msg}-%`);
   await attachMailDocs(rows || []);
