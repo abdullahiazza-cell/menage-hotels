@@ -1,5 +1,5 @@
 // Service worker : coquille hors-ligne + notifications.
-const VERSION = 'v6';
+const VERSION = 'v7';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/badge-96.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
 
 self.addEventListener('install', (e) => {
@@ -19,9 +19,9 @@ self.addEventListener('fetch', (e) => {
 });
 
 self.addEventListener('push', (e) => {
-  let d = {}; try { d = e.data ? e.data.json() : {}; } catch (_) { d = { title: 'Ménage', body: e.data ? e.data.text() : '' }; }
+  let d = {}; try { d = e.data ? e.data.json() : {}; } catch (_) { d = { title: 'Ma Réception', body: e.data ? e.data.text() : '' }; }
   e.waitUntil((async () => {
-    await self.registration.showNotification(d.title || 'Ménage', {
+    await self.registration.showNotification(d.title || 'Ma Réception', {
       body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag,
       icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { conv: d.conv || null },
     });

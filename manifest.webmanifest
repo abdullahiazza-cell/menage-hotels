@@ -1,7 +1,7 @@
 {
-  "name": "Ménage Hôtels",
-  "short_name": "Ménage",
-  "description": "Suivi du ménage des hôtels Archange, Hôtel de Paris et Châteaudun",
+  "name": "Ma Réception",
+  "short_name": "Ma Réception",
+  "description": "Réception et suivi du ménage des hôtels Archange, Hôtel de Paris et Châteaudun",
   "lang": "fr",
   "start_url": "./",
   "scope": "./",

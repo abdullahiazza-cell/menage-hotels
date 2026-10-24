@@ -1,5 +1,5 @@
 "use strict";
-/* Ménage Hôtels — application web installable.
+/* Ma Réception — application web installable.
    Toutes les données passent par la fonction « api » de Supabase ; ce fichier ne contient aucun secret. */
 
 const API = 'https://htpygokjdstmmzquibmn.supabase.co/functions/v1/api';
@@ -386,7 +386,7 @@ function viewActivate() {
     api('invite_info', { token: A.code }).then((r) => { A.info = r; render(); }).catch(() => { A.info = { valid: false, net: true }; render(); });
     return `<div class="wrap"><div class="empty"><div class="e">🧺</div><h2>Un instant…</h2></div></div>`;
   }
-  const head = `<div class="logo" style="justify-content:center"><img src="icons/icon-192.png" alt=""><h1>Ménage</h1></div>`;
+  const head = `<div class="logo" style="justify-content:center"><img src="icons/icon-192.png" alt=""><h1>Ma Réception</h1></div>`;
   if (!A.code) {
     return `<div class="wrap" style="max-width:480px">${head}<div class="card"><h2>Installer l’appli</h2>
       <p>Tape le <b>code d’invitation</b> écrit sur ta fiche (8 lettres et chiffres).</p>
@@ -403,7 +403,7 @@ function viewActivate() {
     return `<div class="wrap" style="max-width:480px">${head}<div class="card"><h2>Bonjour ${esc(first(A.info.label))} 👋</h2>
       <p style="font-size:18px">D’abord, ajoute l’appli sur ton écran d’accueil :</p>
       <ol class="steps" style="font-size:18px"><li>Touche le bouton <b>Partager</b> <span style="font-size:22px">⬆️</span> en bas de l’écran.</li>
-      <li>Touche <b>« Sur l’écran d’accueil »</b> ➕.</li><li>Touche <b>Ajouter</b>, puis ouvre l’icône <b>Ménage</b>.</li></ol>
+      <li>Touche <b>« Sur l’écran d’accueil »</b> ➕.</li><li>Touche <b>Ajouter</b>, puis ouvre l’icône <b>Ma Réception</b>.</li></ol>
       <p class="muted">Si l’appli te demande ton code d’invitation, c’est celui-ci :</p><div class="codebox">${fmtCode(A.code)}</div></div></div>`;
   }
   return `<div class="wrap" style="max-width:480px">${head}<div class="card pin"><h2>Bonjour ${esc(first(A.info.label))} 👋</h2>
@@ -463,7 +463,7 @@ function viewManager() {
   if (S.tab === 'rooms') body = viewRooms(); else if (S.tab === 'plan') body = viewPlan(); else if (S.tab === 'check') body = viewCheck();
   else if (S.tab === 'issues') body = viewIssues(); else if (S.tab === 'msgs') body = viewThreads(); else if (S.tab === 'team') body = viewTeam(); else body = viewSettings();
   return `<div class="wrap">
-    <div class="top"><div class="logo"><img src="icons/icon-192.png" alt=""><div class="hero"><h1>Ménage</h1><span class="muted">${esc(S.me.label)} · ${owner ? 'propriétaire' : 'gérant'}</span></div></div>
+    <div class="top"><div class="logo"><img src="icons/icon-192.png" alt=""><div class="hero"><h1>Ma Réception</h1><span class="muted">${esc(S.me.label)} · ${owner ? 'propriétaire' : 'gérant'}</span></div></div>
       <button class="btn small" data-a="preview">👁 Écran ménage</button></div>
     <nav class="nav" aria-label="Sections">${tabs.map(([k, l, n]) => `<button data-a="tab" data-k="${k}" aria-pressed="${S.tab === k}">${l}${n ? `<span class="badge">${n}</span>` : ''}</button>`).join('')}</nav>
     ${S.tab !== 'msgs' ? inboxCard() : ''}
@@ -792,7 +792,7 @@ function inviteSheet(id, res) {
 }
 function printFiche() {
   const L = S.lastInvite; if (!L) return; const s = staffById(L.id);
-  $('print').innerHTML = `<div class="f"><h1>🧺 Ménage Hôtels : ${esc(s.label)}</h1>
+  $('print').innerHTML = `<div class="f"><h1>🛎️ Ma Réception : ${esc(s.label)}</h1>
     <div class="qr" style="text-align:center">${L.qr}</div>
     <p><b>1.</b> Ouvre l’appareil photo et vise le carré ci-dessus. Touche le lien qui apparaît.</p>
     <p><b>2.</b> Sur iPhone : bouton Partager ⬆️ puis « Sur l’écran d’accueil ». Sur Android : menu ⋮ puis « Installer l’application ».</p>
