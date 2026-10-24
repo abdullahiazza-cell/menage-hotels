@@ -564,6 +564,23 @@ async function handle(req: Request) {
       if (r.status === "a_faire") await sb.from("rooms").update({ status: "en_cours", started_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", r.id);
       return { ok: true };
     }
+    // Gérant ou intendant : prendre un nettoyage pour soi (ou le rendre à répartir).
+    case "room_take": {
+      if (!isMgr(me) && !isBrico(me)) throw new E("forbidden", 403);
+      const { data: r } = await sb.from("rooms").select("id,num,hotel,assignee,status,kind").eq("id", body.id).single();
+      if (!r || !hotelOk(me, r.hotel)) throw new E("bad");
+      if (r.status !== "a_faire" && r.status !== "en_cours") throw new E("bad");
+      const now = new Date().toISOString();
+      if (body.release) {
+        if (r.assignee !== me.id) throw new E("not_yours", 403);
+        await sb.from("rooms").update({ assignee: null, status: "a_faire", started_at: null, updated_at: now }).eq("id", r.id);
+        return { ok: true };
+      }
+      await sb.from("rooms").update({ assignee: me.id, assigned_at: now, assigned_by: me.id, updated_at: now }).eq("id", r.id);
+      const lbl = `${r.kind === "commun" ? "" : "Chambre "}${r.num} · ${HOTEL_NAMES[r.hotel]}`;
+      if (r.assignee && r.assignee !== me.id) await pushTo([r.assignee], { title: "🔄 Ménage repris", body: `${lbl} : repris par ${String(me.label).split(" ")[0]}`, tag: "rooms" });
+      return { ok: true };
+    }
     case "room_finish": {
       const { data: r } = await sb.from("rooms").select("*").eq("id", body.id).single();
       if (!r || r.assignee !== me.id) throw new E("not_yours", 403);
