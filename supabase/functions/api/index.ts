@@ -138,6 +138,7 @@ function parisHour(d = new Date()) { return Number(new Intl.DateTimeFormat("en-G
 const isMgr = (me: any) => me.role === "owner" || me.role === "gerant";
 const isBrico = (me: any) => me.role === "bricoleur";
 // Accès donnés par le propriétaire à l'intendant (« reg_pec » : répartir les PEC reçues ; « reg_full » : tout le registre).
+const RO_OK = ["state", "push_sub", "push_test", "logout", "read_mark", "msg_send", "upload_url", "doc_get", "stats"];
 const PERMS = ["reg_pec", "reg_full", "contacts"];
 const can = (me: any, p: string) => isMgr(me) || (isBrico(me) && Array.isArray(me.perms) && (me.perms.includes(p) || (p === "reg_pec" && me.perms.includes("reg_full"))));
 // Réparations : états, origines, priorités ; contacts visibles par l'intendant.
@@ -196,7 +197,7 @@ async function authDevice(req: Request) {
   const h = await sha256hex(secret);
   const { data: dev } = await sb.from("devices").select("id,staff_id,last_seen,revoked_at").eq("secret_hash", h).maybeSingle();
   if (!dev || dev.revoked_at) throw new E("auth", 401);
-  const { data: me } = await sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked,perms").eq("id", dev.staff_id).single();
+  const { data: me } = await sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked,perms,readonly").eq("id", dev.staff_id).single();
   if (!me || !me.active) throw new E("auth", 401);
   if (Date.now() - new Date(dev.last_seen).getTime() > 5 * 60000) await sb.from("devices").update({ last_seen: new Date().toISOString() }).eq("id", dev.id);
   return { me, device: dev };
@@ -227,7 +228,7 @@ async function actState(me: any, device: any) {
   });
   if (mgr) {
     const [{ data: staff }, { data: devices }, { data: invites }, { data: plan }, { data: issues }, msgs, { data: reads }] = await Promise.all([
-      sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked,fails,created_at,perms").order("created_at"),
+      sb.from("staff").select("id,label,role,hotels,hours,phone,only_hotel,active,locked,fails,created_at,perms,readonly").order("created_at"),
       sb.from("devices").select("id,staff_id,label,created_at,last_seen").is("revoked_at", null),
       sb.from("invites").select("id,staff_id,created_at,expires_at").is("used_at", null).gt("expires_at", new Date().toISOString()),
       sb.from("plan").select("*").eq("day", parisDay()).maybeSingle(),
@@ -252,6 +253,12 @@ async function actState(me: any, device: any) {
       sb.from("tasks").select("*").order("created_at", { ascending: false }).limit(1000),
     ]);
     out.projects = projects || []; out.tasks = tasks || [];
+    const [{ data: points }, { data: psubs }] = await Promise.all([
+      sb.from("points").select("id,kind,start,day,text_fr,text_ar,audio,secs,created_at").order("day", { ascending: false }).limit(20),
+      sb.from("point_subs").select("*"),
+    ]);
+    out.points = points || []; out.point_subs = psubs || [];
+    out.points.forEach((pt: any) => Object.values(pt.audio || {}).forEach((x: any) => paths.push(x)));
   } else {
     const brico = isBrico(me);
     const [{ data: staff }, { data: issues }, msgs] = await Promise.all([
@@ -690,6 +697,35 @@ async function relancesTodo() {
   return { items: out };
 }
 
+// Envoi du point à chacun, à son heure : notification qui ouvre le point et lance l'audio.
+const isMgrRole = (r: string) => r === "owner" || r === "gerant";
+async function pointPush() {
+  const today = parisDay(), hour = parisHour(), dow = new Date(today + "T12:00:00Z").getUTCDay();
+  const [{ data: subs }, { data: pts }] = await Promise.all([
+    sb.from("point_subs").select("*"),
+    sb.from("points").select("id,kind,day,text_fr,text_ar,audio").gte("day", new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10)).order("day", { ascending: false }),
+  ]);
+  const latest = (k: string) => (pts || []).find((p: any) => p.kind === k);
+  let n = 0;
+  for (const s of subs || []) {
+    for (const k of ["jour", "semaine"]) {
+      const on = k === "jour" ? s.jour : (s.semaine && s.semaine_dow === dow);
+      const h = k === "jour" ? s.jour_h : s.semaine_h;
+      const p: any = latest(k);
+      if (!on || !p || hour < h || (k === "jour" && p.day !== today) || (k === "semaine" && p.day < new Date(Date.now() - 2 * 864e5).toISOString().slice(0, 10))) continue;
+      const ready = !!(p.audio || {})[`${s.lang}:${s.voice}`];
+      if (!ready && hour < h + 2) continue; // on attend l'audio jusqu'à 2 h de retard, ensuite on prévient quand même
+      const { data: already } = await sb.from("point_sent").select("point_id").eq("staff_id", s.staff_id).eq("point_id", p.id).maybeSingle();
+      if (already) continue;
+      await sb.from("point_sent").insert({ staff_id: s.staff_id, point_id: p.id });
+      const first = String((s.lang === "fr" ? p.text_fr : p.text_ar) || "").split(/\n+/).filter(Boolean)[1] || "";
+      await pushTo([s.staff_id], { title: k === "jour" ? "🎧 Le point du jour" : "🎧 Le point de la semaine", body: (first || "Appuie pour écouter").slice(0, 140), tag: "point-" + k, point: k } as any);
+      n++;
+    }
+  }
+  return n;
+}
+
 async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Record<string, any>) {
   needMgr(me);
   const clean: any = {};
@@ -734,6 +770,7 @@ async function handle(req: Request) {
       }
       return { sent: Object.keys(per).length, sec: secSent, tasks: taskSent };
     }
+    if (body.kind === "point_push") return { sent: await pointPush() };
     if (body.kind === "purge") {
       const cfg = await getConfig(); const days = Number(cfg.retentionDays) || 30;
       const { data: old } = await sb.rpc("old_media", { days });
@@ -803,6 +840,8 @@ async function handle(req: Request) {
   // --- tout le reste exige un appareil activé ---
   const { me, device } = await authDevice(req);
   const mgr = isMgr(me);
+  // Compte en lecture seule : tout voir, rien modifier (sauf messages et notifications).
+  if (me.readonly && !RO_OK.includes(a)) throw new E("readonly", 403);
 
   switch (a) {
     case "state": return await actState(me, device);
@@ -1059,6 +1098,22 @@ async function handle(req: Request) {
       await sb.from("staff").update({ pin_hash: await hashPin(pin), fails: 0, locked: false }).eq("id", t.id);
       await sb.from("invites").insert({ staff_id: t.id, token_hash: await sha256hex(token), created_by: me.id });
       return { token };
+    }
+    case "staff_readonly": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      const { data: t } = await sb.from("staff").select("id,label,role").eq("id", body.id).single();
+      if (!t || t.role === "owner") throw new E("bad");
+      await sb.from("staff").update({ readonly: !!body.readonly }).eq("id", t.id);
+      return { ok: true };
+    }
+    case "point_sub_save": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      const { data: t } = await sb.from("staff").select("id,role").eq("id", body.staff_id).single();
+      if (!t || !isMgrRole(t.role)) throw new E("bad");
+      const h = (x: any, d: number) => Math.max(5, Math.min(12, parseInt(x) || d));
+      const VOICES = ["male-1", "male-2", "male-5", "female-1", "female-2", "female-5"];
+      await sb.from("point_subs").upsert({ staff_id: t.id, jour: !!body.jour, jour_h: h(body.jour_h, 7), semaine: !!body.semaine, semaine_dow: Math.max(0, Math.min(6, parseInt(body.semaine_dow) || 0)), semaine_h: h(body.semaine_h, 8), lang: body.lang === "fr" ? "fr" : "ar", voice: VOICES.includes(body.voice) ? body.voice : "male-2", updated_at: new Date().toISOString() });
+      return { ok: true };
     }
     case "staff_perms": {
       if (me.role !== "owner") throw new E("owner_only", 403);
