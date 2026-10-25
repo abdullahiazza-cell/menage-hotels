@@ -538,11 +538,10 @@ function viewHome() {
   const stat = (n, l, cls, go) => `<button class="stat" data-a="go" data-k="${go[0]}" data-s="${go[1] || ''}"><b class="${n ? cls : ''}">${n}</b><span>${l}</span></button>`;
   return `<div class="wrap home">
     <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div>
-      <button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div>
+      <div class="top-acts">${ptButton()}<button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div></div>
     <div class="segc" role="group" aria-label="Hôtel">${scopes.map(([k, l]) => `<button data-a="scope" data-k="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
       ${stat(c.todo, 'à nettoyer', 'n-blue', ['menage', 'rooms'])}${stat(c.check, 'à contrôler', 'n-green', ['menage', 'check'])}${stat(c.urgent, c.urgent > 1 ? 'urgences' : 'urgence', 'n-red', ['issues'])}</div></div>
-    ${pointCard()}
     ${myTasksCard()}
     <div class="tiles">
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
@@ -1289,25 +1288,28 @@ function ptPlayer(p, lang) {
     ${av.length > 1 ? `<div class="chips pt-voices">${av.map((x) => `<button class="chip ${x === v ? 'on' : ''}" data-a="ptVoice" data-k="${x}">🎙️ ${esc(voiceName(x))}</button>`).join('')}</div>` : ''}`;
 }
 const ptSegs = (lang) => `<div class="segc" role="group" aria-label="Langue"><button data-a="ptLang" data-k="ar" aria-pressed="${lang === 'ar'}">الدارجة</button><button data-a="ptLang" data-k="fr" aria-pressed="${lang === 'fr'}">Français</button></div>`;
-function pointCard() {
+// Petit bouton à côté du compte : pastille tant que le dernier point n'a pas été ouvert.
+const ptSeen = () => LS.get('mh-pt-seen', []);
+const ptUnseen = () => ['jour', 'semaine'].map(pointOf).filter((p) => p && !ptSeen().includes(p.id));
+function ptButton() {
   if (!isMgr()) return '';
-  const k = S.ptKind, p = pointOf(k), lang = S.ptLang;
-  const kinds = `<div class="segc mini" role="group" aria-label="Quel point"><button data-a="ptKind" data-k="jour" aria-pressed="${k === 'jour'}">Du jour</button><button data-a="ptKind" data-k="semaine" aria-pressed="${k === 'semaine'}">Semaine</button></div>`;
-  if (!p) return `<div class="card pt"><div class="pt-head"><b>🎧 Le point</b>${kinds}</div><p class="muted">${k === 'jour' ? 'Le premier point du matin sera prêt demain vers 7 h.' : 'Le premier point de la semaine sera prêt lundi matin.'}</p></div>`;
-  const lines = ptText(p, lang), v = ptCurVoice(p, lang);
-  return `<div class="card pt"><div class="pt-head"><b>🎧 Le point</b>${kinds}</div>
-    <p class="muted sm">${esc(ptWhen(p))}${ptDur(p, lang, v)}</p>
-    ${ptSegs(lang)}${ptPlayer(p, lang)}
-    <div class="pt-ext ${lang === 'ar' ? 'rtl' : ''}">${lines.slice(0, 2).map((l) => `<p>${esc(l)}</p>`).join('')}</div>
-    <button class="btn small ghost" data-a="ptOpen" data-k="${k}">Lire tout le point</button></div>`;
+  const n = ptUnseen().length;
+  return `<button class="ptbtn" data-a="ptOpen" aria-label="Le point${n ? ', nouveau' : ''}">🎧${n ? '<span class="dot"></span>' : ''}</button>`;
 }
 function pointSheet(kind) {
-  const p = pointOf(kind); if (!p) return; const lang = S.ptLang;
-  openSheet('pt:' + kind, `${sheetHead(kind === 'jour' ? '🎧 Le point du jour' : '🎧 Le point de la semaine')}
+  kind = kind || (ptUnseen()[0] || {}).kind || S.ptKind;
+  S.ptKind = kind; LS.set('mh-ptk', kind);
+  const p = pointOf(kind), lang = S.ptLang;
+  if (p && !ptSeen().includes(p.id)) LS.set('mh-pt-seen', [...ptSeen(), p.id].slice(-30));
+  const kinds = `<div class="segc" role="group" aria-label="Quel point"><button data-a="ptKind" data-k="jour" aria-pressed="${kind === 'jour'}">Point du jour</button><button data-a="ptKind" data-k="semaine" aria-pressed="${kind === 'semaine'}">Point de la semaine</button></div>`;
+  openSheet('pt:' + kind, `${sheetHead('🎧 Le point')}${kinds}
+    ${!p ? `<div class="card"><p class="muted">${kind === 'jour' ? 'Le premier point du matin sera prêt demain vers 7 h.' : 'Le premier point de la semaine sera prêt lundi matin.'}</p></div>` : `
     <p class="muted">${esc(ptWhen(p))}${ptDur(p, lang, ptCurVoice(p, lang))}</p>
     ${ptSegs(lang)}<div class="card">${ptPlayer(p, lang)}</div>
     <div class="card pt-full ${lang === 'ar' ? 'rtl' : ''}">${ptText(p, lang).map((l) => `<p>${esc(l)}</p>`).join('')}</div>
-    <p class="muted sm">Préparé automatiquement à partir de l’appli : réparations, registre, sécurité, tâches.</p>`);
+    <p class="muted sm">Préparé automatiquement à partir de l’appli : réparations, registre, sécurité, tâches.</p>`}
+    ${S.me.role === 'owner' ? '<button class="btn ghost" data-a="ptSettings">Régler les envois</button>' : ''}`);
+  render();
 }
 function ptSubLine(s) {
   const x = subOf(s.id); if (!x || (!x.jour && !x.semaine)) return 'Ne reçoit rien';
@@ -1836,10 +1838,11 @@ const A = {
     else if (el) el.classList.remove('busy');
   },
   /* le point */
-  ptKind(d) { S.ptKind = d.k; LS.set('mh-ptk', d.k); render(); },
-  ptLang(d) { S.ptLang = d.k; LS.set('mh-ptl', d.k); if (S.sheet && S.sheet.startsWith('pt:')) pointSheet(S.sheet.slice(3)); render(); },
-  ptVoice(d) { S.ptVoice = d.k; LS.set('mh-ptv', d.k); if (S.sheet && S.sheet.startsWith('pt:')) pointSheet(S.sheet.slice(3)); render(); },
+  ptKind(d) { pointSheet(d.k); },
+  ptLang(d) { S.ptLang = d.k; LS.set('mh-ptl', d.k); pointSheet(S.ptKind); },
+  ptVoice(d) { S.ptVoice = d.k; LS.set('mh-ptv', d.k); pointSheet(S.ptKind); },
   ptOpen(d) { pointSheet(d.k); },
+  ptSettings() { closeSheet(); S.tab = 'settings'; render(); window.scrollTo(0, 0); },
   ptSub(d) { pointSubSheet(d.id); },
   async ptSubSave(d) {
     const v = (x) => ($(x) ? $(x).value : ''), c = (x) => !!($(x) && $(x).checked);
