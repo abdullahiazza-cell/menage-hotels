@@ -39,7 +39,7 @@ const LS = {
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
   me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
-  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [] }, sl: null, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), psub: 'projets', tf: 'mine', pFin: false, pDone: false,
+  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [] }, sl: null, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), ptKind: LS.get('mh-ptk', 'jour'), ptLang: LS.get('mh-ptl', 'ar'), ptVoice: LS.get('mh-ptv', ''), points: [], pointSubs: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
 };
@@ -195,7 +195,7 @@ async function refresh(force) {
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
-      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || [];
+      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || [];
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
@@ -542,6 +542,7 @@ function viewHome() {
     <div class="segc" role="group" aria-label="Hôtel">${scopes.map(([k, l]) => `<button data-a="scope" data-k="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
       ${stat(c.todo, 'à nettoyer', 'n-blue', ['menage', 'rooms'])}${stat(c.check, 'à contrôler', 'n-green', ['menage', 'check'])}${stat(c.urgent, c.urgent > 1 ? 'urgences' : 'urgence', 'n-red', ['issues'])}</div></div>
+    ${pointCard()}
     ${myTasksCard()}
     <div class="tiles">
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
@@ -1270,6 +1271,68 @@ function myTasksCard() {
     ${open ? `<div class="group flat">${L.slice(0, 5).map((t) => taskRow(t, true)).join('')}</div><button class="btn small ghost" data-a="go" data-k="projets" data-s="taches">Voir toutes mes tâches</button>` : ''}</div>`;
 }
 
+/* ----- le point du matin et de la semaine (texte + audio, gérants) ----- */
+const VOICES = [['male-2', 'Mehdi'], ['female-1', 'Salma'], ['male-1', 'Yassine'], ['female-2', 'Ghita'], ['male-5', 'Hamza'], ['female-5', 'Hajar']];
+const voiceName = (v) => (VOICES.find((x) => x[0] === v) || [v, v])[1];
+const DOWS = ['dimanche', 'lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi'];
+const subOf = (id) => (S.pointSubs || []).find((s) => s.staff_id === id) || null;
+const pointOf = (kind) => (S.points || []).filter((p) => p.kind === kind).sort((a, b) => String(b.day).localeCompare(String(a.day)))[0] || null;
+const ptVoices = (p, lang) => Object.keys(p.audio || {}).filter((k) => k.startsWith(lang + ':')).map((k) => k.split(':')[1]);
+function ptCurVoice(p, lang) { const av = ptVoices(p, lang); const want = S.ptVoice || (subOf(S.me.id) || {}).voice || 'male-2'; return av.includes(want) ? want : (av[0] || want); }
+const ptLong = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' });
+const ptWhen = (p) => p.kind === 'jour' ? `Point du ${ptLong(p.day)}` : `Semaine du ${fdate(p.start).slice(0, 5)} au ${fdate(p.day).slice(0, 5)}`;
+const ptDur = (p, lang, v) => { const s = (p.secs || {})[`${lang}:${v}`]; return s ? ` · ${Math.floor(s / 60)} min ${String(Math.round(s % 60)).padStart(2, '0')}` : ''; };
+function ptText(p, lang) { const t = lang === 'ar' ? p.text_ar : p.text_fr; return String(t || '').split(/\n+/).filter(Boolean); }
+function ptPlayer(p, lang) {
+  const v = ptCurVoice(p, lang), path = (p.audio || {})[`${lang}:${v}`], url = path && mediaUrl(path), av = ptVoices(p, lang);
+  return `${url ? `<audio class="pt-audio" controls preload="none" src="${esc(url)}"></audio>` : `<p class="muted sm">L’audio ${lang === 'ar' ? 'en darija' : 'en français'} n’est pas encore prêt.</p>`}
+    ${av.length > 1 ? `<div class="chips pt-voices">${av.map((x) => `<button class="chip ${x === v ? 'on' : ''}" data-a="ptVoice" data-k="${x}">🎙️ ${esc(voiceName(x))}</button>`).join('')}</div>` : ''}`;
+}
+const ptSegs = (lang) => `<div class="segc" role="group" aria-label="Langue"><button data-a="ptLang" data-k="ar" aria-pressed="${lang === 'ar'}">الدارجة</button><button data-a="ptLang" data-k="fr" aria-pressed="${lang === 'fr'}">Français</button></div>`;
+function pointCard() {
+  if (!isMgr()) return '';
+  const k = S.ptKind, p = pointOf(k), lang = S.ptLang;
+  const kinds = `<div class="segc mini" role="group" aria-label="Quel point"><button data-a="ptKind" data-k="jour" aria-pressed="${k === 'jour'}">Du jour</button><button data-a="ptKind" data-k="semaine" aria-pressed="${k === 'semaine'}">Semaine</button></div>`;
+  if (!p) return `<div class="card pt"><div class="pt-head"><b>🎧 Le point</b>${kinds}</div><p class="muted">${k === 'jour' ? 'Le premier point du matin sera prêt demain vers 7 h.' : 'Le premier point de la semaine sera prêt lundi matin.'}</p></div>`;
+  const lines = ptText(p, lang), v = ptCurVoice(p, lang);
+  return `<div class="card pt"><div class="pt-head"><b>🎧 Le point</b>${kinds}</div>
+    <p class="muted sm">${esc(ptWhen(p))}${ptDur(p, lang, v)}</p>
+    ${ptSegs(lang)}${ptPlayer(p, lang)}
+    <div class="pt-ext ${lang === 'ar' ? 'rtl' : ''}">${lines.slice(0, 2).map((l) => `<p>${esc(l)}</p>`).join('')}</div>
+    <button class="btn small ghost" data-a="ptOpen" data-k="${k}">Lire tout le point</button></div>`;
+}
+function pointSheet(kind) {
+  const p = pointOf(kind); if (!p) return; const lang = S.ptLang;
+  openSheet('pt:' + kind, `${sheetHead(kind === 'jour' ? '🎧 Le point du jour' : '🎧 Le point de la semaine')}
+    <p class="muted">${esc(ptWhen(p))}${ptDur(p, lang, ptCurVoice(p, lang))}</p>
+    ${ptSegs(lang)}<div class="card">${ptPlayer(p, lang)}</div>
+    <div class="card pt-full ${lang === 'ar' ? 'rtl' : ''}">${ptText(p, lang).map((l) => `<p>${esc(l)}</p>`).join('')}</div>
+    <p class="muted sm">Préparé automatiquement à partir de l’appli : réparations, registre, sécurité, tâches.</p>`);
+}
+function ptSubLine(s) {
+  const x = subOf(s.id); if (!x || (!x.jour && !x.semaine)) return 'Ne reçoit rien';
+  return [x.jour ? `Matin ${x.jour_h} h` : '', x.semaine ? `Semaine le ${DOWS[x.semaine_dow]} ${x.semaine_h} h` : '', `${x.lang === 'fr' ? 'français' : 'darija'} · ${voiceName(x.voice)}`].filter(Boolean).join(' · ');
+}
+function pointSubsCard() {
+  if (S.me.role !== 'owner') return '';
+  return `<div class="card"><h2>🎧 Le point du matin et de la semaine</h2><p class="muted">Chaque responsable choisi reçoit une notification à son heure. Elle ouvre le point, à lire ou à écouter.</p>
+    <div class="group flat">${mgrStaff().map((s) => `<button class="prow" data-a="ptSub" data-id="${s.id}"><span class="pr-t"><b>${esc(s.label)}${s.id === S.me.id ? ' (moi)' : ''}</b><span class="muted">${esc(ptSubLine(s))}</span></span><span class="chev">›</span></button>`).join('')}</div></div>`;
+}
+function pointSubSheet(id) {
+  const s = S.staff.find((x) => x.id === id); if (!s) return;
+  const x = subOf(id) || { jour: false, jour_h: 7, semaine: false, semaine_dow: 1, semaine_h: 8, lang: 'ar', voice: 'male-2' };
+  const hours = (cur) => [5, 6, 7, 8, 9, 10, 11, 12].map((h) => opt(h, cur, `${h} h`)).join('');
+  openSheet('ptsub:' + id, `${sheetHead('🎧 Le point · ' + esc(first(s.label)))}
+    <div class="card form">
+      <label class="check big"><input type="checkbox" id="ps-jour" ${x.jour ? 'checked' : ''}> <span><b>Point du matin</b><br><span class="muted sm">Ce qui s’est passé la veille, environ 1 minute</span></span></label>
+      <label>Heure<select id="ps-jour-h">${hours(x.jour_h)}</select></label>
+      <label class="check big"><input type="checkbox" id="ps-sem" ${x.semaine ? 'checked' : ''}> <span><b>Point de la semaine</b><br><span class="muted sm">Le résumé des 7 derniers jours, environ 2 minutes</span></span></label>
+      <div class="two"><label>Jour<select id="ps-sem-d">${[1, 2, 3, 4, 5, 6, 0].map((d) => opt(d, x.semaine_dow, DOWS[d][0].toUpperCase() + DOWS[d].slice(1))).join('')}</select></label><label>Heure<select id="ps-sem-h">${hours(x.semaine_h)}</select></label></div>
+      <div class="two"><label>Langue de l’audio<select id="ps-lang">${opt('ar', x.lang, 'Darija')}${opt('fr', x.lang, 'Français')}</select></label><label>Voix<select id="ps-voice">${VOICES.map(([k, l]) => opt(k, x.voice, l)).join('')}</select></label></div>
+      <p class="muted sm">Le texte reste toujours disponible dans les deux langues sur l’accueil.</p>
+      <button class="btn pri" data-a="ptSubSave" data-id="${id}">Enregistrer</button></div>`);
+}
+
 // Bandeau affiché quand un gérant utilise l'appli comme une femme de ménage ou l'intendant.
 const pvBar = () => S.preview ? `<div class="pvbar"><span>👁 Vue ${S.preview === 'brico' ? 'intendant' : 'femme de ménage'} · ce que vous faites ici compte vraiment</span><button class="btn small" data-a="unpreview">Revenir</button></div>` : '';
 /* ----- bricoleur : réparations + ménage en lecture ----- */
@@ -1482,6 +1545,7 @@ function viewSettings() {
       <div class="row"><button class="btn ${notif ? 'ok' : 'pri'}" data-a="pushOn">${notif ? '✓ Notifications activées' : '🔔 Activer les notifications'}</button><button class="btn" data-a="micTest">🎤 Tester le micro</button></div>
       ${!isStandalone() ? '<p class="muted">Astuce : installe l’appli sur l’écran d’accueil pour recevoir les notifications.</p>' : ''}
       <button class="btn ghost" data-a="logout">Se déconnecter de ce téléphone</button></div>
+    ${pointSubsCard()}
     <div class="card"><h2>⏱️ Temps prévus</h2><p class="muted">Servent à répartir le travail selon les heures de chacune.</p>
       <div class="row">${[['blanc', '🛏️ À blanc'], ['recouche', '🔄 Recouche'], ['fond', '⭐ Tâche de fond'], ['commun', '🧽 Partie commune']].map(([k, l]) => `<label class="muted" for="min-${k}">${l}</label><input id="min-${k}" type="number" min="5" max="120" step="5" value="${c.minutes[k]}" style="width:80px"><span class="muted">min</span>`).join('')}</div>
       <button class="btn small" data-a="saveMinutes">Enregistrer les temps</button></div>
@@ -1770,6 +1834,17 @@ const A = {
     if (el) el.classList.add('busy');
     if (await act(() => api('plan_apply', { assign, fond: P.fond, unassign }), 'Répartition envoyée. Chacune est prévenue sur son téléphone.')) { S.proposal = null; render(); }
     else if (el) el.classList.remove('busy');
+  },
+  /* le point */
+  ptKind(d) { S.ptKind = d.k; LS.set('mh-ptk', d.k); render(); },
+  ptLang(d) { S.ptLang = d.k; LS.set('mh-ptl', d.k); if (S.sheet && S.sheet.startsWith('pt:')) pointSheet(S.sheet.slice(3)); render(); },
+  ptVoice(d) { S.ptVoice = d.k; LS.set('mh-ptv', d.k); if (S.sheet && S.sheet.startsWith('pt:')) pointSheet(S.sheet.slice(3)); render(); },
+  ptOpen(d) { pointSheet(d.k); },
+  ptSub(d) { pointSubSheet(d.id); },
+  async ptSubSave(d) {
+    const v = (x) => ($(x) ? $(x).value : ''), c = (x) => !!($(x) && $(x).checked);
+    const body = { staff_id: d.id, jour: c('ps-jour'), jour_h: +v('ps-jour-h'), semaine: c('ps-sem'), semaine_dow: +v('ps-sem-d'), semaine_h: +v('ps-sem-h'), lang: v('ps-lang'), voice: v('ps-voice') };
+    if (await act(() => api('point_sub_save', body), 'Enregistré')) closeSheet();
   },
   /* projets et tâches */
   mtToggle() { S.mtOpen = !S.mtOpen; LS.set('mh-mt', S.mtOpen); render(); },
