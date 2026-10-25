@@ -157,9 +157,13 @@ const ERR = {
   invite_invalid: 'Ce lien n’est plus valable. Demande un nouveau lien à ton responsable.', locked: 'Accès bloqué après 5 codes faux. Appelle ton responsable.',
   not_yours: 'Cette chambre n’est plus à toi.', not_started: 'Touche d’abord « Je commence ».', photos_missing: 'Il manque des photos.',
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
+  readonly: 'Lecture seule : vous pouvez tout regarder, mais rien n’est modifié. Demandez à Abdullah.',
   reason: 'Indique la raison.', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
 };
+// Comptes en lecture seule : tout est visible, seules ces actions passent (lire, messages, notifications).
+const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info'];
 async function api(a, payload = {}) {
+  if (S.me && S.me.readonly && !RO_OK.includes(a)) { const err = new Error('readonly'); err.code = 'readonly'; throw err; }
   let r;
   try {
     r = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json', ...(S.secret ? { 'x-device': S.secret } : {}) }, body: JSON.stringify({ a, ...payload }) });
@@ -215,7 +219,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
-  navigator.serviceWorker.addEventListener('message', (e) => { if (!e.data) return; if (e.data.type === 'refresh') refresh(); if (e.data.type === 'open' && e.data.conv) openConvWhenReady(e.data.conv); });
+  navigator.serviceWorker.addEventListener('message', (e) => { if (!e.data) return; if (e.data.type === 'refresh') refresh(); if (e.data.type === 'open' && e.data.conv) openConvWhenReady(e.data.conv); if (e.data.type === 'open' && e.data.point) refresh(true).then(() => pointSheet(e.data.point, true)); });
 }
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; if (S.sheet === 'onboard') onboardSheet(); });
 
@@ -539,6 +543,7 @@ function viewHome() {
   return `<div class="wrap home">
     <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div>
       <div class="top-acts">${ptButton()}<button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div></div>
+    ${S.me.readonly ? '<div class="robar">👁 <span><b>Lecture seule</b> · vous pouvez tout regarder sans risque, rien n’est modifié.</span></div>' : ''}
     <div class="segc" role="group" aria-label="Hôtel">${scopes.map(([k, l]) => `<button data-a="scope" data-k="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
       ${stat(c.todo, 'à nettoyer', 'n-blue', ['menage', 'rooms'])}${stat(c.check, 'à contrôler', 'n-green', ['menage', 'check'])}${stat(c.urgent, c.urgent > 1 ? 'urgences' : 'urgence', 'n-red', ['issues'])}</div></div>
@@ -1296,7 +1301,7 @@ function ptButton() {
   const n = ptUnseen().length;
   return `<button class="ptbtn" data-a="ptOpen" aria-label="Le point${n ? ', nouveau' : ''}">🎧${n ? '<span class="dot"></span>' : ''}</button>`;
 }
-function pointSheet(kind) {
+function pointSheet(kind, auto) {
   kind = kind || (ptUnseen()[0] || {}).kind || S.ptKind;
   S.ptKind = kind; LS.set('mh-ptk', kind);
   const p = pointOf(kind), lang = S.ptLang;
@@ -1310,6 +1315,8 @@ function pointSheet(kind) {
     <p class="muted sm">Préparé automatiquement à partir de l’appli : réparations, registre, sécurité, tâches.</p>`}
     ${S.me.role === 'owner' ? '<button class="btn ghost" data-a="ptSettings">Régler les envois</button>' : ''}`);
   render();
+  // Ouvert depuis la notification : on essaie de lancer l'audio tout de suite (le téléphone peut demander d'appuyer sur ▶).
+  if (auto) setTimeout(() => { const a = document.querySelector('#sheet .pt-audio'); if (a) a.play().catch(() => {}); }, 300);
 }
 function ptSubLine(s) {
   const x = subOf(s.id); if (!x || (!x.jour && !x.semaine)) return 'Ne reçoit rien';
@@ -1461,6 +1468,7 @@ function personStatus(s) {
   else if (s.locked) chips.push('<span class="chip c-red">🔒 Bloquée</span>');
   else if (devs.length) chips.push(`<span class="chip c-green">📱 Installée${devs.length > 1 ? ` (${devs.length})` : ''}</span>`);
   else if (inv) chips.push('<span class="chip c-amber">Lien envoyé</span>');
+  if (s.readonly && s.active !== false) chips.push('<span class="chip c-plain">👁 Lecture seule</span>');
   else chips.push('<span class="chip c-plain">Pas encore installée</span>');
   if (s.push) chips.push('<span class="chip c-accent">🔔</span>');
   return chips.join('');
@@ -1472,6 +1480,7 @@ function viewTeam() {
         ${devs.length ? `<div class="list">${devs.map((d) => `<div class="li"><span class="t">📱 ${esc(d.label || 'Appareil')}<br><span class="muted">installé ${when(d.created_at)} · vu ${when(d.last_seen)}</span></span>${d.id === S.device ? '<span class="chip c-accent">Ce téléphone</span>' : (canTouch ? `<button class="btn small bad" data-a="devRevoke" data-id="${d.id}">Déconnecter</button>` : '')}</div>`).join('')}</div>` : ''}
         ${canTouch && s.active !== false ? `<div class="row"><button class="btn small soft" data-a="inviteNew" data-id="${s.id}">📲 ${devs.length ? 'Nouveau lien (nouveau téléphone)' : (s.locked ? 'Débloquer : nouveau lien' : 'Lien d’installation')}</button>
           <button class="btn small" data-a="personEdit" data-id="${s.id}">Modifier</button>${owner ? '' : `<button class="btn small ghost" data-a="personActive" data-id="${s.id}" data-v="0">Désactiver</button>`}</div>` : ''}
+        ${S.me.role === 'owner' && !owner && s.active !== false ? `<button class="perm" data-a="roToggle" data-id="${s.id}" aria-pressed="${!!s.readonly}"><span class="pr-t"><b>👁 Lecture seule</b><span class="muted">Peut tout voir, ne peut rien modifier (pour découvrir l’appli sans crainte)</span></span><span class="sw ${s.readonly ? 'on' : ''}" aria-hidden="true"><i></i></span></button>` : ''}
         ${s.role === 'bricoleur' && S.me.role === 'owner' && s.active !== false ? `<div class="perms"><p class="muted">Accès que tu lui donnes</p>${PERM_L.map(([k, l, sub]) => { const on = (s.perms || []).includes(k); return `<button class="perm" data-a="permToggle" data-id="${s.id}" data-p="${k}" aria-pressed="${on}"><span class="pr-t"><b>${l}</b><span class="muted">${sub}</span></span><span class="sw ${on ? 'on' : ''}" aria-hidden="true"><i></i></span></button>`; }).join('')}</div>` : ''}
         ${s.active === false ? `<div class="row"><button class="btn small" data-a="personActive" data-id="${s.id}" data-v="1">Réactiver</button><button class="btn small bad" data-a="personDelete" data-id="${s.id}">🗑️ Supprimer définitivement</button></div>` : ''}</div>`;
     }).join('')}
@@ -1763,6 +1772,7 @@ const A = {
     if (await act(() => api('reg_pec_delete', { id: d.id, raison }), 'Supprimée')) occSheet(d.occ);
   },
   inApply(d) { applySheet(d.id); },
+  async roToggle(d) { const s = staffById(d.id); const on = !s.readonly; await act(() => api('staff_readonly', { id: d.id, readonly: on }), on ? `${first(s.label)} est en lecture seule` : `${first(s.label)} peut de nouveau modifier`); },
   async permToggle(d) {
     const s = staffById(d.id); let perms = (s.perms || []).slice();
     perms = perms.includes(d.p) ? perms.filter((x) => x !== d.p) : [...perms, d.p];
@@ -2102,11 +2112,13 @@ function openConvWhenReady(conv) {
 /* ---------- démarrage ---------- */
 (async function boot() {
   const cm = location.hash.match(/[#&]c=([^&]+)/); const openC = cm ? decodeURIComponent(cm[1]) : null;
-  if (S.secret && (readHashCode() || openC)) history.replaceState(null, '', location.pathname);
+  const pm = location.hash.match(/[#&]pt=(jour|semaine)/); const openP = pm ? pm[1] : null;
+  if (S.secret && (readHashCode() || openC || openP)) history.replaceState(null, '', location.pathname);
   render();
   if (S.secret) {
     await refresh(true);
     if (S.loaded && pushSupported() && Notification.permission === 'granted') enablePush(true);
     if (S.loaded && openC) threadSheet(openC);
+    if (S.loaded && openP && isMgr()) pointSheet(openP, true);
   }
 })();

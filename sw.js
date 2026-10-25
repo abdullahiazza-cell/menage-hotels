@@ -1,5 +1,5 @@
 // Service worker : coquille hors-ligne + notifications.
-const VERSION = 'v22';
+const VERSION = 'v23';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/badge-96.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
 
 self.addEventListener('install', (e) => {
@@ -23,7 +23,7 @@ self.addEventListener('push', (e) => {
   e.waitUntil((async () => {
     await self.registration.showNotification(d.title || 'Ma Réception', {
       body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag,
-      icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { conv: d.conv || null },
+      icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { conv: d.conv || null, point: d.point || null },
     });
     // Pastille rouge sur l'icône de l'appli avec le nombre de messages non lus.
     if (typeof d.badge === 'number' && self.navigator) {
@@ -37,8 +37,8 @@ self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   e.waitUntil((async () => {
     const cs = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-    const conv = e.notification.data && e.notification.data.conv;
-    for (const c of cs) { if ('focus' in c) { c.postMessage(conv ? { type: 'open', conv } : { type: 'refresh' }); return c.focus(); } }
-    return self.clients.openWindow(conv ? './#c=' + encodeURIComponent(conv) : './');
+    const conv = e.notification.data && e.notification.data.conv, point = e.notification.data && e.notification.data.point;
+    for (const c of cs) { if ('focus' in c) { c.postMessage(conv ? { type: 'open', conv } : (point ? { type: 'open', point } : { type: 'refresh' })); return c.focus(); } }
+    return self.clients.openWindow(conv ? './#c=' + encodeURIComponent(conv) : (point ? './#pt=' + point : './'));
   })());
 });
