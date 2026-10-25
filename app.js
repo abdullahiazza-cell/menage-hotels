@@ -591,7 +591,8 @@ const isResto = (o) => o.formule === 'restauration';
 const occPlace = (o) => { if (isResto(o)) return 'restauration'; const r = o.room_id && S.rooms[o.room_id]; return r ? placeShort(r) : 'sans chambre'; };
 // Fins de PEC : orange à moins d'une semaine, rouge une fois dépassée ; un brouillon de relance est préparé dans Gmail.
 const lastPec = (o) => pecsOf(o.id).filter((p) => p.fin).sort((a, b) => String(b.fin).localeCompare(String(a.fin)))[0] || null;
-const pendingRenew = (o) => inboxTodo().find((i) => String(i.nom || '').trim().toUpperCase() === String(o.nom || '').trim().toUpperCase() && (!i.prenom || !o.prenom || first(i.prenom).toLowerCase() === first(o.prenom).toLowerCase()));
+// Une PEC reçue en attente ne compte comme renouvellement que si elle va au-delà de la PEC en cours.
+const pendingRenew = (o) => { const cur = lastPec(o); return inboxTodo().find((i) => String(i.nom || '').trim().toUpperCase() === String(o.nom || '').trim().toUpperCase() && (!i.prenom || !o.prenom || first(i.prenom).toLowerCase() === first(o.prenom).toLowerCase()) && (!i.fin || !cur || i.fin > cur.fin)); };
 const relanceOf = (p, stage) => (S.reg.relances || []).filter((r) => r.pec_id === p.id && (!stage || r.stage === stage)).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null;
 function finsList() {
   const t = todayISO(), lim = addDaysISO(t, 7);

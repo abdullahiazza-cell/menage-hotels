@@ -665,7 +665,7 @@ async function relancesTodo() {
     sb.from("occupants").select("id,nom,prenom,hotel,formule,categorie").eq("statut", "present"),
     sb.from("pecs").select("id,occupant_id,fin,reference,financeur,source_msg").not("fin", "is", null),
     sb.from("pec_relances").select("pec_id,stage"),
-    sb.from("pec_inbox").select("nom,prenom").eq("status", "a_traiter"),
+    sb.from("pec_inbox").select("nom,prenom,fin").eq("status", "a_traiter"),
   ]);
   const seen = new Set((done || []).map((d: any) => d.pec_id + ":" + d.stage));
   const out: any[] = [];
@@ -676,7 +676,8 @@ async function relancesTodo() {
     const stage = p.fin < today ? "expiree" : "bientot";
     if (seen.has(p.id + ":" + stage)) continue;
     const up = (x: any) => String(x || "").trim().toUpperCase();
-    if ((inbox || []).some((i: any) => up(i.nom) === up(o.nom))) continue;
+    // une PEC reçue en attente ne bloque la relance que si elle prolonge vraiment la PEC en cours
+    if ((inbox || []).some((i: any) => up(i.nom) === up(o.nom) && (!i.fin || i.fin > p.fin))) continue;
     const who = [o.prenom, up(o.nom)].filter(Boolean).join(" ");
     const quoi = o.formule === "restauration" ? `des repas de ${who} à l’Hôtel de Paris` : `de l’hébergement de ${who} ${LIEU[o.hotel] || ""}`;
     const ref = p.reference ? ` (réf. ${p.reference})` : "";
