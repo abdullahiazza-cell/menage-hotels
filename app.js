@@ -1316,7 +1316,31 @@ function pointSheet(kind, auto) {
     ${S.me.role === 'owner' ? `<div class="row">${p ? `<button class="btn soft" data-a="ptSendOpen" data-k="${kind}">📤 Envoyer ce point maintenant</button>` : ''}<button class="btn ghost" data-a="ptSettings">Régler les envois</button></div>` : ''}`);
   render();
   // Ouvert depuis la notification : on essaie de lancer l'audio tout de suite (le téléphone peut demander d'appuyer sur ▶).
-  if (auto) setTimeout(() => { const a = document.querySelector('#sheet .pt-audio'); if (a) a.play().catch(() => {}); }, 300);
+  if (auto) setTimeout(() => { const a = document.querySelector('#sheet .pt-audio'); if (a) playQueue([a]); }, 150);
+}
+// Lecture automatique (depuis une notification) : si le téléphone refuse de lancer le son tout seul,
+// un grand bouton ▶ couvre l'écran : un seul appui n'importe où et ça démarre.
+const sheetPlaying = () => !!document.getElementById('tapplay') || [...document.querySelectorAll('#sheet audio')].some((a) => !a.paused && !a.ended);
+function playQueue(els) {
+  els = els.filter(Boolean); if (!els.length) return;
+  const play = (i) => {
+    const a = els[i]; if (!a || !a.isConnected) return;
+    a.preload = 'auto';
+    a.onended = () => play(i + 1);
+    const p = a.play(); if (p && p.catch) p.catch(() => tapToPlay(a, i, play));
+  };
+  play(0);
+}
+function tapToPlay(a, i, play) {
+  document.getElementById('tapplay')?.remove();
+  const d = document.createElement('button');
+  d.id = 'tapplay'; d.type = 'button';
+  d.innerHTML = '<span class="tp-ico">▶</span><span class="tp-t">Appuie pour écouter</span><span class="tp-s">اضغط باش تسمع</span>';
+  d.onclick = () => { d.remove(); a.preload = 'auto'; a.play().catch(() => {}); };
+  document.body.appendChild(d);
+  // si on ferme la fenêtre ou qu'on lance le son à la main, le bouton disparaît
+  a.addEventListener('play', () => d.remove(), { once: true });
+  const obs = setInterval(() => { if (!a.isConnected) { d.remove(); clearInterval(obs); } if (!d.isConnected) clearInterval(obs); }, 500);
 }
 // Envoi manuel (propriétaire) : choisir à qui envoyer le point tout de suite, en notification avec l'audio.
 function ptSendSheet(kind) {
@@ -1437,20 +1461,28 @@ function heardText(m, conv) {
 function msgHtml(m, conv) {
   const mine = m.from_staff === S.me.id;
   const u = mediaUrl(m.media_path);
-  const media = m.media_path ? (u ? `<audio controls preload="metadata" src="${esc(u)}"></audio>` : '<span class="muted">Vocal indisponible</span>') : (m.media_type === 'expired' ? '<span class="muted">🎤 Vocal effacé après 30 jours</span>' : (m.media_type === 'empty' ? '<span class="muted">🎤 Vocal vide : le micro n’a rien enregistré</span>' : ''));
+  const media = m.media_path ? (u ? `<audio controls preload="metadata" data-mid="${esc(m.id)}" src="${esc(u)}"></audio>` : '<span class="muted">Vocal indisponible</span>') : (m.media_type === 'expired' ? '<span class="muted">🎤 Vocal effacé après 30 jours</span>' : (m.media_type === 'empty' ? '<span class="muted">🎤 Vocal vide : le micro n’a rien enregistré</span>' : ''));
   const heard = heardText(m, conv);
   return `<div class="msg ${mine ? 'me' : ''}"><span class="meta">${esc(mine ? 'Moi' : nameOf(m.from_staff))} · ${when(m.created_at)}${m.room ? ` · ${H(m.hotel).e} ch. ${esc(m.room)}` : ''}</span>
     ${m.text ? `<span class="txt">${esc(m.text)}</span>` : ''}${media}${m.duration ? `<span class="meta">${m.duration} s</span>` : ''}${heard ? `<span class="meta" style="align-self:flex-end">${heard}</span>` : ''}</div>`;
 }
-function threadSheet(conv) {
+function threadSheet(conv, auto) {
   if (conv === 'all') conv = 'team';
   if (conv && !conv.includes(':') && conv !== 'team' && conv !== 'mgrs') conv = 'staff:' + conv;
-  const ms = convMsgs(conv);
+  const ms = convMsgs(conv), since = readAt(S.me.id, conv);
   openSheet('thread:' + conv, `<div class="row between"><div><h2>${esc(convLabel(conv))}</h2><span class="muted">${esc(convSub(conv))}</span></div><button class="btn small" data-a="close">Fermer</button></div>
     <div class="thread" id="thr">${ms.length ? ms.map((m) => msgHtml(m, conv)).join('') : '<p class="muted" style="text-align:center">Pas encore de message.</p>'}</div>
     <div class="composer">${holdBtn('conv:' + conv, 'Garde appuyé pour parler')}
       <div class="row"><input id="msgText" placeholder="Ou écris un message" style="flex:1"><button class="btn" data-a="sendText" data-ctx="${esc(conv)}">Envoyer</button></div></div>`, 'chat');
   const el = $('thr'); if (el) el.scrollTop = el.scrollHeight;
+  // Ouvert depuis la notification : les vocaux pas encore écoutés se lancent tout seuls, l'un après l'autre.
+  if (auto) {
+    const others = ms.filter((m) => m.from_staff !== S.me.id && m.media_path && mediaUrl(m.media_path));
+    let todo = others.filter((m) => ts(m.created_at) > since);
+    if (!todo.length && ms.length && ms[ms.length - 1].from_staff !== S.me.id && ms[ms.length - 1].media_path) todo = [ms[ms.length - 1]];
+    const els = todo.map((m) => document.querySelector(`#thr audio[data-mid="${CSS.escape(String(m.id))}"]`)).filter(Boolean);
+    if (els.length) { els[0].closest('.msg')?.scrollIntoView({ block: 'center' }); playQueue(els); }
+  }
   if (unreadIn(conv)) {
     S.reads = S.reads.filter((x) => !(x.staff_id === S.me.id && x.conv === conv)).concat([{ staff_id: S.me.id, conv, read_at: new Date().toISOString() }]);
     api('read_mark', { conv }).catch(() => {});
@@ -1651,7 +1683,7 @@ function closeSheet() { S.sheet = null; S.rep = null; const s = $('sheet'); s.hi
 function refreshSheet() {
   if (!S.sheet) return;
   if (S.sheet.startsWith('room:')) roomSheet(S.sheet.slice(5));
-  else if (S.sheet.startsWith('thread:')) threadSheet(S.sheet.slice(7));
+  else if (S.sheet.startsWith('thread:')) { if (!sheetPlaying()) threadSheet(S.sheet.slice(7)); }
   else if (S.sheet === 'convs') convListSheet();
   else if (S.sheet.startsWith('occ:') && S.sheet.length > 4 && !isTyping()) occSheet(S.sheet.slice(4));
   else if (S.sheet.startsWith('sec:') && !isTyping()) secSheet(S.sheet.slice(4));
@@ -2122,7 +2154,7 @@ document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.sheet)
 window.addEventListener('hashchange', () => { if (!S.secret) { S.act = null; render(); } });
 
 function openConvWhenReady(conv) {
-  const go = () => { if (S.loaded && S.me) { if (S.me.role === 'menage' || !S.preview) threadSheet(conv); } else setTimeout(go, 400); };
+  const go = () => { if (S.loaded && S.me) { if (S.me.role === 'menage' || !S.preview) threadSheet(conv, true); } else setTimeout(go, 400); };
   refresh(true).then(go);
 }
 /* ---------- démarrage ---------- */
@@ -2134,7 +2166,7 @@ function openConvWhenReady(conv) {
   if (S.secret) {
     await refresh(true);
     if (S.loaded && pushSupported() && Notification.permission === 'granted') enablePush(true);
-    if (S.loaded && openC) threadSheet(openC);
+    if (S.loaded && openC) threadSheet(openC, true);
     if (S.loaded && openP && isMgr()) pointSheet(openP, true);
   }
 })();
