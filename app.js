@@ -1313,10 +1313,20 @@ function pointSheet(kind, auto) {
     ${ptSegs(lang)}<div class="card">${ptPlayer(p, lang)}</div>
     <div class="card pt-full ${lang === 'ar' ? 'rtl' : ''}">${ptText(p, lang).map((l) => `<p>${esc(l)}</p>`).join('')}</div>
     <p class="muted sm">Préparé automatiquement à partir de l’appli : réparations, registre, sécurité, tâches.</p>`}
-    ${S.me.role === 'owner' ? '<button class="btn ghost" data-a="ptSettings">Régler les envois</button>' : ''}`);
+    ${S.me.role === 'owner' ? `<div class="row">${p ? `<button class="btn soft" data-a="ptSendOpen" data-k="${kind}">📤 Envoyer ce point maintenant</button>` : ''}<button class="btn ghost" data-a="ptSettings">Régler les envois</button></div>` : ''}`);
   render();
   // Ouvert depuis la notification : on essaie de lancer l'audio tout de suite (le téléphone peut demander d'appuyer sur ▶).
   if (auto) setTimeout(() => { const a = document.querySelector('#sheet .pt-audio'); if (a) a.play().catch(() => {}); }, 300);
+}
+// Envoi manuel (propriétaire) : choisir à qui envoyer le point tout de suite, en notification avec l'audio.
+function ptSendSheet(kind) {
+  const p = pointOf(kind); if (!p) return;
+  const people = mgrStaff().filter((s) => s.id !== S.me.id);
+  openSheet('ptsend:' + kind, `${sheetHead('📤 Envoyer le point')}
+    <p class="muted">${esc(ptWhen(p))}. Chaque personne reçoit une notification qui ouvre le point et lance l’audio.</p>
+    <div class="card form">${people.map((s) => `<label class="check big"><input type="checkbox" class="ps-to" value="${s.id}" checked> <span><b>${esc(s.label)}</b><br><span class="muted sm">${s.push ? '🔔 Notifications activées' : '⚠️ Notifications pas activées sur son téléphone : il le verra en ouvrant l’appli'}</span></span></label>`).join('') || '<p class="muted">Personne d’autre pour l’instant.</p>'}
+      <button class="btn pri" data-a="ptSendGo" data-k="${kind}">Envoyer</button></div>
+    <button class="btn ghost" data-a="ptOpen" data-k="${kind}">← Retour</button>`);
 }
 function ptSubLine(s) {
   const x = subOf(s.id); if (!x || (!x.jour && !x.semaine)) return 'Ne reçoit rien';
@@ -1329,14 +1339,14 @@ function pointSubsCard() {
 }
 function pointSubSheet(id) {
   const s = S.staff.find((x) => x.id === id); if (!s) return;
-  const x = subOf(id) || { jour: false, jour_h: 7, semaine: false, semaine_dow: 1, semaine_h: 8, lang: 'ar', voice: 'male-2' };
-  const hours = (cur) => [5, 6, 7, 8, 9, 10, 11, 12].map((h) => opt(h, cur, `${h} h`)).join('');
+  const x = subOf(id) || { jour: false, jour_h: 7, semaine: false, semaine_dow: 0, semaine_h: 18, lang: 'ar', voice: 'male-2' };
+  const hours = (cur) => [6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21].map((h) => opt(h, cur, `${h} h`)).join('');
   openSheet('ptsub:' + id, `${sheetHead('🎧 Le point · ' + esc(first(s.label)))}
     <div class="card form">
       <label class="check big"><input type="checkbox" id="ps-jour" ${x.jour ? 'checked' : ''}> <span><b>Point du matin</b><br><span class="muted sm">Ce qui s’est passé la veille, environ 1 minute</span></span></label>
       <label>Heure<select id="ps-jour-h">${hours(x.jour_h)}</select></label>
-      <label class="check big"><input type="checkbox" id="ps-sem" ${x.semaine ? 'checked' : ''}> <span><b>Point de la semaine</b><br><span class="muted sm">Le résumé des 7 derniers jours, environ 2 minutes</span></span></label>
-      <div class="two"><label>Jour<select id="ps-sem-d">${[1, 2, 3, 4, 5, 6, 0].map((d) => opt(d, x.semaine_dow, DOWS[d][0].toUpperCase() + DOWS[d].slice(1))).join('')}</select></label><label>Heure<select id="ps-sem-h">${hours(x.semaine_h)}</select></label></div>
+      <label class="check big"><input type="checkbox" id="ps-sem" ${x.semaine ? 'checked' : ''}> <span><b>Point de la semaine</b><br><span class="muted sm">Le résumé de la semaine, prêt le dimanche, environ 2 minutes</span></span></label>
+      <div class="two"><label>Jour<select id="ps-sem-d">${[0, 1, 2, 3, 4, 5, 6].map((d) => opt(d, x.semaine_dow, DOWS[d][0].toUpperCase() + DOWS[d].slice(1))).join('')}</select></label><label>Heure<select id="ps-sem-h">${hours(x.semaine_h)}</select></label></div>
       <div class="two"><label>Langue de l’audio<select id="ps-lang">${opt('ar', x.lang, 'Darija')}${opt('fr', x.lang, 'Français')}</select></label><label>Voix<select id="ps-voice">${VOICES.map(([k, l]) => opt(k, x.voice, l)).join('')}</select></label></div>
       <p class="muted sm">Le texte reste toujours disponible dans les deux langues sur l’accueil.</p>
       <button class="btn pri" data-a="ptSubSave" data-id="${id}">Enregistrer</button></div>`);
@@ -1854,6 +1864,12 @@ const A = {
   ptOpen(d) { pointSheet(d.k); },
   ptSettings() { closeSheet(); S.tab = 'settings'; render(); window.scrollTo(0, 0); },
   ptSub(d) { pointSubSheet(d.id); },
+  ptSendOpen(d) { ptSendSheet(d.k); },
+  async ptSendGo(d) {
+    const ids = [...document.querySelectorAll('.ps-to:checked')].map((x) => x.value);
+    if (!ids.length) { toast('Choisis au moins une personne.'); return; }
+    if (await act(() => api('point_send', { kind: d.k, ids }), `Point envoyé à ${ids.length} personne${ids.length > 1 ? 's' : ''}`)) pointSheet(d.k);
+  },
   async ptSubSave(d) {
     const v = (x) => ($(x) ? $(x).value : ''), c = (x) => !!($(x) && $(x).checked);
     const body = { staff_id: d.id, jour: c('ps-jour'), jour_h: +v('ps-jour-h'), semaine: c('ps-sem'), semaine_dow: +v('ps-sem-d'), semaine_h: +v('ps-sem-h'), lang: v('ps-lang'), voice: v('ps-voice') };

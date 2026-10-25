@@ -1110,10 +1110,23 @@ async function handle(req: Request) {
       if (me.role !== "owner") throw new E("owner_only", 403);
       const { data: t } = await sb.from("staff").select("id,role").eq("id", body.staff_id).single();
       if (!t || !isMgrRole(t.role)) throw new E("bad");
-      const h = (x: any, d: number) => Math.max(5, Math.min(12, parseInt(x) || d));
+      const h = (x: any, d: number) => Math.max(5, Math.min(22, parseInt(x) || d));
       const VOICES = ["male-1", "male-2", "male-5", "female-1", "female-2", "female-5"];
       await sb.from("point_subs").upsert({ staff_id: t.id, jour: !!body.jour, jour_h: h(body.jour_h, 7), semaine: !!body.semaine, semaine_dow: Math.max(0, Math.min(6, parseInt(body.semaine_dow) || 0)), semaine_h: h(body.semaine_h, 8), lang: body.lang === "fr" ? "fr" : "ar", voice: VOICES.includes(body.voice) ? body.voice : "male-2", updated_at: new Date().toISOString() });
       return { ok: true };
+    }
+    case "point_send": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      const kind = body.kind === "semaine" ? "semaine" : "jour";
+      const { data: p } = await sb.from("points").select("id,text_fr,text_ar").eq("kind", kind).order("day", { ascending: false }).limit(1).maybeSingle();
+      if (!p) throw new E("bad");
+      const { data: who } = await sb.from("staff").select("id,role,active").in("id", (Array.isArray(body.ids) ? body.ids : []).filter((x: string) => UUID.test(String(x))).slice(0, 30));
+      const ids = (who || []).filter((s: any) => s.active && isMgrRole(s.role)).map((s: any) => s.id);
+      if (!ids.length) throw new E("no_one");
+      const line = String(p.text_ar || "").split(/\n+/).filter(Boolean)[1] || "";
+      await pushTo(ids, { title: kind === "jour" ? "🎧 Le point du jour" : "🎧 Le point de la semaine", body: (line || "Appuie pour écouter").slice(0, 140), tag: "point-" + kind, point: kind } as any);
+      await sb.from("point_sent").upsert(ids.map((id: string) => ({ staff_id: id, point_id: p.id })), { onConflict: "staff_id,point_id" });
+      return { ok: true, sent: ids.length };
     }
     case "staff_perms": {
       if (me.role !== "owner") throw new E("owner_only", 403);
