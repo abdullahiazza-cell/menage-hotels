@@ -39,7 +39,7 @@ const LS = {
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
   me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
-  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [] }, sl: null, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), ptKind: LS.get('mh-ptk', 'jour'), ptLang: LS.get('mh-ptl', 'ar'), ptVoice: LS.get('mh-ptv', ''), points: [], pointSubs: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
+  hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [], docs: [], mail: [] }, sl: null, sd: null, docBlobs: {}, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), ptKind: LS.get('mh-ptk', 'jour'), ptLang: LS.get('mh-ptl', 'ar'), ptVoice: LS.get('mh-ptv', ''), points: [], pointSubs: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
 };
@@ -199,7 +199,7 @@ async function refresh(force) {
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
-      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || [];
+      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || [];
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
@@ -532,7 +532,8 @@ function tile(k, sub, badge) {
 function secTile() {
   const L = scoped(secChecks()).filter((c) => c.status !== 'na'), late = secLate(L).length, unk = L.filter((c) => secSt(c).k === 'unk').length;
   const comm = L.filter((c) => c.grp === 'commission' && c.next_due && daysTo(c.next_due) >= 0 && daysTo(c.next_due) <= 30).sort((a, b) => a.next_due.localeCompare(b.next_due))[0];
-  return tile('securite', comm ? `Commission ${daysTo(comm.next_due) === 0 ? 'aujourd’hui' : 'le ' + fdate(comm.next_due).slice(0, 5)}` : (late ? `${late} en retard` : (unk ? `${unk} à renseigner` : 'Tout est à jour')), late);
+  const nm = secMail().length;
+  return tile('securite', comm ? `Commission ${daysTo(comm.next_due) === 0 ? 'aujourd’hui' : 'le ' + fdate(comm.next_due).slice(0, 5)}` : (late ? `${late} en retard` : (nm ? `📬 ${nm} document${nm > 1 ? 's' : ''} reçu${nm > 1 ? 's' : ''} par mail` : (unk ? `${unk} à renseigner` : 'Tout est à jour'))), late || nm);
 }
 function viewHome() {
   const c = homeCounts(), un = unreadTotal(), locked = S.staff.filter((s) => s.locked).length;
@@ -660,7 +661,7 @@ function regPeople() {
 // PDF des prises en charge : gardés dans Ma Réception (ou dans le Drive pour ceux relevés automatiquement).
 const docLink = (d) => S.docUrls[d.id] ? `<a class="doc" href="${S.docUrls[d.id]}" target="_blank" rel="noopener" download="${esc(d.name || 'document.pdf')}">📄 ${esc(d.name || 'Document')} · Ouvrir</a>`
   : `<button class="doc" data-a="docOpen" data-id="${esc(d.id)}" data-n="${esc(d.name || 'document.pdf')}">📄 ${esc(d.name || 'Document')}</button>`;
-const docsHtml = (docs, drive) => ((docs || []).length || drive) ? `<div class="docs">${(docs || []).map(docLink).join('')}${drive ? `<a class="doc" href="https://drive.google.com/file/d/${encodeURIComponent(drive.id)}/view" target="_blank" rel="noopener">📄 ${esc(drive.name || 'PDF dans le Drive')}</a>` : ''}</div>` : '';
+const docsHtml = (docs, drive) => ((docs || []).length || drive) ? `<div class="docs">${(docs || []).map((d) => `<span class="docr">${docLink(d)}${printBtn({ f: d.id, n: d.name })}</span>`).join('')}${drive ? `<a class="doc" href="https://drive.google.com/file/d/${encodeURIComponent(drive.id)}/view" target="_blank" rel="noopener">📄 ${esc(drive.name || 'PDF dans le Drive')}</a>` : ''}</div>` : '';
 function pecInCard(i) {
   return `<div class="card"><div class="row between"><h3>${esc([i.nom, i.prenom].filter(Boolean).join(' '))}</h3><span class="pill p-plain">${esc(i.categorie || '')}</span></div>
     <p class="muted">${esc(i.expediteur || '')} · reçu le ${fdate(i.received_at)} · ${esc(hotelName(i.hotel || ''))}</p>
@@ -1074,19 +1075,130 @@ function viewSecurite() {
   const seg = `<div class="segc" role="group" aria-label="Hôtel">${HOTELS.map((h) => { const l = secLate(all.filter((c) => c.hotel === h.id && c.status !== 'na')).length; return `<button data-a="hotel" data-k="${h.id}" aria-pressed="${S.hotel === h.id}">${esc(h.id === 'par' ? 'Paris' : h.name)}${l ? ` <span class="badge sm">${l}</span>` : ''}</button>`; }).join('')}</div>`;
   const comm = list.find((c) => c.grp === 'commission');
   return `${seg}${secCommCard(comm)}
+    ${mailCard()}<div class="row"><button class="btn small soft" data-a="sdNew">📎 Ajouter un document</button></div>
     <div class="chips">${n('late') ? `<span class="chip c-red">En retard <b>${n('late')}</b></span>` : ''}${n('soon') ? `<span class="chip c-amber">Bientôt <b>${n('soon')}</b></span>` : ''}${n('unk') ? `<span class="chip c-slate">À renseigner <b>${n('unk')}</b></span>` : ''}${obs ? `<span class="chip c-amber">Observations <b>${obs}</b></span>` : ''}${!n('late') && !n('soon') && !n('unk') ? '<span class="chip c-green">Tout est à jour</span>' : ''}</div>
     ${['presta', 'interne', 'doc', 'commission'].map((g) => { const L = list.filter((c) => c.grp === g).sort(secOrder); return L.length ? `<h2 class="sec">${SG[g]}</h2>${SG_HELP[g] ? `<p class="muted sm">${SG_HELP[g]}</p>` : ''}<div class="group">${L.map(secRow).join('')}</div>` : ''; }).join('')}
+    ${docsSection()}
     ${na.length ? `<h2 class="sec">Non concerné</h2><div class="group">${na.map(secRow).join('')}</div>` : ''}
-    <button class="btn ghost" data-a="secAdd">＋ Ajouter un contrôle ou un document</button>`;
+    <button class="btn ghost" data-a="secAdd">＋ Ajouter un contrôle ou un document à avoir</button>`;
 }
 const hotelOk0 = (h) => !S.me.only_hotel || S.me.only_hotel === h;
+
+/* ----- documents rangés (attestations, rapports…), PDF reçus par mail, impression ----- */
+const secDocs = () => (S.sec && S.sec.docs) || [];
+const secMail = () => (S.sec && S.sec.mail) || [];
+const printBtn = (d) => `<button class="pbtn" data-a="docPrint" ${d.f ? `data-f="${esc(d.f)}"` : `data-p="${esc(d.p || '')}"`} data-n="${esc(d.n || 'Document')}" title="Imprimer" aria-label="Imprimer">🖨️</button>`;
+const sdPrint = (d) => d.file_id ? { f: d.file_id, n: d.name } : { p: d.path, n: d.name };
+const senderName = (s) => String(s || '').replace(/<[^>]*>/g, '').replace(/"/g, '').trim() || String(s || '').replace(/[<>]/g, '');
+const normT = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+function guessHotel(t) { t = normT(t); if (/archange|verdun/.test(t)) return 'arc'; if (/chateaudun|46 bis/.test(t)) return 'cha'; if (/hotel de paris|bannier/.test(t)) return 'par'; return null; }
+// Devine à quel contrôle correspond un document, d'après son nom, l'objet du mail et son texte.
+const SD_RULES = [[/formation|personnel forme|manipulation d.?extincteur/, ['form']], [/exercice d.?evacuation/, ['exo']], [/legionel/, ['legio']], [/desenfumage/, ['df']], [/hotte|conduit/, ['hotte']], [/\bgaz\b/, ['gaz']], [/chaudiere|chauffage|climatisation/, ['chauf']],
+  [/extincteur/, ['ext']], [/blocs? .{0,20}secours|baes|eclairage de securite/, ['baes']], [/accessibilite/, ['d_access']], [/commission de securite|proces.?verbal de visite/, ['comm']], [/ssi|securite incendie|detection|alarme/, ['ssi', 'alarme']], [/electri|dekra/, ['elec']]];
+function guessCheck(t, h) {
+  t = normT(t);
+  for (const [re, ks] of SD_RULES) if (re.test(t)) for (const k of ks) { const c = secChecks().find((x) => x.id === `${h}-${k}` && x.status !== 'na'); if (c) return c.id; }
+  return '';
+}
+const mailRow = (m) => `<div class="mrow"><b>${esc(m.name || 'Document')}</b><span class="muted sm">${esc(senderName(m.sender))}${m.mail_date ? ' · ' + fdate(m.mail_date) : ''}${m.subject ? ' · « ' + esc(m.subject) + ' »' : ''}</span>
+  <span class="docr">${docLink({ id: m.doc_id, name: m.name })}${printBtn({ f: m.doc_id, n: m.name })}</span>
+  <div class="row"><button class="btn small pri" data-a="sdFromMail" data-m="${esc(m.msg_id)}" data-d="${esc(m.doc_id)}">＋ Ranger dans l’appli</button><button class="btn small ghost" data-a="mailIgnore" data-m="${esc(m.msg_id)}" data-d="${esc(m.doc_id)}">Ignorer</button></div></div>`;
+function mailCard() {
+  const L = secMail(); if (!L.length) return '';
+  return `<div class="card mailc"><h3>📬 Reçus par mail <span class="badge sm">${L.length}</span></h3><p class="muted sm">Les PDF arrivés sur la boîte de l’hôtel. Range ceux à garder, ignore les autres.</p>${L.map(mailRow).join('')}</div>`;
+}
+const sdRow = (d) => { const c = d.check_id && secChecks().find((x) => x.id === d.check_id);
+  return `<div class="prow sd"><button class="sd-b" data-a="sdOpen" data-id="${esc(d.id)}"><span class="pr-t"><b>📄 ${esc(d.name)}</b><span class="muted sm">${d.doc_date ? fdate(d.doc_date) : ''}${c ? ' · ' + esc(c.label) : ''}${d.src === 'mail' ? ' · reçu par mail' : ''}</span></span></button>${printBtn(sdPrint(d))}</div>`; };
+function docsSection() {
+  const L = secDocs().filter((d) => d.hotel === S.hotel);
+  return `<h2 class="sec">Documents</h2><p class="muted sm">Attestations, rapports, contrats… Le 🖨️ imprime.</p>${L.length ? `<div class="group">${L.map(sdRow).join('')}</div>` : '<p class="muted">Aucun document rangé pour cet hôtel.</p>'}`;
+}
+function sdSheet(id) {
+  const d = secDocs().find((x) => x.id === id); if (!d) { closeSheet(); return; }
+  const c = d.check_id && secChecks().find((x) => x.id === d.check_id);
+  openSheet('sd:' + id, `${sheetHead(esc(d.name))}<p class="muted">${esc(hotelName(d.hotel))}${d.doc_date ? ' · ' + fdate(d.doc_date) : ''}${d.src === 'mail' ? ' · reçu par mail' : ''}</p>
+    <div class="card"><div class="docs">${d.file_id ? docLink({ id: d.file_id, name: d.name }) : docA({ path: d.path, name: d.name })}</div>
+      <button class="btn small soft" data-a="docPrint" ${d.file_id ? `data-f="${esc(d.file_id)}"` : `data-p="${esc(d.path || '')}"`} data-n="${esc(d.name)}">🖨️ Imprimer</button></div>
+    ${c ? `<div class="group"><button class="prow" data-a="secOpen" data-id="${esc(c.id)}"><span class="pr-t"><span class="muted sm">Pour</span><span>${esc(c.label)}</span></span><span class="chev">›</span></button></div>` : ''}
+    ${d.note ? `<div class="card"><h3>Notes</h3><p class="pre">${esc(d.note)}</p></div>` : ''}
+    ${isMgr() ? `<button class="btn ghost bad-t" data-a="sdDel" data-id="${esc(id)}">Retirer ce document</button>` : ''}`);
+}
+function sdForm() {
+  const f = S.sd; if (!f) return;
+  const h = f.hotel || S.hotel, L = secChecks().filter((c) => c.hotel === h && c.status !== 'na'), c = f.check && L.find((x) => x.id === f.check);
+  const has = f.path || f.fid;
+  openSheet('sdf', `${sheetHead('Ranger un document')}
+    <div class="card form">
+      ${has ? `<p class="docr">📄 <b>${esc(f.file || f.name || 'Document')}</b>${f.msg ? '<span class="muted sm">· reçu par mail</span>' : ''}${printBtn(f.fid ? { f: f.fid, n: f.file } : { p: f.path, n: f.file })}</p>` : ''}
+      ${f.msg ? '' : `<div class="row"><button class="btn soft" data-a="sdPick">📎 ${f.path ? 'Changer de fichier' : 'Choisir le fichier (PDF ou photo)'}</button><button class="btn soft" data-a="sdPhoto">📷 Photo</button></div>`}
+      <label>Nom du document<input id="sd-name" value="${esc(f.name || '')}" placeholder="Ex. : Attestation formation extincteurs"></label>
+      <div class="two"><label>Hôtel<select id="sd-hotel" data-change="sdHotel">${HOTELS.filter((x) => hotelOk0(x.id)).map((x) => opt(x.id, h, x.name)).join('')}</select></label><label>Date du document<input id="sd-date" type="date" value="${esc(f.date || todayISO())}" max="${todayISO()}"></label></div>
+      <label>C’est pour<select id="sd-check" data-change="sdCheck">${opt('', f.check || '', 'Rien de précis (juste le ranger)')}${['interne', 'presta', 'doc', 'commission'].map((g) => { const G = L.filter((x) => x.grp === g); return G.length ? `<optgroup label="${esc(SG[g])}">${G.map((x) => opt(x.id, f.check, x.label)).join('')}</optgroup>` : ''; }).join('')}</select></label>
+      ${f.guess && c ? '<p class="muted sm">✨ Proposé d’après le contenu du document. Change si ce n’est pas ça.</p>' : ''}
+      ${c ? `<p class="sm">${c.grp === 'doc' ? 'Ce document sera noté « présent ».' : 'Le contrôle sera noté fait à la date du document, avec le document joint.'}</p>` : ''}
+      ${c && (c.grp === 'presta' || c.grp === 'commission') ? `<div class="two"><label>Résultat<select id="sd-res">${opt('ok', f.res || 'ok', c.grp === 'commission' ? 'Avis favorable' : 'Conforme')}${opt('obs', f.res || 'ok', c.grp === 'commission' ? 'Prescriptions à lever' : 'Observations à lever')}</select></label><label>Fait par<input id="sd-by" value="${esc(f.by || c.provider || '')}"></label></div>` : ''}
+      ${c && c.grp === 'interne' ? `<label>Fait par<input id="sd-by" value="${esc(f.by || '')}" placeholder="Ex. : Alarme AC"></label>` : ''}
+      <label>Notes<textarea id="sd-note" rows="2" placeholder="Facultatif"></textarea></label>
+      <button class="btn pri" data-a="sdSave">Enregistrer</button></div>`);
+}
+function sdRedraw() { keepForm(sdForm); const n = $('sd-name'); if (n && !n.value && S.sd.name) n.value = S.sd.name; const s = $('sd-check'); if (s) s.value = S.sd.check || ''; }
+const fileTitle = (n) => String(n || '').replace(/\.[a-z0-9]{2,5}$/i, '').replace(/[_]+/g, ' ').trim();
+const genericName = (n) => /^(scan|img|image|doc|document|numerisation|sans titre|pdf)[\s_-]*\d*$/i.test(fileTitle(n)) || /^\d+$/.test(fileTitle(n));
+
+// Impression : le PDF est transformé en images pour s'imprimer pareil sur iPhone, Android et ordinateur.
+let pdfjsP = null;
+function loadPdfjs() {
+  return pdfjsP || (pdfjsP = new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+    s.onload = () => { window.pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; res(window.pdfjsLib); };
+    s.onerror = () => { pdfjsP = null; rej(new Error('pdfjs')); }; document.head.appendChild(s);
+  }));
+}
+async function docBlob(d) {
+  if (d.f) {
+    if (S.docBlobs[d.f]) return S.docBlobs[d.f];
+    const r = await api('doc_get', { id: d.f });
+    const bin = atob(r.b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+    const b = new Blob([u8], { type: r.type || 'application/pdf' }); S.docBlobs[d.f] = b;
+    if (!S.docUrls[d.f]) S.docUrls[d.f] = URL.createObjectURL(b);
+    return b;
+  }
+  const u = mediaUrl(d.p); if (!u) throw new Error('gone');
+  const r = await fetch(u); if (!r.ok) throw new Error('gone');
+  const b = await r.blob(); return /\.pdf$/i.test(d.p) ? new Blob([b], { type: 'application/pdf' }) : b;
+}
+async function pdfToImages(blob) {
+  const lib = await loadPdfjs();
+  const pdf = await lib.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) }).promise, out = [];
+  for (let i = 1; i <= Math.min(pdf.numPages, 40); i++) {
+    const page = await pdf.getPage(i), w = page.getViewport({ scale: 1 }).width, vp = page.getViewport({ scale: Math.min(2.5, 1700 / w) });
+    const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+    const x = c.getContext('2d'); x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+    await page.render({ canvasContext: x, viewport: vp }).promise; out.push(c.toDataURL('image/jpeg', 0.9)); page.cleanup();
+  }
+  pdf.destroy(); return out;
+}
+async function printDoc(d, el) {
+  if (S.printing) return; S.printing = true;
+  const old = el ? el.innerHTML : ''; if (el) el.innerHTML = '⏳';
+  toast('Préparation de l’impression…', 20000);
+  try {
+    const b = await docBlob(d);
+    const imgs = /pdf/i.test(b.type) ? await pdfToImages(b) : [URL.createObjectURL(b)];
+    $('print').innerHTML = `<div class="pages">${imgs.map((u) => `<img alt="" src="${u}">`).join('')}</div>`;
+    await Promise.all([...$('print').querySelectorAll('img')].map((i) => (i.decode ? i.decode() : Promise.resolve()).catch(() => {})));
+    $('toast').hidden = true;
+    window.print();
+  } catch (e) { console.warn(e); toast(e.code ? errMsg(e) : 'Impossible de préparer l’impression. Ouvre le document et imprime-le depuis là.'); }
+  finally { S.printing = false; if (el) el.innerHTML = old; }
+}
 // Intendant : ses contrôles internes, tous hôtels.
 function viewSecBrico() {
   const all = secChecks().filter((c) => c.status !== 'na' && c.grp === 'interne' && c.who === 'intendant'), list = scoped(all).sort(secOrder), due = secDueBrico();
   return `${scopeSeg(due)}<p class="muted">${due.length ? `${due.length} contrôle${due.length > 1 ? 's' : ''} à faire. Touche une ligne, fais le contrôle, puis « C’est fait ».` : 'Tout est fait pour l’instant. 👍'}</p>
     ${HOTELS.filter((h) => list.some((c) => c.hotel === h.id)).map((h) => `<h2 class="sec">${esc(h.name)}</h2><div class="group">${list.filter((c) => c.hotel === h.id).map(secRow).join('')}</div>`).join('')}`;
 }
-const docA = (d) => { const u = mediaUrl(d.path); return u ? `<a class="doc" href="${esc(u)}" target="_blank" rel="noopener">📄 ${esc(d.name || 'Rapport')}</a>` : `<span class="doc muted">📄 ${esc(d.name || 'Rapport')} (indisponible)</span>`; };
+const docA = (d) => { if (d.fid) return `<span class="docr">${docLink({ id: d.fid, name: d.name })}${printBtn({ f: d.fid, n: d.name })}</span>`; const u = mediaUrl(d.path); return u ? `<span class="docr"><a class="doc" href="${esc(u)}" target="_blank" rel="noopener">📄 ${esc(d.name || 'Rapport')}</a>${printBtn({ p: d.path, n: d.name })}</span>` : `<span class="doc muted">📄 ${esc(d.name || 'Rapport')} (indisponible)</span>`; };
 function secLogHtml(l, c) {
   const res = l.result === 'obs' ? (l.obs_state === 'levees' ? '<span class="pill p-green">Observations levées</span>' : '<span class="pill p-amber">Observations</span>') : (c.grp === 'interne' ? '<span class="pill p-green">Fait</span>' : (c.grp === 'doc' ? '' : `<span class="pill p-green">${c.grp === 'commission' ? 'Avis favorable' : 'Conforme'}</span>`));
   return `<div class="logi"><div class="row between"><b>${fdate(l.done_on)}${l.by_label ? ' · ' + esc(l.by_label) : ''}</b>${res}</div>${l.note ? `<p class="pre sm">${esc(l.note)}</p>` : ''}
@@ -1687,6 +1799,7 @@ function refreshSheet() {
   else if (S.sheet === 'convs') convListSheet();
   else if (S.sheet.startsWith('occ:') && S.sheet.length > 4 && !isTyping()) occSheet(S.sheet.slice(4));
   else if (S.sheet.startsWith('sec:') && !isTyping()) secSheet(S.sheet.slice(4));
+  else if (S.sheet.startsWith('sd:') && !isTyping()) sdSheet(S.sheet.slice(3));
   else if (S.sheet.startsWith('proj:') && !isTyping()) projSheet(S.sheet.slice(5));
 }
 const sheetHead = (t) => `<div class="row between"><h2>${t}</h2><button class="btn small" data-a="close">Fermer</button></div>`;
@@ -1936,6 +2049,43 @@ const A = {
     if (await act(() => api('task_save', body), d.id ? 'Enregistré' : (owner ? `Tâche créée, ${owner} est prévenu(e)` : 'Tâche créée'))) { if (d.p) projSheet(d.p); else closeSheet(); }
   },
   async taskDel(d) { if (!S.confirmDel) { S.confirmDel = d.id; toast('Touche encore pour supprimer la tâche.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('task_delete', { id: d.id }), 'Supprimée')) closeSheet(); },
+  /* documents de sécurité */
+  docPrint(d, el) { printDoc(d, el); },
+  sdNew() { S.sd = { hotel: S.hotel }; sdForm(); },
+  sdOpen(d) { sdSheet(d.id); },
+  sdFromMail(d) {
+    const m = secMail().find((x) => x.msg_id === d.m && x.doc_id === d.d); if (!m) return;
+    const t = [m.name, m.subject, m.text].join(' '), h = (hotelOk0(guessHotel(t) || '') && guessHotel(t)) || S.hotel, check = guessCheck(t, h);
+    const c = check && secChecks().find((x) => x.id === check);
+    const name = genericName(m.name) ? (c ? 'Attestation – ' + c.label.split(' (')[0] : (m.subject || fileTitle(m.name))) : fileTitle(m.name);
+    S.sd = { msg: m.msg_id, fid: m.doc_id, file: m.name, name, hotel: h, check, guess: !!check, date: m.mail_date ? String(m.mail_date).slice(0, 10) : todayISO(), by: senderName(m.sender) };
+    sdForm();
+  },
+  async sdPick() {
+    const f = await pickFile('application/pdf,image/*'); if (!f || !S.sd) return;
+    if (f.size > 20 * 1024 * 1024) { toast('Fichier trop lourd (20 Mo maximum).'); return; }
+    toast('Envoi du fichier…', 8000);
+    try {
+      const pdf = /pdf/.test(f.type) || /\.pdf$/i.test(f.name);
+      const path = pdf ? await upload(f, 'application/pdf', 'pdf') : await upload(await shrink(f), 'image/jpeg', 'jpg');
+      const guess = S.sd.check ? '' : guessCheck(f.name, $('sd-hotel') ? $('sd-hotel').value : S.sd.hotel);
+      Object.assign(S.sd, { path, file: f.name, name: S.sd.name || fileTitle(f.name) }, guess ? { check: guess, guess: true } : {});
+      toast('Fichier prêt ✓'); sdRedraw();
+    } catch (e) { toast('Le fichier n’a pas pu partir. Réessaie.'); }
+  },
+  async sdPhoto() { const p = await takePhoto(null, false); if (p && S.sd) { Object.assign(S.sd, { path: p, file: 'Photo du document' }); toast('Photo prête ✓'); sdRedraw(); } },
+  async sdSave() {
+    const f = S.sd; if (!f) return; const v = (x) => ($(x) ? $(x).value.trim() : '');
+    if (!f.path && !f.fid) { toast('Choisis d’abord le fichier.'); return; }
+    const body = { hotel: v('sd-hotel'), name: v('sd-name'), doc_date: v('sd-date'), check_id: v('sd-check') || null, result: v('sd-res') || 'ok', by_label: v('sd-by') || undefined, note: v('sd-note'), path: f.path, msg: f.msg, file_id: f.fid };
+    if (!body.name) { toast('Donne un nom au document.'); return; }
+    if (await act(() => api('sec_doc_add', body), body.check_id ? 'Document rangé, contrôle noté ✓' : 'Document rangé ✓')) {
+      S.sd = null; if (body.hotel !== S.hotel) A.hotel({ k: body.hotel });
+      if (body.check_id) secSheet(body.check_id); else closeSheet();
+    }
+  },
+  async mailIgnore(d) { await act(() => api('mail_doc_set', { msg: d.m, doc: d.d, status: 'ecarte' }), 'Ignoré'); },
+  async sdDel(d) { if (!S.confirmDel) { S.confirmDel = d.id; toast('Touche encore pour retirer ce document.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('sec_doc_delete', { id: d.id }), 'Retiré')) closeSheet(); },
   /* sécurité */
   secOpen(d) { S.sl = null; secSheet(d.id); },
   secDossier(d) { secDossier(d.k); },
@@ -2125,6 +2275,8 @@ const A = {
   close() { closeSheet(); },
 };
 const C = {
+  sdHotel(el) { const f = S.sd; if (!f) return; f.hotel = el.value; if (f.check) { const n = el.value + '-' + f.check.split('-').slice(1).join('-'); f.check = secChecks().some((x) => x.id === n) ? n : ''; } sdRedraw(); },
+  sdCheck(el) { if (!S.sd) return; S.sd.check = el.value; S.sd.guess = false; sdRedraw(); },
   assignTo(el) { S.assignTo = el.value; },
   oHotel(el) { $('o-room').innerHTML = roomOpts(el.value, ''); },
   aHotel(el) { $('a-room').innerHTML = roomOpts(el.value, ''); },

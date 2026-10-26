@@ -468,8 +468,93 @@ async function secState(me: any, paths: string[]) {
   const { data: checks } = await cq;
   const ids = (checks || []).map((c: any) => c.id);
   const { data: logs } = ids.length ? await sb.from("sec_logs").select("*").in("check_id", ids).order("done_on", { ascending: false }).limit(600) : { data: [] };
-  (logs || []).forEach((l: any) => { (l.photos || []).forEach((p: any) => paths.push(p.id)); if (isMgr(me)) (l.docs || []).forEach((d: any) => paths.push(d.path)); else l.docs = []; });
-  return { checks: (checks || []).filter((c: any) => hotelOk(me, c.hotel)), logs: logs || [] };
+  (logs || []).forEach((l: any) => { (l.photos || []).forEach((p: any) => paths.push(p.id)); if (isMgr(me)) (l.docs || []).forEach((d: any) => d.path && paths.push(d.path)); else l.docs = []; });
+  const out: any = { checks: (checks || []).filter((c: any) => hotelOk(me, c.hotel)), logs: logs || [], docs: [], mail: [] };
+  if (isMgr(me)) {
+    const [{ data: docs }, { data: mail }] = await Promise.all([
+      sb.from("sec_docs").select("*").order("doc_date", { ascending: false, nullsFirst: false }).order("created_at", { ascending: false }).limit(500),
+      sb.from("mail_docs").select("msg_id,doc_id,name,subject,sender,mail_date,text").eq("status", "propose").order("mail_date", { ascending: false }).limit(40),
+    ]);
+    out.docs = (docs || []).filter((d: any) => hotelOk(me, d.hotel));
+    out.docs.forEach((d: any) => d.path && paths.push(d.path));
+    out.mail = (mail || []).map((m: any) => ({ ...m, text: m.text ? String(m.text).slice(0, 1500) : null }));
+  }
+  return out;
+}
+// ---------- documents de sécurité (attestations, rapports…) et PDF proposés depuis la boîte mail ----------
+async function secDocAction(me: any, a: string, body: any) {
+  needMgr(me);
+  const now = new Date().toISOString();
+  if (a === "mail_doc_set") {
+    const st = ["ecarte", "propose"].includes(body.status) ? body.status : null; if (!st) throw new E("bad");
+    await sb.from("mail_docs").update({ status: st, handled_by: me.id, handled_at: now }).eq("msg_id", String(body.msg || "")).eq("doc_id", String(body.doc || ""));
+    return { ok: true };
+  }
+  if (a === "sec_doc_delete") {
+    const { data: d } = await sb.from("sec_docs").select("id,hotel").eq("id", String(body.id || "")).maybeSingle();
+    if (!d || !hotelOk(me, d.hotel)) throw new E("bad");
+    await sb.from("sec_docs").delete().eq("id", d.id);
+    return { ok: true };
+  }
+  if (a !== "sec_doc_add") throw new E("unknown_action");
+  const hotel = HOTELS.includes(body.hotel) ? body.hotel : null; if (!hotel || !hotelOk(me, hotel)) throw new E("bad");
+  const name = S_(body.name, 160); if (!name) throw new E("bad");
+  let path: string | null = null, file_id: string | null = null, mail: any = null;
+  if (typeof body.path === "string" && body.path.startsWith(me.id + "/")) path = body.path;
+  else if (body.msg && body.file_id) {
+    const { data: m } = await sb.from("mail_docs").select("msg_id,doc_id").eq("msg_id", String(body.msg)).eq("doc_id", String(body.file_id)).maybeSingle();
+    if (!m) throw new E("bad"); mail = m; file_id = m.doc_id;
+  } else throw new E("bad");
+  let check: any = null;
+  if (body.check_id) {
+    const { data: c } = await sb.from("sec_checks").select("*").eq("id", String(body.check_id)).maybeSingle();
+    if (!c || c.hotel !== hotel) throw new E("bad"); check = c;
+  }
+  const doc_date = D_(body.doc_date) || parisDay();
+  const type = path ? (/\.pdf$/i.test(path) ? "application/pdf" : "image/jpeg") : "application/pdf";
+  const { data: row, error } = await sb.from("sec_docs").insert({ hotel, check_id: check?.id || null, name, doc_date, path, file_id, type, note: S_(body.note, 1000), src: mail ? "mail" : "upload", mail_msg: mail?.msg_id || null, created_by: me.id }).select("id").single();
+  if (error) throw new E("db");
+  // Rattaché à un contrôle : on le note fait à la date du document, avec le document joint.
+  if (check && body.log !== false) {
+    const result = body.result === "obs" ? "obs" : "ok";
+    const obs_state = result === "obs" ? "a_lever" : null;
+    const docs = [path ? { path, name } : { fid: file_id, name }];
+    await sb.from("sec_logs").insert({ check_id: check.id, done_on: doc_date, by_staff: me.id, by_label: S_(body.by_label, 80) || String(me.label).split(" ")[0], result, obs_state, note: S_(body.note, 2000), photos: [], docs });
+    const p: any = { updated_at: now };
+    if (check.next_due && check.next_due <= parisDay()) { p.next_due = null; p.next_note = null; }
+    if (check.grp === "presta" || check.grp === "commission") p.obs = obs_state;
+    if (check.grp === "doc") p.doc_state = "ok";
+    await sb.from("sec_checks").update(p).eq("id", check.id);
+  }
+  if (mail) await sb.from("mail_docs").update({ status: "ajoute", handled_by: me.id, handled_at: now }).eq("msg_id", mail.msg_id).eq("doc_id", mail.doc_id);
+  return { ok: true, id: row.id };
+}
+// Reçu du script Google de la boîte mail : un PDF (ou un Word converti en PDF) à proposer dans l'appli.
+async function mailDoc(req: Request, body: any) {
+  await gasAuth(req);
+  const msg = String(body.msg || ""); if (!/^[0-9a-f]{12,24}$/.test(msg)) throw new E("bad");
+  const b64 = String(body.b64 || ""); if (!b64 || b64.length > 14_000_000) throw new E("too_big");
+  const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  if (!(u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46)) throw new E("not_pdf");
+  const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", u8))].map((x) => x.toString(16).padStart(2, "0")).join("");
+  const id = sha.slice(0, 32), name = S_(body.name, 160) || "Document.pdf";
+  const { data: ex } = await sb.from("doc_files").select("id").eq("id", id).maybeSingle();
+  if (!ex) {
+    let hex = ""; for (let i = 0; i < u8.length; i++) hex += u8[i].toString(16).padStart(2, "0");
+    const { error } = await sb.from("doc_files").insert({ id, name, type: "application/pdf", size: u8.length, sha256: sha, data: "\\x" + hex });
+    if (error) throw new E("db");
+  }
+  const { data: seen } = await sb.from("mail_docs").select("status").eq("msg_id", msg).eq("doc_id", id).maybeSingle();
+  if (seen) return { ok: true, id, already: true };
+  // le même fichier déjà proposé ou rangé (renvoyé dans un autre mail) : on ne le repropose pas
+  const { data: dup } = await sb.from("mail_docs").select("msg_id").eq("doc_id", id).limit(1);
+  const text = (await pdfText(u8)) || (S_(body.text, 20000)?.replace(/\s+/g, " ").trim() || null);
+  await sb.from("mail_docs").insert({ msg_id: msg, doc_id: id, name, subject: S_(body.subject, 300), sender: S_(body.from, 200), mail_date: typeof body.date === "string" ? body.date : null, text, status: dup && dup.length ? "doublon" : "propose" });
+  if (!(dup && dup.length)) {
+    const { data: owners } = await sb.from("staff").select("id").eq("role", "owner").eq("active", true);
+    await pushTo((owners || []).map((o: any) => o.id), { title: "📬 Document reçu par mail", body: `${name}${body.subject ? " · " + String(body.subject).slice(0, 80) : ""}\nÀ ranger dans Sécurité.`, tag: "maildoc" }).catch(() => {});
+  }
+  return { ok: true, id, text: !!text };
 }
 // Prochaine échéance d'une vérification : date fixée à la main, sinon dernière fois + périodicité.
 function secNext(c: any, last: string | null) { if (c.next_due) return c.next_due; if (!c.freq_months || !last) return null; return addMonths(last, c.freq_months); }
@@ -786,6 +871,7 @@ async function handle(req: Request) {
   }
 
   if (a === "pec_pdf") return await pecPdf(req, body);
+  if (a === "mail_doc") return await mailDoc(req, body);
   if (a === "pec_relances") { await gasAuth(req); return await relancesTodo(); }
   if (a === "pec_relance_done") {
     await gasAuth(req);
@@ -1038,6 +1124,7 @@ async function handle(req: Request) {
     case "issue_status": return await repairAction(me, "repair_etat", { id: body.id, etat: body.status === "regle" ? "fait" : "a_faire" });
     case "repair_save": case "repair_etat": case "repair_photo": case "repair_note": case "repair_delete": return await repairAction(me, a, body);
     case "sec_log": case "sec_obs": case "sec_save": case "sec_add": case "sec_log_delete": case "sec_delete": return await secAction(me, a, body);
+    case "sec_doc_add": case "sec_doc_delete": case "mail_doc_set": return await secDocAction(me, a, body);
     case "proj_save": case "proj_delete": case "task_save": case "task_delete": return await projAction(me, a, body);
     case "contact_save": {
       needMgr(me);

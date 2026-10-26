@@ -338,7 +338,15 @@ body.mgr .bar{border-radius:16px 16px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.12)
   #print .f{border:2px solid #000;border-radius:16px;padding:24px;max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
   #print h1{font-size:28px} #print .qr svg{width:260px;height:260px}
   #print .code{font-size:30px;letter-spacing:.12em;font-weight:700}
+  #print .pages img{display:block;width:auto;max-width:100%;max-height:283mm;margin:0 auto;break-after:page;page-break-after:always}
+  #print .pages img:last-child{break-after:auto;page-break-after:auto}
+  @page{margin:7mm}
 }
+.docr{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pbtn{background:none;border:0;padding:3px 6px;font-size:15px;line-height:1;opacity:.5;cursor:pointer;border-radius:8px;filter:grayscale(1)}
+.pbtn:hover,.pbtn:focus-visible{opacity:1;filter:none;background:var(--accent-soft)}
+.prow.sd{padding:0 10px 0 0;gap:4px}.prow.sd .sd-b{flex:1;min-width:0;background:none;border:0;padding:12px 14px;text-align:left;font:inherit;color:inherit;cursor:pointer;display:flex}
+.card.mailc{border:1.5px solid var(--accent)}.mrow{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-top:1px solid var(--line)}.mrow .row{flex-wrap:wrap}
 .warn-t{color:var(--amber);font-weight:700}.ok-t{color:var(--green)}
 .card.comm{border:2px solid var(--amber);background:linear-gradient(180deg,var(--amber-soft),var(--card,transparent) 70%)}
 .logi{display:flex;flex-direction:column;gap:6px;padding:10px 0;border-bottom:1px solid var(--line)}.logi:last-child{border-bottom:0}
