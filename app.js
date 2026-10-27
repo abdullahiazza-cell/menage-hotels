@@ -552,7 +552,7 @@ function viewHome() {
     <div class="tiles">
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
       ${tile('issues', c.open ? `${c.open} à faire ou en cours` : 'Rien à réparer', c.newIss)}
-      ${tile('registre', finsCount() ? `<span class="ora">${finsCount()} fin${finsCount() > 1 ? 's' : ''} de PEC à suivre</span>` : `${presentOcc().filter(inScope).length} présents`, regBadge())}${secTile()}
+      ${tile('registre', finsCount() ? `<span class="ora">${finsCount()} fin${finsCount() > 1 ? 's' : ''} de PEC à suivre</span>` : occCount(presentOcc().filter(inScope)), regBadge())}${secTile()}
       ${tile('msgs', un ? `${un} non lu${un > 1 ? 's' : ''}` : 'Tout est lu', un)}
       ${tile('projets', myTasks().length ? `${myTasks().length} tâche${myTasks().length > 1 ? 's' : ''} pour vous` : `${S.projects.filter((p) => p.statut !== 'termine').length} projets`, myTasks().filter((t) => tLate(t) || tToday(t)).length)}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
@@ -594,6 +594,8 @@ const inboxTodo = () => S.reg.inbox.filter((i) => i.status === 'a_traiter');
 const regBadge = () => scoped(inboxTodo()).length + scoped(presentOcc()).filter((o) => pecState(o).c === 'red').length;
 // Restauration : repas seuls, toujours facturés sur l'Hôtel de Paris.
 const isResto = (o) => o.formule === 'restauration';
+// Compte « logés » et « restauration » séparément : on ne les additionne jamais.
+const occCount = (L) => { const r = L.filter(isResto).length, h = L.length - r; return `${h} logé${h > 1 ? 's' : ''}${r ? ` · ${r} resto` : ''}`; };
 const occPlace = (o) => { if (isResto(o)) return 'restauration'; const r = o.room_id && S.rooms[o.room_id]; return r ? placeShort(r) : 'sans chambre'; };
 // Fins de PEC : orange à moins d'une semaine, rouge une fois dépassée ; un brouillon de relance est préparé dans Gmail.
 const lastPec = (o) => pecsOf(o.id).filter((p) => p.fin).sort((a, b) => String(b.fin).localeCompare(String(a.fin)))[0] || null;
@@ -639,7 +641,7 @@ function regRooms() {
   const lite = (o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}${o.notes ? `<span class="muted">${esc(o.notes)}</span>` : ''}</span></button>`;
   const row = (r) => { const os = occOfRoom(r.id);
     return `<button class="prow" data-a="regRoom" data-id="${r.id}"><span class="pr-t"><b>${esc(placeName(r))}</b>${os.length ? os.map(occLine).join('') : (r.blocked ? `<span class="muted">⛔ ${esc(r.blockReason || '')}</span>` : '')}</span>${os.length ? '' : `<span class="pill ${r.blocked ? 'p-plain' : 'p-slate'}">${r.blocked ? 'Bloquée' : 'Libre'}</span>`}</button>`; };
-  return `${hotelSeg()}<div class="chips"><span class="chip c-accent">Présents <b>${occ.length}</b></span><span class="chip c-slate">Chambres libres <b>${free}</b></span>${S.hotel === 'par' ? `<span class="chip c-amber">Restauration <b>${resto.length}</b></span>` : ''}</div>
+  return `${hotelSeg()}<div class="chips"><span class="chip c-accent">Logés <b>${occ.length - resto.length}</b></span><span class="chip c-slate">Chambres libres <b>${free}</b></span>${S.hotel === 'par' ? `<span class="chip c-amber">Restauration <b>${resto.length}</b></span>` : ''}</div>
     <div class="group">${rooms.map(row).join('')}</div>
     ${S.hotel === 'par' ? `<h2 class="sec">Restauration</h2><p class="muted">Repas seuls, sans chambre. Facturés sur l’Hôtel de Paris.</p>${resto.length ? `<div class="group">${resto.map(lite).join('')}</div>` : '<p class="muted">Personne pour l’instant.</p>'}` : ''}
     ${none.length ? `<h2 class="sec">Sans chambre</h2><p class="muted">À replacer dans une chambre.</p><div class="group">${none.map(lite).join('')}</div>` : ''}`;
@@ -1511,7 +1513,7 @@ function viewBrico() {
       <button class="tile" data-a="go" data-k="issues"><span class="ti-ic t-orange">${ico('tool')}</span>${open.length ? `<span class="badge">${open.length}</span>` : ''}<span class="ti-t">Réparations</span><span class="ti-s">${open.length ? open.length + ' en attente' : 'Rien à réparer'}</span></button>
       <button class="tile" data-a="go" data-k="securite"><span class="ti-ic t-red">${ico('shield')}</span>${secDueBrico().length ? `<span class="badge">${secDueBrico().length}</span>` : ''}<span class="ti-t">Sécurité</span><span class="ti-s">${secDueBrico().length ? secDueBrico().length + ' contrôle' + (secDueBrico().length > 1 ? 's' : '') + ' à faire' : 'Contrôles faits'}</span></button>
       <button class="tile" data-a="go" data-k="menage"><span class="ti-ic t-blue">${ico('menage')}</span><span class="ti-t">Ménage</span><span class="ti-s">Qui a nettoyé quoi</span></button>
-      ${canReg('reg_pec') ? `<button class="tile" data-a="go" data-k="registre"><span class="ti-ic t-purple">${ico('book')}</span>${inboxTodo().length ? `<span class="badge">${inboxTodo().length}</span>` : ''}<span class="ti-t">Registre</span><span class="ti-s">${inboxTodo().length ? inboxTodo().length + ' PEC à traiter' : presentOcc().length + ' présents'}</span></button>` : ''}
+      ${canReg('reg_pec') ? `<button class="tile" data-a="go" data-k="registre"><span class="ti-ic t-purple">${ico('book')}</span>${inboxTodo().length ? `<span class="badge">${inboxTodo().length}</span>` : ''}<span class="ti-t">Registre</span><span class="ti-s">${inboxTodo().length ? inboxTodo().length + ' PEC à traiter' : occCount(presentOcc())}</span></button>` : ''}
       <button class="tile" data-a="convList"><span class="ti-ic t-green">${ico('chat')}</span>${un ? `<span class="badge">${un}</span>` : ''}<span class="ti-t">Messages</span><span class="ti-s">${un ? un + ' non lu' + (un > 1 ? 's' : '') : 'Tout est lu'}</span></button>
       ${canPresta() ? `<button class="tile" data-a="go" data-k="contacts"><span class="ti-ic t-brown">${ico('phone')}</span><span class="ti-t">Prestataires</span><span class="ti-s">Électriciens, alarme…</span></button>` : ''}
       <button class="tile" data-a="repNew"><span class="ti-ic t-red">${ico('plus')}</span><span class="ti-t">Nouvelle</span><span class="ti-s">réparation</span></button>
