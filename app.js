@@ -38,7 +38,7 @@ const LS = {
 };
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
-  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
+  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, verif: { lignes: [], log: [], mois: [] }, vMois: null, vf: 'a_verifier', vHist: false, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
   hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [], docs: [], mail: [] }, sl: null, sd: null, docBlobs: {}, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), ptKind: LS.get('mh-ptk', 'jour'), ptLang: LS.get('mh-ptl', 'ar'), ptVoice: LS.get('mh-ptv', ''), points: [], pointSubs: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
@@ -158,7 +158,7 @@ const ERR = {
   not_yours: 'Cette chambre n’est plus à toi.', not_started: 'Touche d’abord « Je commence ».', photos_missing: 'Il manque des photos.',
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
   readonly: 'Lecture seule : vous pouvez tout regarder, mais rien n’est modifié. Demandez à Abdullah.',
-  reason: 'Indique la raison.', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
+  reason: 'Indique la raison.', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
 };
 // Comptes en lecture seule : tout est visible, seules ces actions passent (lire, messages, notifications).
 const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info'];
@@ -199,6 +199,7 @@ async function refresh(force) {
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
+      S.verif = d.verif || { lignes: [], log: [], mois: [] };
       S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || [];
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
@@ -482,6 +483,7 @@ const ICO = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   phone: '<path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/>',
   eye: '<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>',
+  cal: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/><path d="M9 16l2 2 4-4"/>',
 };
 const ico = (k, cls) => `<svg class="ico ${cls || ''}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICO[k] || ''}</svg>`;
 
@@ -491,6 +493,7 @@ const SECTIONS = {
   registre: { t: 'Registre', i: 'book', c: 't-purple' }, securite: { t: 'Sécurité', i: 'shield', c: 't-red' },
   msgs: { t: 'Messages', i: 'chat', c: 't-green' }, projets: { t: 'Projets', i: 'check', c: 't-teal' },
   team: { t: 'Équipe', i: 'users', c: 't-indigo' }, contacts: { t: 'Contacts', i: 'phone', c: 't-brown' }, settings: { t: 'Réglages', i: 'sliders', c: 't-gray' },
+  verif: { t: 'Dates à vérifier', i: 'cal', c: 't-pink' },
 };
 const scoped = (list) => list.filter(inScope);
 function viewManager() {
@@ -505,6 +508,7 @@ function viewManager() {
   else if (S.tab === 'contacts') { body = viewContacts(); right = `<button class="nb-act" data-a="ctNew" aria-label="Nouveau contact">${ico('plus')}</button>`; }
   else if (S.tab === 'msgs') { body = viewThreads(); right = `<button class="nb-act" data-a="newMsg" aria-label="Nouveau message">${ico('plus')}</button>`; }
   else if (S.tab === 'team') { body = viewTeam(); right = `<button class="nb-act" data-a="personNew" aria-label="Ajouter une personne">${ico('plus')}</button>`; }
+  else if (S.tab === 'verif') { body = viewVerif(); }
   else body = viewSettings();
   return `${navBar(SECTIONS[S.tab].t, right)}<div class="wrap">${body}</div>
     ${S.tab !== 'msgs' && !S.sel.size && unread ? `<button class="bubble ping" data-a="convList" aria-label="Messages, ${unread} non lus">💬<span class="badge">${unread}</span></button>` : ''}`;
@@ -553,6 +557,7 @@ function viewHome() {
       ${tile('menage', c.todo ? `${c.todo} à faire` : (c.late ? `${c.late} partie${c.late > 1 ? 's' : ''} commune${c.late > 1 ? 's' : ''} en retard` : 'Tout est propre'), c.check + c.plan)}
       ${tile('issues', c.open ? `${c.open} à faire ou en cours` : 'Rien à réparer', c.newIss)}
       ${tile('registre', finsCount() ? `<span class="ora">${finsCount()} fin${finsCount() > 1 ? 's' : ''} de PEC à suivre</span>` : occCount(presentOcc().filter(inScope)), regBadge())}${secTile()}
+      ${vTile()}
       ${tile('msgs', un ? `${un} non lu${un > 1 ? 's' : ''}` : 'Tout est lu', un)}
       ${tile('projets', myTasks().length ? `${myTasks().length} tâche${myTasks().length > 1 ? 's' : ''} pour vous` : `${S.projects.filter((p) => p.statut !== 'termine').length} projets`, myTasks().filter((t) => tLate(t) || tToday(t)).length)}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
@@ -1490,15 +1495,151 @@ function pointSubSheet(id) {
       <button class="btn pri" data-a="ptSubSave" data-id="${id}">Enregistrer</button></div>`);
 }
 
+/* ----- vérification des dates avant facturation (gérants, associés, intendant) ----- */
+// Une ligne par personne et par mois. Chaque validation ou modification est signée par le compte connecté.
+const canVerif = () => !!S.me && (isMgr() || S.me.role === 'bricoleur') && !S.me.readonly;
+const seeVerif = () => !!S.me && (isMgr() || S.me.role === 'bricoleur');
+const VGRP = {
+  mna: { t: 'MNA et ASE logés', s: 'Hôtel de Paris et annexe Châteaudun · nuits, petits déjeuners et repas' },
+  resto: { t: 'Repas seuls (MNA)', s: 'Hôtel de Paris · midi et soir' },
+  pari_par: { t: 'PARI · Hôtel de Paris', s: 'Hôtel de Paris et annexe · nuits et petits déjeuners' },
+  pari_arc: { t: 'PARI · Archange', s: 'Nuits et petits déjeuners' },
+  eai: { t: 'EAI · Archange', s: 'Nuits' },
+};
+// Vacances scolaires (repas du midi pris en semaine pendant les vacances) : à compléter chaque année.
+const VACANCES = [['2026-10-17', '2026-11-01']];
+const MOIS_L = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const moisLabel = (m) => m ? `${MOIS_L[Number(m.slice(5, 7)) - 1]} ${m.slice(0, 4)}` : '';
+const vMonthEnd = (m) => { const [y, mo] = m.split('-').map(Number); return `${m}-${String(new Date(y, mo, 0).getDate()).padStart(2, '0')}`; };
+const vEach = (a, b, fn) => { if (!a || !b) return; let d = a; while (d <= b) { fn(d); d = addDaysISO(d, 1); } };
+const vNights = (l) => { let n = 0; if (l.heberge && !l.absent) vEach(l.heb_debut, l.heb_fin, () => n++); return n; };
+function vMeals(l) {
+  let n = 0; if (!l.repas || l.absent) return 0;
+  vEach(l.rep_debut, l.rep_fin, (d) => {
+    if (l.repas_regle !== 'soir_et_midi_mer_we') { n += 2; return; }
+    const wd = new Date(d + 'T12:00:00').getDay(), vac = VACANCES.some(([a, b]) => d >= a && d <= b);
+    n += 1 + ((vac || wd === 0 || wd === 3 || wd === 6) ? 1 : 0);
+  });
+  return n;
+}
+// Jours de présence en dehors de la prise en charge (non facturables tant qu'aucune PEC ne les couvre).
+function vOutPec(l) {
+  if (l.absent || (!l.pec_debut && !l.pec_fin)) return { n: 0, r: 0 };
+  const out = (d) => (l.pec_debut && d < l.pec_debut) || (l.pec_fin && d > l.pec_fin);
+  let n = 0, r = 0;
+  if (l.heberge) vEach(l.heb_debut, l.heb_fin, (d) => { if (out(d)) n++; });
+  if (l.repas) vEach(l.rep_debut, l.rep_fin, (d) => { if (out(d)) r++; });
+  return { n, r };
+}
+const vMonths = () => [...new Set(S.verif.lignes.map((l) => l.mois))].sort().reverse();
+const vCurMonth = () => { const ms = vMonths(); return ms.includes(S.vMois) ? S.vMois : (ms[0] || null); };
+const vLines = (m) => S.verif.lignes.filter((l) => l.mois === m).sort((a, b) => a.ord - b.ord || String(a.nom).localeCompare(String(b.nom), 'fr'));
+const vTodo = (m) => vLines(m || vCurMonth()).filter((l) => l.statut !== 'valide');
+const vDone = (m) => { const r = S.verif.mois.find((x) => x.mois === m); return !!(r && r.complete_at); };
+const vSpanTxt = (a, b) => a && b ? (a === b ? `le ${fdate(a).slice(0, 5)}` : `du ${fdate(a).slice(0, 5)} au ${fdate(b).slice(0, 5)}`) : 'aucun';
+function vLineCard(l) {
+  const ro = !canVerif(), ok = l.statut === 'valide', nn = vNights(l), nr = vMeals(l), op = vOutPec(l);
+  const dates = l.absent ? '<p><b>Absent(e) tout le mois</b></p>' : `
+    ${l.heberge ? `<p>🛏️ Nuits ${vSpanTxt(l.heb_debut, l.heb_fin)} · <b>${nn}</b> nuit${nn > 1 ? 's' : ''}</p>` : ''}
+    ${l.repas ? `<p>🍽️ Repas ${vSpanTxt(l.rep_debut, l.rep_fin)} · <b>${nr}</b> repas${l.repas_regle === 'soir_et_midi_mer_we' ? ' <span class="muted sm">(midis selon PEC)</span>' : ''}</p>` : (l.groupe === 'resto' ? '' : '<p class="muted sm">Repas : non pris en charge</p>')}`;
+  const pec = `<p class="muted sm">PEC ${l.pec_ref ? esc(l.pec_ref) + ' · ' : ''}${l.pec_debut ? 'du ' + fdate(l.pec_debut) : ''}${l.pec_fin ? ' au ' + fdate(l.pec_fin) : ''}${op.n || op.r ? ` · <span class="ora">${[op.n ? op.n + ' nuit' + (op.n > 1 ? 's' : '') : '', op.r ? op.r + ' jour' + (op.r > 1 ? 's' : '') + ' de repas' : ''].filter(Boolean).join(' et ')} hors PEC</span>` : ''}</p>`;
+  const sig = [l.validated_label && ok ? `✓ Validé par <b>${esc(l.validated_label)}</b> · ${when(l.validated_at)}` : '', l.updated_label ? `✎ Modifié par <b>${esc(l.updated_label)}</b> · ${when(l.updated_at)}` : ''].filter(Boolean);
+  return `<div class="card vline ${ok ? 'ok' : ''}">
+    <div class="row between"><h3>${esc(occName(l))}</h3><span class="pill p-${ok ? 'green' : 'slate'}">${ok ? 'Validé' : 'À vérifier'}</span></div>
+    <p class="muted">${esc(l.lieu || '')}</p>${dates}${pec}
+    ${l.alerte && !ok ? `<div class="banner c-amber sm">${esc(l.alerte)}</div>` : (l.alerte ? `<p class="muted sm">⚠️ ${esc(l.alerte)}</p>` : '')}
+    ${sig.length ? `<p class="sm">${sig.join('<br>')}</p>` : ''}
+    <div class="row">${ro ? '' : (ok ? '' : `<button class="btn small pri" data-a="vOk" data-id="${l.id}">✓ Valider</button>`)}
+      ${ro ? '' : `<button class="btn small soft" data-a="vEdit" data-id="${l.id}">Modifier</button>`}
+      ${!ro && ok ? `<button class="btn small ghost" data-a="vUndo" data-id="${l.id}">Retirer la validation</button>` : ''}
+      <button class="btn small ghost" data-a="vEdit" data-id="${l.id}" data-k="hist">Historique</button></div></div>`;
+}
+function vRecap(m) {
+  const L = vLines(m), done = vTodo(m).length === 0;
+  const grp = (g) => {
+    const rows = L.filter((l) => l.groupe === g && !l.absent); if (!rows.length) return '';
+    const tn = rows.reduce((s, l) => s + vNights(l), 0), tr = rows.reduce((s, l) => s + vMeals(l), 0);
+    const outs = rows.map((l) => ({ l, o: vOutPec(l) })).filter((x) => x.o.n || x.o.r);
+    return `<div class="card"><h3>${VGRP[g].t}</h3><p class="muted sm">${VGRP[g].s}</p>
+      <div class="group flat">${rows.map((l) => `<div class="prow ro"><span class="pr-t"><b>${esc(occName(l))}</b><span class="muted sm">${l.heberge ? vNights(l) + ' nuit' + (vNights(l) > 1 ? 's' : '') + ' · ' + vSpanTxt(l.heb_debut, l.heb_fin) : ''}${l.heberge && l.repas ? ' · ' : ''}${l.repas ? vMeals(l) + ' repas · ' + vSpanTxt(l.rep_debut, l.rep_fin) : ''}</span></span><span class="pill p-${l.statut === 'valide' ? 'green' : 'slate'}">${l.statut === 'valide' ? '✓' : 'à vérifier'}</span></div>`).join('')}</div>
+      <p><b>${rows.length} personne${rows.length > 1 ? 's' : ''}</b>${tn ? ` · <b>${tn}</b> nuits` : ''}${tr ? ` · <b>${tr}</b> repas` : ''}</p>
+      ${outs.length ? `<div class="banner c-amber sm">Hors PEC, à ne pas facturer sans nouvelle PEC : ${outs.map((x) => `${esc(occName(x.l))} (${[x.o.n ? x.o.n + ' nuit' + (x.o.n > 1 ? 's' : '') : '', x.o.r ? x.o.r + ' j. de repas' : ''].filter(Boolean).join(', ')})`).join(' · ')}</div>` : ''}</div>`;
+  };
+  const absents = L.filter((l) => l.absent);
+  return `${done ? `<div class="banner c-green">✅ Tout est vérifié pour ${moisLabel(m)}. Ce récapitulatif sert à confirmer les factures.</div>` : `<div class="banner c-slate">Récapitulatif provisoire : ${vTodo(m).length} ligne${vTodo(m).length > 1 ? 's' : ''} encore à vérifier.</div>`}
+    ${Object.keys(VGRP).map(grp).join('')}
+    ${absents.length ? `<div class="card"><h3>Absents ce mois-ci</h3><p>${absents.map((l) => esc(occName(l))).join(', ')}</p></div>` : ''}`;
+}
+function viewVerif() {
+  const m = vCurMonth();
+  if (!m) return '<div class="card empty"><div class="e">📅</div><h3>Rien à vérifier pour l’instant</h3></div>';
+  const L = vLines(m), todo = vTodo(m), ms = vMonths();
+  const subs = [['a_verifier', 'À vérifier', todo.length], ['valide', 'Validées', L.length - todo.length], ['recap', 'Récap', 0], ['journal', 'Journal', 0]];
+  const f = subs.some(([k]) => k === S.vf) ? S.vf : 'a_verifier';
+  let body = '';
+  if (f === 'recap') body = vRecap(m);
+  else if (f === 'journal') body = `<p class="muted">Qui a validé ou modifié quoi, et quand.</p><div class="group">${S.verif.log.filter((x) => x.mois === m).map((x) => `<div class="prow ro"><span class="pr-t"><b>${esc(x.action)} · ${esc(x.cible || '')}</b><span class="muted">${esc(x.by_label || '?')} · ${when(x.ts)}${x.details ? ' · ' + esc(x.details) : ''}${x.raison ? ' · « ' + esc(x.raison) + ' »' : ''}</span></span></div>`).join('') || '<p class="muted" style="padding:14px">Rien pour l’instant.</p>'}</div>`;
+  else {
+    const rows = L.filter((l) => f === 'valide' ? l.statut === 'valide' : l.statut !== 'valide');
+    body = rows.length ? Object.keys(VGRP).map((g) => { const r = rows.filter((l) => l.groupe === g); return r.length ? `<h2 class="sec">${VGRP[g].t} · ${r.length}</h2><div class="col">${r.map(vLineCard).join('')}</div>` : ''; }).join('')
+      : `<div class="card empty"><div class="e">${f === 'valide' ? '📋' : '✅'}</div><h3>${f === 'valide' ? 'Aucune ligne validée' : 'Tout est vérifié'}</h3>${f === 'valide' ? '' : '<button class="btn soft" data-a="vf" data-k="recap">Voir le récapitulatif</button>'}</div>`;
+  }
+  const pct = L.length ? Math.round(100 * (L.length - todo.length) / L.length) : 0;
+  return `${ms.length > 1 ? `<div class="segc" role="group" aria-label="Mois">${ms.map((x) => `<button data-a="vMois" data-k="${x}" aria-pressed="${x === m}">${moisLabel(x)}</button>`).join('')}</div>` : ''}
+    <div class="card"><div class="row between"><h3>${moisLabel(m).replace(/^./, (c) => c.toUpperCase())}</h3><b>${L.length - todo.length} / ${L.length}</b></div>
+      <div class="prog"><i style="width:${pct}%"></i></div>
+      <p class="muted sm">Vérifiez pour chaque personne la première et la dernière nuit du mois, et les jours de repas. Chaque validation est signée avec votre nom. Une date corrigée met aussi à jour le registre.</p></div>
+    <div class="segc" role="group" aria-label="Filtre">${subs.map(([k, l, n]) => `<button data-a="vf" data-k="${k}" aria-pressed="${f === k}">${l}${n ? ` <span class="badge sm">${n}</span>` : ''}</button>`).join('')}</div>
+    ${body}
+    ${canVerif() && f !== 'journal' && f !== 'recap' ? '<button class="btn ghost" data-a="vAdd">＋ Ajouter une personne oubliée</button>' : ''}`;
+}
+function verifSheet(id, hist) {
+  const l = S.verif.lignes.find((x) => x.id === id); if (!l) return closeSheet();
+  const min = l.mois + '-01', max = vMonthEnd(l.mois), ro = !canVerif();
+  const logs = S.verif.log.filter((x) => x.ligne_id === id); S.vHist = !!hist;
+  const di = (k, v) => `<input id="v-${k}" type="date" min="${min}" max="${max}" value="${esc(v || '')}">`;
+  openSheet('verif:' + id, `${sheetHead(esc(occName(l)))}
+    <p class="muted">${esc(l.lieu || '')} · ${moisLabel(l.mois)}</p>
+    ${l.alerte ? `<div class="banner c-amber sm">${esc(l.alerte)}</div>` : ''}
+    ${hist || ro ? '' : `<fieldset class="card form">
+      <label class="vchk"><input id="v-absent" type="checkbox" ${l.absent ? 'checked' : ''}> Pas présent(e) ce mois-ci</label>
+      ${l.heberge ? `<p class="vcap">🛏️ Nuits</p><div class="two"><label>Première nuit${di('hd', l.heb_debut || min)}</label><label>Dernière nuit${di('hf', l.heb_fin || max)}</label></div><p class="muted sm">La dernière nuit est la veille du départ.</p>` : ''}
+      ${l.repas ? `<p class="vcap">🍽️ Repas</p><div class="two"><label>Premier jour${di('rd', l.rep_debut || min)}</label><label>Dernier jour${di('rf', l.rep_fin || max)}</label></div>${l.repas_regle === 'soir_et_midi_mer_we' ? '<p class="muted sm">Repas du midi comptés selon sa PEC (mercredi, samedi, dimanche et vacances).</p>' : '<p class="muted sm">Midi et soir chaque jour.</p>'}` : ''}
+      <label>Pourquoi ce changement ?<input id="v-raison" placeholder="Ex. : parti le matin du 8, vu par Fadma"></label>
+      <button class="btn pri" data-a="vSave" data-id="${l.id}">Enregistrer et valider</button></fieldset>`}
+    <div class="card"><h3>Historique</h3>${logs.length ? `<div class="group flat">${logs.map((x) => `<div class="prow ro"><span class="pr-t"><b>${esc(x.action)} par ${esc(x.by_label || '?')}</b><span class="muted sm">${when(x.ts)}${x.details ? ' · ' + esc(x.details) : ''}${x.raison ? ' · « ' + esc(x.raison) + ' »' : ''}</span></span></div>`).join('')}</div>` : '<p class="muted">Pas encore de validation ni de modification.</p>'}</div>`);
+}
+function verifAddSheet() {
+  const m = vCurMonth(); if (!m) return;
+  const min = m + '-01', max = vMonthEnd(m);
+  openSheet('verifAdd', `${sheetHead('Personne oubliée')}
+    <p class="muted">${moisLabel(m)} · la ligne est ajoutée et validée à votre nom.</p>
+    <fieldset class="card form">
+      <label>Facture<select id="va-g">${Object.keys(VGRP).map((g) => opt(g, 'mna', VGRP[g].t)).join('')}</select></label>
+      <div class="two"><label>Prénom<input id="va-prenom"></label><label>Nom<input id="va-nom"></label></div>
+      <div class="two"><label>Naissance<input id="va-naiss" type="date"></label><label>Hôtel et chambre<input id="va-lieu" placeholder="Ex. : Hôtel de Paris · ch. 4"></label></div>
+      <p class="vcap">🛏️ Nuits (sauf repas seuls)</p><div class="two"><label>Première nuit<input id="va-hd" type="date" min="${min}" max="${max}" value="${min}"></label><label>Dernière nuit<input id="va-hf" type="date" min="${min}" max="${max}" value="${max}"></label></div>
+      <p class="vcap">🍽️ Repas (MNA et ASE, repas seuls)</p><div class="two"><label>Premier jour<input id="va-rd" type="date" min="${min}" max="${max}" value="${min}"></label><label>Dernier jour<input id="va-rf" type="date" min="${min}" max="${max}" value="${max}"></label></div>
+      <label>Pourquoi ?<input id="va-raison" placeholder="Ex. : logée du 3 au 9, PEC reçue par mail"></label>
+      <button class="btn pri" data-a="vAddSave">Ajouter</button></fieldset>`);
+}
+
+// Tuile d'accueil : affichée seulement s'il y a un mois à vérifier.
+function vTile() {
+  const m = vCurMonth(); if (!m || !seeVerif()) return '';
+  const n = vTodo(m).length;
+  return tile('verif', n ? `${n} à vérifier · ${moisLabel(m)}` : `${moisLabel(m)} · tout est vérifié`, n);
+}
+
 // Bandeau affiché quand un gérant utilise l'appli comme une femme de ménage ou l'intendant.
 const pvBar = () => S.preview ? `<div class="pvbar"><span>👁 Vue ${S.preview === 'brico' ? 'intendant' : 'femme de ménage'} · ce que vous faites ici compte vraiment</span><button class="btn small" data-a="unpreview">Revenir</button></div>` : '';
 /* ----- bricoleur : réparations + ménage en lecture ----- */
 function viewBrico() {
   const un = unreadTotal(), open = S.issues.filter((i) => repEtat(i) !== 'fait'), todo = open.filter((i) => repEtat(i) === 'a_faire'), urg = open.filter((i) => i.priority === 'urgent').length;
-  if (S.tab === 'issues' || S.tab === 'menage' || S.tab === 'securite' || (S.tab === 'contacts' && canPresta()) || (S.tab === 'registre' && canReg('reg_pec'))) {
-    const body = S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : (S.tab === 'contacts' ? viewContacts() : (S.tab === 'securite' ? viewSecBrico() : viewMenageRead())));
+  if (S.tab === 'issues' || S.tab === 'menage' || S.tab === 'securite' || (S.tab === 'contacts' && canPresta()) || (S.tab === 'registre' && canReg('reg_pec')) || S.tab === 'verif') {
+    const body = S.tab === 'verif' ? viewVerif() : S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : (S.tab === 'contacts' ? viewContacts() : (S.tab === 'securite' ? viewSecBrico() : viewMenageRead())));
     const right = S.tab === 'issues' ? `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>` : (S.tab === 'registre' && canReg('reg_full') ? `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>` : '');
-    return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre', contacts: 'Prestataires', securite: 'Contrôles sécurité' }[S.tab], right)}<div class="wrap">${pvBar()}${body}</div>
+    return `${navBar({ issues: 'Réparations', menage: 'Ménage', registre: 'Registre', contacts: 'Prestataires', securite: 'Contrôles sécurité', verif: 'Dates à vérifier' }[S.tab], right)}<div class="wrap">${pvBar()}${body}</div>
       <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' non lus' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
   }
   const [, gt] = greet(), myClean = myCleanings();
@@ -1514,6 +1655,7 @@ function viewBrico() {
       <button class="tile" data-a="go" data-k="securite"><span class="ti-ic t-red">${ico('shield')}</span>${secDueBrico().length ? `<span class="badge">${secDueBrico().length}</span>` : ''}<span class="ti-t">Sécurité</span><span class="ti-s">${secDueBrico().length ? secDueBrico().length + ' contrôle' + (secDueBrico().length > 1 ? 's' : '') + ' à faire' : 'Contrôles faits'}</span></button>
       <button class="tile" data-a="go" data-k="menage"><span class="ti-ic t-blue">${ico('menage')}</span><span class="ti-t">Ménage</span><span class="ti-s">Qui a nettoyé quoi</span></button>
       ${canReg('reg_pec') ? `<button class="tile" data-a="go" data-k="registre"><span class="ti-ic t-purple">${ico('book')}</span>${inboxTodo().length ? `<span class="badge">${inboxTodo().length}</span>` : ''}<span class="ti-t">Registre</span><span class="ti-s">${inboxTodo().length ? inboxTodo().length + ' PEC à traiter' : occCount(presentOcc())}</span></button>` : ''}
+      ${vTile()}
       <button class="tile" data-a="convList"><span class="ti-ic t-green">${ico('chat')}</span>${un ? `<span class="badge">${un}</span>` : ''}<span class="ti-t">Messages</span><span class="ti-s">${un ? un + ' non lu' + (un > 1 ? 's' : '') : 'Tout est lu'}</span></button>
       ${canPresta() ? `<button class="tile" data-a="go" data-k="contacts"><span class="ti-ic t-brown">${ico('phone')}</span><span class="ti-t">Prestataires</span><span class="ti-s">Électriciens, alarme…</span></button>` : ''}
       <button class="tile" data-a="repNew"><span class="ti-ic t-red">${ico('plus')}</span><span class="ti-t">Nouvelle</span><span class="ti-s">réparation</span></button>
@@ -1803,6 +1945,7 @@ function refreshSheet() {
   else if (S.sheet.startsWith('sec:') && !isTyping()) secSheet(S.sheet.slice(4));
   else if (S.sheet.startsWith('sd:') && !isTyping()) sdSheet(S.sheet.slice(3));
   else if (S.sheet.startsWith('proj:') && !isTyping()) projSheet(S.sheet.slice(5));
+  else if (S.sheet.startsWith('verif:') && !isTyping()) verifSheet(S.sheet.slice(6), S.vHist);
 }
 const sheetHead = (t) => `<div class="row between"><h2>${t}</h2><button class="btn small" data-a="close">Fermer</button></div>`;
 function roomSheet(id) {
@@ -1895,6 +2038,25 @@ const A = {
   sub(d) { S.sub = d.k; S.sel.clear(); if (d.k !== 'plan') S.proposal = null; render(); window.scrollTo(0, 0); },
   scope(d) { S.scope = d.k; LS.set('mh-scope', d.k); render(); },
   rsub(d) { S.rsub = d.k; render(); window.scrollTo(0, 0); },
+  vMois(d) { S.vMois = d.k; render(); window.scrollTo(0, 0); },
+  vf(d) { S.vf = d.k; render(); window.scrollTo(0, 0); },
+  async vOk(d) { await act(() => api('verif_validate', { id: d.id }), 'Validé ✓'); },
+  async vUndo(d) { await act(() => api('verif_unvalidate', { id: d.id }), 'Validation retirée'); },
+  vEdit(d) { verifSheet(d.id, d.k === 'hist'); },
+  async vSave(d) {
+    const v = (k) => { const el = $('v-' + k); return el ? el.value : null; };
+    const raison = (v('raison') || '').trim(); if (!raison) return toast('Indique la raison du changement.');
+    const r = { id: d.id, absent: !!($('v-absent') && $('v-absent').checked), heb_debut: v('hd'), heb_fin: v('hf'), rep_debut: v('rd'), rep_fin: v('rf'), raison };
+    let res = null;
+    if (await act(async () => { res = await api('verif_save', r); }, 'Enregistré et validé ✓')) { closeSheet(); if (res && res.registre) toast('Enregistré ✓ · registre mis à jour : ' + res.registre); }
+  },
+  vAdd() { verifAddSheet(); },
+  async vAddSave() {
+    const v = (k) => { const el = $('va-' + k); return el ? el.value.trim() : ''; };
+    if (!v('raison')) return toast('Indique pourquoi tu ajoutes cette personne.');
+    const r = { mois: vCurMonth(), groupe: v('g'), prenom: v('prenom'), nom: v('nom'), naissance: v('naiss') || null, lieu: v('lieu'), heb_debut: v('hd'), heb_fin: v('hf'), rep_debut: v('rd'), rep_fin: v('rf'), raison: v('raison') };
+    if (await act(() => api('verif_add', r), 'Ajouté et validé ✓')) closeSheet();
+  },
   rSortis() { S.rSortis = !S.rSortis; render(); },
   rDone() { S.rDone = !S.rDone; render(); },
   regRoom(d) { const os = occOfRoom(d.id); if (os.length === 1) occSheet(os[0].id); else if (!os.length) { if (canReg('reg_full')) occSheet(null, { hotel: S.rooms[d.id].hotel, room_id: d.id }); } else openSheet('roomocc', `${sheetHead(esc(placeName(S.rooms[d.id])))}<div class="group">${os.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}</span></button>`).join('')}</div>${canReg('reg_full') ? `<button class="btn" data-a="occNewRoom" data-id="${d.id}">＋ Ajouter quelqu’un dans cette chambre</button>` : ''}`); },

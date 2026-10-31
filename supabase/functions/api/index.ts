@@ -247,6 +247,7 @@ async function actState(me: any, device: any) {
     out.notes = await issueNotes(out.issues); out.notes.forEach((n: any) => paths.push(n.photo));
     out.contacts = (await sb.from("contacts").select("*").order("nom")).data || [];
     out.reg = await regState();
+    out.verif = await verifState();
     out.sec = await secState(me, paths);
     const [{ data: projects }, { data: tasks }] = await Promise.all([
       sb.from("projects").select("*").order("ord"),
@@ -279,6 +280,7 @@ async function actState(me: any, device: any) {
       out.sec = await secState(me, paths);
     }
     if (can(me, "reg_pec")) out.reg = await regState();
+    if (brico) out.verif = await verifState();
   }
   out.urls = await signUrls(paths);
   return out;
@@ -410,6 +412,130 @@ async function regAction(me: any, a: string, body: any) {
     return { ok: true, id: occId };
   }
   throw new E("unknown_action");
+}
+
+// ---------- vérification des dates avant facturation (gérants, associés et intendant) ----------
+// Une ligne par personne et par mois : nuits (première et dernière nuit du mois) et repas (premier et dernier jour).
+// Chaque validation ou modification est signée par le compte qui la fait ; une date corrigée met aussi à jour le registre.
+const canVerif = (me: any) => isMgr(me) || isBrico(me);
+const VGROUPES = ["mna", "resto", "pari_par", "pari_arc", "eai"];
+const frD = (d: string | null) => d ? d.split("-").reverse().join("/") : "—";
+const monthBounds = (mois: string) => { const [y, m] = mois.split("-").map(Number); const last = new Date(Date.UTC(y, m, 0)).getUTCDate(); return { start: `${mois}-01`, end: `${mois}-${String(last).padStart(2, "0")}` }; };
+const addDay = (iso: string, n: number) => { const d = new Date(iso + "T12:00:00Z"); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const MOIS_FR = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
+const moisFr = (mois: string) => `${MOIS_FR[Number(mois.slice(5, 7)) - 1]} ${mois.slice(0, 4)}`;
+const vName = (l: any) => [l.prenom, l.nom].filter(Boolean).join(" ") || "Sans nom";
+const vSpan = (a: string | null, b: string | null) => (a || b) ? `${frD(a).slice(0, 5)}–${frD(b).slice(0, 5)}` : "aucun";
+async function verifState() {
+  const since = new Date(Date.now() - 100 * 864e5).toISOString().slice(0, 7);
+  const [{ data: lignes }, { data: log }, { data: mois }] = await Promise.all([
+    sb.from("verif_dates").select("*").gte("mois", since).order("mois", { ascending: false }).order("ord"),
+    sb.from("verif_log").select("*").gte("mois", since).order("ts", { ascending: false }).limit(400),
+    sb.from("verif_mois").select("*").gte("mois", since),
+  ]);
+  return { lignes: lignes || [], log: log || [], mois: mois || [] };
+}
+async function verifLog(me: any, l: any, action: string, details = "", raison: string | null = null) {
+  await sb.from("verif_log").insert({ mois: l.mois, ligne_id: l.id, by_staff: me.id, by_label: String(me.label).split(" ")[0], action, cible: vName(l), details, raison: raison || "" });
+}
+// Tout est validé : on le note et on prévient le propriétaire (une seule fois tant que rien ne bouge).
+async function verifCheckDone(me: any, mois: string) {
+  const { data: rows } = await sb.from("verif_dates").select("statut").eq("mois", mois);
+  const left = (rows || []).filter((r: any) => r.statut !== "valide").length;
+  const { data: m } = await sb.from("verif_mois").select("*").eq("mois", mois).maybeSingle();
+  if (left === 0 && (rows || []).length) {
+    if (m && m.complete_at) return;
+    const now = new Date().toISOString();
+    await sb.from("verif_mois").upsert({ mois, complete_at: now, notified_at: now });
+    await sb.from("verif_log").insert({ mois, by_staff: me.id, by_label: String(me.label).split(" ")[0], action: "Tout est vérifié", cible: moisFr(mois), details: `${(rows || []).length} personnes` });
+    const { data: owners } = await sb.from("staff").select("id").eq("role", "owner").eq("active", true);
+    await pushTo((owners || []).map((o: any) => o.id), { title: `✅ Dates de ${moisFr(mois)} vérifiées`, body: `Les ${(rows || []).length} personnes sont validées. Le récapitulatif pour les factures est dans Ma Réception.`, tag: "verif" });
+  } else if (m && m.complete_at) {
+    await sb.from("verif_mois").update({ complete_at: null }).eq("mois", mois);
+  }
+}
+// Une date corrigée dans la vérification corrige aussi l'arrivée ou le départ dans le registre (avec trace dans le journal).
+async function verifSyncRegistre(me: any, l: any, raison: string) {
+  if (!l.occupant_id || l.absent) return "";
+  const { data: o } = await sb.from("occupants").select("*").eq("id", l.occupant_id).maybeSingle(); if (!o) return "";
+  const { start, end } = monthBounds(l.mois);
+  const d0 = l.heberge ? l.heb_debut : l.rep_debut, d1 = l.heberge ? l.heb_fin : l.rep_fin;
+  const why = `Vérification des dates de ${moisFr(l.mois)}${raison ? " : " + raison : ""}`;
+  const now = new Date().toISOString(); const done: string[] = [];
+  const place = await placeLabel(o.room_id, o.hotel, o.formule);
+  if (d0 && d0 > start && o.entree !== d0) {
+    await sb.from("occupants").update({ entree: d0, updated_at: now, updated_by: me.id }).eq("id", o.id);
+    await regLog(me, "Fiche modifiée", o.id, `${fullName(o)} · ${place}`, why, `arrivée ${frD(o.entree)} → ${frD(d0)}`); done.push("arrivée");
+  }
+  if (d1 && d1 < end) {
+    const sortie = addDay(d1, 1);
+    if (o.statut !== "sorti" || o.sortie !== sortie) {
+      await sb.from("occupants").update({ statut: "sorti", sortie, updated_at: now, updated_by: me.id }).eq("id", o.id);
+      await regLog(me, "Départ", o.id, `${fullName(o)} · ${place}`, why, `le ${frD(sortie)}${o.sortie && o.sortie !== sortie ? ` (au lieu du ${frD(o.sortie)})` : ""}`); done.push("départ");
+    }
+  } else if (d1 === end && o.statut === "sorti" && o.sortie && o.sortie <= addDay(end, 1)) {
+    await sb.from("occupants").update({ statut: "present", sortie: null, updated_at: now, updated_by: me.id }).eq("id", o.id);
+    await regLog(me, "Départ annulé", o.id, fullName(o), why); done.push("départ annulé");
+  }
+  return done.join(", ");
+}
+async function verifAction(me: any, a: string, body: any) {
+  if (!canVerif(me)) throw new E("forbidden", 403);
+  const now = new Date().toISOString(); const who = String(me.label).split(" ")[0];
+  const raison = S_(body.raison, 300);
+  if (a === "verif_add") {
+    const mois = /^\d{4}-\d{2}$/.test(String(body.mois)) ? String(body.mois) : null; if (!mois) throw new E("bad");
+    const groupe = VGROUPES.includes(body.groupe) ? body.groupe : null; if (!groupe) throw new E("bad");
+    if (!raison) throw new E("reason");
+    const heberge = groupe !== "resto", repas = groupe === "mna" || groupe === "resto";
+    const row: any = { mois, groupe, ord: 90, nom: S_(body.nom, 80), prenom: S_(body.prenom, 80), naissance: D_(body.naissance), hotel: groupe === "pari_arc" || groupe === "eai" ? "arc" : (HOTELS.includes(body.hotel) ? body.hotel : "par"), lieu: S_(body.lieu, 80) || (groupe === "resto" ? "Hôtel de Paris · restauration" : ""), heberge, repas, alerte: "Ajouté pendant la vérification." };
+    if (!row.nom && !row.prenom) throw new E("bad");
+    Object.assign(row, verifDates(mois, body, heberge, repas));
+    Object.assign(row, { statut: "valide", validated_by: me.id, validated_label: who, validated_at: now, updated_by: me.id, updated_label: who, updated_at: now });
+    const { data, error } = await sb.from("verif_dates").insert(row).select("*").single(); if (error) throw new E("db");
+    await verifLog(me, data, "Ajouté", `nuits ${vSpan(data.heb_debut, data.heb_fin)} · repas ${vSpan(data.rep_debut, data.rep_fin)}`, raison);
+    await verifCheckDone(me, mois);
+    return { ok: true, id: data.id };
+  }
+  const { data: l } = await sb.from("verif_dates").select("*").eq("id", String(body.id || "")).maybeSingle(); if (!l) throw new E("bad");
+  if (a === "verif_validate") {
+    await sb.from("verif_dates").update({ statut: "valide", validated_by: me.id, validated_label: who, validated_at: now }).eq("id", l.id);
+    await verifLog(me, l, "Validé", l.absent ? "absent(e) ce mois-ci" : [l.heberge ? `nuits ${vSpan(l.heb_debut, l.heb_fin)}` : "", l.repas ? `repas ${vSpan(l.rep_debut, l.rep_fin)}` : ""].filter(Boolean).join(" · "));
+    await verifCheckDone(me, l.mois);
+    return { ok: true };
+  }
+  if (a === "verif_unvalidate") {
+    await sb.from("verif_dates").update({ statut: "a_verifier", validated_by: null, validated_label: null, validated_at: null }).eq("id", l.id);
+    await verifLog(me, l, "Validation retirée", "", raison);
+    await verifCheckDone(me, l.mois);
+    return { ok: true };
+  }
+  if (a === "verif_save") {
+    if (!raison) throw new E("reason");
+    const nd: any = verifDates(l.mois, body, l.heberge, l.repas);
+    const ch: string[] = [];
+    if (nd.absent !== l.absent) ch.push(nd.absent ? "marqué(e) absent(e) ce mois-ci" : "présent(e) ce mois-ci");
+    if (l.heberge && (nd.heb_debut !== l.heb_debut || nd.heb_fin !== l.heb_fin)) ch.push(`nuits ${vSpan(l.heb_debut, l.heb_fin)} → ${vSpan(nd.heb_debut, nd.heb_fin)}`);
+    if (l.repas && (nd.rep_debut !== l.rep_debut || nd.rep_fin !== l.rep_fin)) ch.push(`repas ${vSpan(l.rep_debut, l.rep_fin)} → ${vSpan(nd.rep_debut, nd.rep_fin)}`);
+    if (!ch.length) throw new E("nochange");
+    await sb.from("verif_dates").update({ ...nd, statut: "valide", validated_by: me.id, validated_label: who, validated_at: now, updated_by: me.id, updated_label: who, updated_at: now }).eq("id", l.id);
+    const synced = await verifSyncRegistre(me, { ...l, ...nd }, raison || "");
+    await verifLog(me, l, "Modifié", ch.join(" · ") + (synced ? ` · registre mis à jour (${synced})` : ""), raison);
+    await verifCheckDone(me, l.mois);
+    return { ok: true, registre: synced };
+  }
+  throw new E("unknown_action");
+}
+// Dates saisies : dans le mois, début avant fin ; « absent » vide les dates.
+function verifDates(mois: string, body: any, heberge: boolean, repas: boolean) {
+  const { start, end } = monthBounds(mois);
+  const inM = (v: any) => { const d = D_(v); if (!d) return null; if (d < start || d > end) throw new E("hors_mois"); return d; };
+  const absent = !!body.absent;
+  const out: any = { absent, heb_debut: null, heb_fin: null, rep_debut: null, rep_fin: null };
+  if (absent) return out;
+  if (heberge) { out.heb_debut = inM(body.heb_debut); out.heb_fin = inM(body.heb_fin); if (!out.heb_debut || !out.heb_fin || out.heb_debut > out.heb_fin) throw new E("dates"); }
+  if (repas) { out.rep_debut = inM(body.rep_debut); out.rep_fin = inM(body.rep_fin); if ((out.rep_debut && !out.rep_fin) || (!out.rep_debut && out.rep_fin) || (out.rep_debut && out.rep_debut > out.rep_fin)) throw new E("dates"); }
+  return out;
 }
 
 // ---------- réparations (gérants et intendant) ----------
@@ -1060,6 +1186,9 @@ async function handle(req: Request) {
     // --- registre ---
     case "reg_occ_save": case "reg_occ_exit": case "reg_occ_return": case "reg_pec_save": case "reg_pec_delete": case "reg_inbox_set": case "reg_inbox_apply":
       return await regAction(me, a, body);
+    // --- vérification des dates avant facturation ---
+    case "verif_validate": case "verif_unvalidate": case "verif_save": case "verif_add":
+      return await verifAction(me, a, body);
     case "doc_get": {
       if (!can(me, "reg_pec")) throw new E("forbidden", 403);
       const id = String(body.id || ""); if (!/^[0-9a-z_-]{8,64}$/i.test(id)) throw new E("bad");
