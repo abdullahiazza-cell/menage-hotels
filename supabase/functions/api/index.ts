@@ -1,5 +1,6 @@
 // API unique de l'appli ménage : toute la lecture/écriture passe ici (clé service), les tables sont fermées au public.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring } from "./banque.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
@@ -140,6 +141,8 @@ const isBrico = (me: any) => me.role === "bricoleur";
 // Accès donnés par le propriétaire à l'intendant (« reg_pec » : répartir les PEC reçues ; « reg_full » : tout le registre).
 const RO_OK = ["state", "push_sub", "push_test", "logout", "read_mark", "msg_send", "msg_edit", "msg_delete", "upload_url", "doc_get", "stats"];
 const PERMS = ["reg_pec", "reg_full", "contacts"];
+// Soldes bancaires : le propriétaire, et ceux à qui il donne l'accès « banque ».
+const canBank = (me: any) => me.role === "owner" || (Array.isArray(me.perms) && me.perms.includes("banque"));
 const can = (me: any, p: string) => isMgr(me) || (isBrico(me) && Array.isArray(me.perms) && (me.perms.includes(p) || (p === "reg_pec" && me.perms.includes("reg_full"))));
 // Réparations : états, origines, priorités ; contacts visibles par l'intendant.
 const ETATS = ["a_faire", "en_cours", "piece", "fait"];
@@ -341,6 +344,7 @@ async function actState(me: any, device: any) {
     if (can(me, "reg_pec")) out.reg = await regState();
     if (brico) out.verif = await verifState();
   }
+  if (canBank(me)) out.banque = await bankState(me.role === "owner").catch(() => null);
   out.urls = await signUrls(paths);
   return out;
 }
@@ -1041,6 +1045,18 @@ async function handle(req: Request) {
       return { sent: Object.keys(per).length, sec: secSent, tasks: taskSent };
     }
     if (body.kind === "point_push") return { sent: await pointPush() };
+    if (body.kind === "bank_sync") {
+      const n = await bankSync();
+      // Prévenir le propriétaire 10 jours avant la fin de l'accord bancaire (une fois par jour, le matin).
+      if (parisHour() < 10) {
+        const exp = await bankExpiring(10);
+        if (exp.length) {
+          const { data: owners } = await sb.from("staff").select("id").eq("role", "owner").eq("active", true);
+          await pushTo((owners || []).map((o: any) => o.id), { title: "🏦 Accord bancaire à renouveler", body: `${exp.length} compte${exp.length > 1 ? "s" : ""} : à renouveler dans Ma Réception (icône 🏦), 2 minutes.`, tag: "banque" }).catch(() => {});
+        }
+      }
+      return { synced: n };
+    }
     if (body.kind === "purge") {
       const cfg = await getConfig(); const days = Number(cfg.retentionDays) || 30;
       const { data: old } = await sb.rpc("old_media", { days });
@@ -1389,11 +1405,37 @@ async function handle(req: Request) {
       await sb.from("point_sent").upsert(ids.map((id: string) => ({ staff_id: id, point_id: p.id })), { onConflict: "staff_id,point_id" });
       return { ok: true, sent: ids.length };
     }
+    case "bank_link": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      try { return await bankLinkStart(String(body.bank || ""), me.id, String(body.back || "")); }
+      catch (e) { console.error("bank_link", e, (e as any).detail); throw new E(String((e as any).message) === "eb_no_key" ? "bank_no_key" : "bank_fail"); }
+    }
+    case "bank_refresh": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      try { return { n: await bankManual() }; }
+      catch (e) { if (String((e as any).message) === "bank_manual_used") throw new E("bank_manual_used"); console.error(e); throw new E("bank_fail"); }
+    }
+    case "bank_label": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      await bankLabel(String(body.uid || ""), String(body.label || "")); return { ok: true };
+    }
+    case "staff_bank": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      const { data: t } = await sb.from("staff").select("id,label,role,perms").eq("id", body.id).single();
+      if (!t || t.role === "owner" || t.role === "menage") throw new E("bad");
+      const has = (t.perms || []).includes("banque"), on = !!body.on;
+      if (has !== on) {
+        await sb.from("staff").update({ perms: on ? [...(t.perms || []), "banque"] : (t.perms || []).filter((p: string) => p !== "banque") }).eq("id", t.id);
+        await regLog(me, on ? "Accès donné" : "Accès repris", null, t.label, null, (on ? "+ " : "− ") + "voir les soldes bancaires");
+      }
+      return { ok: true };
+    }
     case "staff_perms": {
       if (me.role !== "owner") throw new E("owner_only", 403);
       const { data: t } = await sb.from("staff").select("id,label,role,perms").eq("id", body.id).single();
       if (!t || t.role !== "bricoleur") throw new E("bad");
       const perms = (Array.isArray(body.perms) ? body.perms : []).filter((p: string) => PERMS.includes(p));
+      if ((t.perms || []).includes("banque") && !perms.includes("banque")) perms.push("banque");
       await sb.from("staff").update({ perms }).eq("id", t.id);
       const added = perms.filter((p: string) => !(t.perms || []).includes(p)), removed = (t.perms || []).filter((p: string) => !perms.includes(p));
       const L: Record<string, string> = { reg_pec: "répartir les PEC reçues", reg_full: "gérer tout le registre", contacts: "voir les prestataires" };

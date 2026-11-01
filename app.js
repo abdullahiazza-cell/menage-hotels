@@ -155,6 +155,7 @@ function toast(t, ms) { const el = $('toast'); el.textContent = t; el.hidden = f
 
 /* ---------- API ---------- */
 const ERR = {
+  bank_no_key: 'La clé Enable Banking n’est pas encore installée dans Supabase.', bank_fail: 'La banque ne répond pas. Réessaie plus tard.', bank_manual_used: 'Déjà actualisé aujourd’hui à la main. Prochaine mise à jour automatique à 7 h, 12 h ou 17 h.',
   invite_invalid: 'Ce lien n’est plus valable. Demande un nouveau lien à ton responsable.', locked: 'Accès bloqué après 5 codes faux. Appelle ton responsable.',
   not_yours: 'Cette chambre n’est plus à toi.', not_started: 'Touche d’abord « Je commence ».', photos_missing: 'Il manque des photos.',
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
@@ -202,7 +203,7 @@ async function refresh(force) {
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
       S.verif = d.verif || { lignes: [], log: [], mois: [] };
-      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || [];
+      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || []; S.banque = d.banque || null;
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
@@ -549,7 +550,7 @@ function viewHome() {
   const stat = (n, l, cls, go) => `<button class="stat" data-a="go" data-k="${go[0]}" data-s="${go[1] || ''}"><b class="${n ? cls : ''}">${n}</b><span>${l}</span></button>`;
   return `<div class="wrap home">
     <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div>
-      <div class="top-acts">${ptButton()}<button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div></div>
+      <div class="top-acts">${bankButton()}${ptButton()}<button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div></div>
     ${S.me.readonly ? '<div class="robar">👁 <span><b>Lecture seule</b> · vous pouvez tout regarder sans risque, rien n’est modifié.</span></div>' : ''}
     <div class="segc" role="group" aria-label="Hôtel">${scopes.map(([k, l]) => `<button data-a="scope" data-k="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
@@ -1413,6 +1414,38 @@ function ptPlayer(p, lang) {
   return `${url ? `<audio class="pt-audio" controls preload="none" src="${esc(url)}"></audio>` : `<p class="muted sm">L’audio ${lang === 'ar' ? 'en darija' : 'en français'} n’est pas encore prêt.</p>`}
     ${av.length > 1 ? `<div class="chips pt-voices">${av.map((x) => `<button class="chip ${x === v ? 'on' : ''}" data-a="ptVoice" data-k="${x}">🎙️ ${esc(voiceName(x))}</button>`).join('')}</div>` : ''}`;
 }
+/* ----- soldes bancaires (propriétaire + accès donnés) ----- */
+const eur = (n, cur) => (n == null || isNaN(n)) ? '—' : Number(n).toLocaleString('fr-FR', { style: 'currency', currency: cur || 'EUR' });
+const bankAccs = () => (S.banque && S.banque.accounts) || [];
+const bankName = (a) => a.label || `${a.bank_l} ••${a.last4}`;
+const bankDays = (a) => a.valid_until ? Math.ceil((ts(a.valid_until) - Date.now()) / 864e5) : null;
+const bankAlert = () => bankAccs().some((a) => a.error || (S.me.role === 'owner' && bankDays(a) != null && bankDays(a) <= 10));
+function bankButton() {
+  if (!S.banque || !S.me || S.preview) return '';
+  return `<button class="ptbtn" data-a="bankOpen" aria-label="Soldes bancaires${bankAlert() ? ', à vérifier' : ''}">🏦${bankAlert() ? '<span class="dot"></span>' : ''}</button>`;
+}
+function bankSheet() {
+  const accs = bankAccs(), own = S.me.role === 'owner';
+  const tot = {}; accs.forEach((a) => { if (a.balance != null) tot[a.currency || 'EUR'] = (tot[a.currency || 'EUR'] || 0) + Number(a.balance); });
+  const last = accs.map((a) => a.fetched_at).filter(Boolean).sort().pop();
+  const row = (a) => {
+    const d = a.balance != null && a.prev != null ? Number(a.balance) - Number(a.prev) : null, dl = bankDays(a);
+    const warn = a.error === 'expire' ? '⚠️ Accord expiré : à renouveler' : (a.error ? '⚠️ Dernière lecture impossible' : (own && dl != null && dl <= 10 ? `⏳ Accord à renouveler dans ${Math.max(dl, 0)} j` : ''));
+    return `<div class="li"><span class="t"><b>${esc(bankName(a))}</b><br><span class="muted">${esc(a.bank_l)} ••${esc(a.last4)}${warn ? ' · ' + warn : ''}</span></span>
+      <span style="text-align:right"><b>${eur(a.balance, a.currency)}</b>${d ? `<br><span class="muted" style="color:${d < 0 ? '#E5484D' : '#2E9E5B'}">${d > 0 ? '+' : ''}${eur(d, a.currency)} depuis hier</span>` : ''}</span>
+      ${own ? `<button class="btn small ghost" data-a="bankLabel" data-id="${esc(a.uid)}" aria-label="Renommer">✏️</button>` : ''}</div>`;
+  };
+  openSheet('banque', `${sheetHead('🏦 Soldes des comptes')}
+    <div class="card">${accs.length ? `<div class="row between"><span class="muted">Total</span><h2>${Object.entries(tot).map(([c, v]) => eur(v, c)).join(' · ') || '—'}</h2></div>
+      <div class="list">${accs.map(row).join('')}</div>
+      <p class="muted">${last ? 'Mis à jour ' + when(last) + '.' : 'Pas encore de lecture.'} Mise à jour automatique à 7 h, 12 h et 17 h. Lecture seule : aucun virement possible.</p>`
+      : '<p class="muted">Aucun compte relié pour l’instant.</p>'}</div>
+    ${own ? `<div class="card"><h3>Gérer</h3>
+      <button class="btn" data-a="bankRefresh">🔄 Actualiser maintenant (1 fois par jour)</button>
+      <p class="muted">Relier ou renouveler l’accord (tous les 6 mois environ). Vous vous connectez sur la page de votre banque, Ma Réception ne voit jamais vos codes.</p>
+      <div class="row">${(S.banque.banks || []).map((b) => `<button class="btn small soft" data-a="bankLink" data-k="${b.k}">${esc(b.l)}</button>`).join('')}</div>
+      <p class="muted">Qui voit les soldes : réglez-le dans Équipe, personne par personne.</p></div>` : ''}`);
+}
 const ptSegs = (lang) => `<div class="segc" role="group" aria-label="Langue"><button data-a="ptLang" data-k="ar" aria-pressed="${lang === 'ar'}">الدارجة</button><button data-a="ptLang" data-k="fr" aria-pressed="${lang === 'fr'}">Français</button></div>`;
 // Petit bouton à côté du compte : pastille tant que le dernier point n'a pas été ouvert.
 const ptSeen = () => LS.get('mh-pt-seen', []);
@@ -1799,6 +1832,7 @@ function viewTeam() {
         ${canTouch && s.active !== false ? `<div class="row"><button class="btn small soft" data-a="inviteNew" data-id="${s.id}">📲 ${devs.length ? 'Nouveau lien (nouveau téléphone)' : (s.locked ? 'Débloquer : nouveau lien' : 'Lien d’installation')}</button>
           <button class="btn small" data-a="personEdit" data-id="${s.id}">Modifier</button>${owner ? '' : `<button class="btn small ghost" data-a="personActive" data-id="${s.id}" data-v="0">Désactiver</button>`}</div>` : ''}
         ${S.me.role === 'owner' && !owner && s.active !== false ? `<button class="perm" data-a="roToggle" data-id="${s.id}" aria-pressed="${!!s.readonly}"><span class="pr-t"><b>👁 Lecture seule</b><span class="muted">Peut tout voir, ne peut rien modifier (pour découvrir l’appli sans crainte)</span></span><span class="sw ${s.readonly ? 'on' : ''}" aria-hidden="true"><i></i></span></button>` : ''}
+        ${S.me.role === 'owner' && !owner && s.role !== 'menage' && s.active !== false ? (() => { const on = (s.perms || []).includes('banque'); return `<button class="perm" data-a="bankPerm" data-id="${s.id}" aria-pressed="${on}"><span class="pr-t"><b>🏦 Voir les soldes bancaires</b><span class="muted">Le solde de chaque compte, en lecture seule</span></span><span class="sw ${on ? 'on' : ''}" aria-hidden="true"><i></i></span></button>`; })() : ''}
         ${s.role === 'bricoleur' && S.me.role === 'owner' && s.active !== false ? `<div class="perms"><p class="muted">Accès que tu lui donnes</p>${PERM_L.map(([k, l, sub]) => { const on = (s.perms || []).includes(k); return `<button class="perm" data-a="permToggle" data-id="${s.id}" data-p="${k}" aria-pressed="${on}"><span class="pr-t"><b>${l}</b><span class="muted">${sub}</span></span><span class="sw ${on ? 'on' : ''}" aria-hidden="true"><i></i></span></button>`; }).join('')}</div>` : ''}
         ${s.active === false ? `<div class="row"><button class="btn small" data-a="personActive" data-id="${s.id}" data-v="1">Réactiver</button><button class="btn small bad" data-a="personDelete" data-id="${s.id}">🗑️ Supprimer définitivement</button></div>` : ''}</div>`;
     }).join('')}
@@ -2191,6 +2225,18 @@ const A = {
   ptLang(d) { S.ptLang = d.k; LS.set('mh-ptl', d.k); pointSheet(S.ptKind); },
   ptVoice(d) { S.ptVoice = d.k; LS.set('mh-ptv', d.k); pointSheet(S.ptKind); },
   ptOpen(d) { pointSheet(d.k); },
+  bankOpen() { bankSheet(); },
+  async bankRefresh() { if (await act(() => api('bank_refresh'), 'Soldes actualisés')) bankSheet(); },
+  async bankLink(d) {
+    try { const r = await api('bank_link', { bank: d.k, back: APP_URL }); if (r && r.url) location.href = r.url; }
+    catch (e) { toast(errMsg(e)); }
+  },
+  async bankLabel(d) {
+    const a = bankAccs().find((x) => x.uid === d.id); if (!a) return;
+    const v = prompt('Nom du compte (ex. : Hôtel de Paris)', a.label || ''); if (v == null) return;
+    if (await act(() => api('bank_label', { uid: d.id, label: v }), 'Nom enregistré')) bankSheet();
+  },
+  async bankPerm(d) { const s = staffById(d.id), on = !(s.perms || []).includes('banque'); await act(() => api('staff_bank', { id: d.id, on }), on ? `${first(s.label)} voit les soldes` : `${first(s.label)} ne voit plus les soldes`); },
   ptSettings() { closeSheet(); S.tab = 'settings'; render(); window.scrollTo(0, 0); },
   ptSub(d) { pointSubSheet(d.id); },
   ptSendOpen(d) { ptSendSheet(d.k); },
@@ -2517,12 +2563,14 @@ function openConvWhenReady(conv) {
 (async function boot() {
   const cm = location.hash.match(/[#&]c=([^&]+)/); const openC = cm ? decodeURIComponent(cm[1]) : null;
   const pm = location.hash.match(/[#&]pt=(jour|semaine)/); const openP = pm ? pm[1] : null;
-  if (S.secret && (readHashCode() || openC || openP)) history.replaceState(null, '', location.pathname);
+  const bm = location.hash.match(/[#&]banque=(\w+)/); const bankRes = bm ? bm[1] : null;
+  if (S.secret && (readHashCode() || openC || openP || bankRes)) history.replaceState(null, '', location.pathname);
   render();
   if (S.secret) {
     await refresh(true);
     if (S.loaded && pushSupported() && Notification.permission === 'granted') enablePush(true);
     if (S.loaded && openC) threadSheet(openC, true);
     if (S.loaded && openP && isMgr()) pointSheet(openP, true);
+    if (S.loaded && bankRes) { toast({ ok: 'Comptes reliés ✅', refus: 'Accord refusé à la banque.', expire: 'Lien expiré, recommence.', erreur: 'La liaison n’a pas abouti, réessaie.' }[bankRes] || ''); if (S.banque) bankSheet(); }
   }
 })();
