@@ -474,6 +474,7 @@ function onboardSheet() {
 
 /* ----- icônes (trait fin, style iOS) ----- */
 const ICO = {
+  bank: '<path d="M3 10h18"/><path d="M12 3 3 8v2h18V8z"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 21h18"/>',
   menage: '<path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/>',
   tool: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
   book: '<path d="M2 4h6a4 4 0 0 1 4 4v13a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v13a3 3 0 0 1 3-3h7z"/>',
@@ -550,7 +551,7 @@ function viewHome() {
   const stat = (n, l, cls, go) => `<button class="stat" data-a="go" data-k="${go[0]}" data-s="${go[1] || ''}"><b class="${n ? cls : ''}">${n}</b><span>${l}</span></button>`;
   return `<div class="wrap home">
     <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div>
-      <div class="top-acts">${bankButton()}${ptButton()}<button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div></div>
+      <div class="top-acts">${ptButton()}<button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div></div>
     ${S.me.readonly ? '<div class="robar">👁 <span><b>Lecture seule</b> · vous pouvez tout regarder sans risque, rien n’est modifié.</span></div>' : ''}
     <div class="segc" role="group" aria-label="Hôtel">${scopes.map(([k, l]) => `<button data-a="scope" data-k="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
@@ -565,6 +566,7 @@ function viewHome() {
       ${tile('projets', myTasks().length ? `${myTasks().length} tâche${myTasks().length > 1 ? 's' : ''} pour vous` : `${S.projects.filter((p) => p.statut !== 'termine').length} projets`, myTasks().filter((t) => tLate(t) || tToday(t)).length)}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
       ${tile('contacts', `${S.contacts.length} contacts`)}
+      ${bankTile()}
     </div>
     <div class="group views"><div class="prow ro"><span class="pr-t"><b>Voir comme</b><span class="muted">et faire à leur place si besoin</span></span></div>
       <button class="prow" data-a="preview" data-k="menage"><span class="pr-t"><b>🧹 Femme de ménage</b><span class="muted">${myCleanings().length ? myCleanings().length + ' nettoyage' + (myCleanings().length > 1 ? 's' : '') + ' pour vous' : 'Les nettoyages qui vous sont donnés'}</span></span><span class="chev">›</span></button>
@@ -1420,9 +1422,12 @@ const bankAccs = () => (S.banque && S.banque.accounts) || [];
 const bankName = (a) => a.label || `${a.bank_l} ••${a.last4}`;
 const bankDays = (a) => a.valid_until ? Math.ceil((ts(a.valid_until) - Date.now()) / 864e5) : null;
 const bankAlert = () => bankAccs().some((a) => a.error || (S.me.role === 'owner' && bankDays(a) != null && bankDays(a) <= 10));
-function bankButton() {
+function bankTile() {
   if (!S.banque || !S.me || S.preview) return '';
-  return `<button class="ptbtn" data-a="bankOpen" aria-label="Soldes bancaires${bankAlert() ? ', à vérifier' : ''}">🏦${bankAlert() ? '<span class="dot"></span>' : ''}</button>`;
+  const accs = bankAccs(), last = accs.map((a) => a.fetched_at).filter(Boolean).sort().pop();
+  const sub = accs.length ? `${accs.length} compte${accs.length > 1 ? 's' : ''}${last ? ' · ' + when(last) : ''}` : 'Aucun compte relié';
+  return `<button class="tile" data-a="bankOpen"><span class="ti-ic t-blue">${ico('bank')}</span>${bankAlert() ? '<span class="badge">!</span>' : ''}
+    <span class="ti-t">Banque</span><span class="ti-s">${sub}</span></button>`;
 }
 function bankSheet() {
   const accs = bankAccs(), own = S.me.role === 'owner';
