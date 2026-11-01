@@ -457,6 +457,16 @@ async function regAction(me: any, a: string, body: any) {
   }
   if (a === "reg_inbox_apply") {
     const { data: it } = await sb.from("pec_inbox").select("*").eq("id", body.id).single(); if (!it) throw new E("bad");
+    // On réserve la PEC reçue avant de l'appliquer : un deuxième envoi (double appui) ne crée pas de doublon.
+    const { data: claim } = await sb.from("pec_inbox").update({ status: "traite", treated_at: now, treated_by: me.id }).eq("id", it.id).neq("status", "traite").select("id");
+    if (!claim || !claim.length) throw new E("deja");
+    try { return await inboxApply(me, it, body, now, raison); }
+    catch (e) { await sb.from("pec_inbox").update({ status: it.status, treated_at: it.treated_at, treated_by: it.treated_by }).eq("id", it.id); throw e; }
+  }
+  throw new E("unknown_action");
+}
+async function inboxApply(me: any, it: any, body: any, now: string, raison: string) {
+  {
     await attachMailDocs([it]).catch(() => {});
     let occId = body.occupant_id ? String(body.occupant_id) : null, who = "";
     if (occId) {
@@ -474,7 +484,6 @@ async function regAction(me: any, a: string, body: any) {
     await regLog(me, "PEC ajoutée", occId, `${who} · ${it.financeur || ""}`, raison || "Depuis une PEC reçue", `${it.debut || "?"} → ${it.fin || "?"}`);
     return { ok: true, id: occId };
   }
-  throw new E("unknown_action");
 }
 
 // ---------- vérification des dates avant facturation (gérants, associés et intendant) ----------

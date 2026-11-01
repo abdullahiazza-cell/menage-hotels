@@ -161,7 +161,7 @@ const ERR = {
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
   readonly: 'Lecture seule : vous pouvez tout regarder, mais rien n’est modifié. Demandez à Abdullah.',
   reason: 'Indique la raison.', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
-  too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
+  deja: 'Cette prise en charge est déjà dans le registre.', too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
 };
 // Comptes en lecture seule : tout est visible, seules ces actions passent (lire, messages, notifications).
 const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'msg_edit', 'msg_delete', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info'];
@@ -2162,7 +2162,11 @@ const A = {
     const body = { id: d.id };
     if (d.m === 'exist') { body.occupant_id = $('a-occ').value; if (!body.occupant_id) { toast('Choisis la personne.'); return; } }
     else { body.hotel = $('a-hotel').value; body.room_id = $('a-room').value || null; body.entree = $('a-entree').value; }
-    let id = null; if (await act(async () => { id = (await api('reg_inbox_apply', body)).id; }, 'Prise en charge appliquée')) occSheet(id);
+    // Un seul envoi à la fois : un double appui créait la même prise en charge deux fois.
+    if (S.applying) return; S.applying = true;
+    let id = null;
+    try { if (await act(async () => { id = (await api('reg_inbox_apply', body)).id; }, 'Prise en charge appliquée')) occSheet(id); }
+    finally { S.applying = false; }
   },
   inDiscard(d) { discardSheet(d.id); },
   async docOpen(d, el) {
