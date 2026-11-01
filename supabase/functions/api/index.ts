@@ -1,6 +1,7 @@
 // API unique de l'appli ménage : toute la lecture/écriture passe ici (clé service), les tables sont fermées au public.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring } from "./banque.ts";
+import { PDFDocument } from "npm:pdf-lib@1.17.1";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
@@ -1033,6 +1034,7 @@ async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Rec
 async function handle(req: Request) {
   const body = await req.json().catch(() => ({}));
   const a = body.a;
+  if (a === "doc_put") return await docPut(body);
 
   // --- tâches planifiées ---
   if (a === "cron") {
@@ -1470,8 +1472,66 @@ async function handle(req: Request) {
   throw new E("unknown_action");
 }
 
+async function docSign(msg: string) {
+  const { data: sec } = await sb.from("app_secrets").select("value").eq("name", "doc_link").maybeSingle();
+  if (!sec) throw new E("forbidden", 403);
+  const key = await crypto.subtle.importKey("raw", enc.encode(sec.value), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return [...new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(msg)))].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+// Dépôt d'un PDF (ex. une PEC restée dans un mail) avec une autorisation signée et limitée dans le temps.
+async function docPut(body: any) {
+  const name = S_(body.name, 160) || "Document.pdf", exp = Number(body.e || 0);
+  if (!exp || exp * 1000 < Date.now()) throw new E("expired", 410);
+  if (String(body.s || "") !== await docSign(`put|${name}|${exp}`)) throw new E("forbidden", 403);
+  const b64 = String(body.b64 || ""); if (!b64 || b64.length > 14_000_000) throw new E("too_big");
+  const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  if (!(u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46)) throw new E("not_pdf");
+  const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", u8))].map((x) => x.toString(16).padStart(2, "0")).join("");
+  const id = sha.slice(0, 32);
+  const { data: ex } = await sb.from("doc_files").select("id").eq("id", id).maybeSingle();
+  if (!ex) {
+    let hex = ""; for (let i = 0; i < u8.length; i++) hex += u8[i].toString(16).padStart(2, "0");
+    const { error } = await sb.from("doc_files").insert({ id, name, type: "application/pdf", size: u8.length, sha256: sha, data: "\\x" + hex });
+    if (error) throw new E("db");
+  }
+  return { ok: true, id, size: u8.length, already: !!ex };
+}
+// Lien signé et limité dans le temps pour ouvrir un PDF rangé (une PEC, une facture) ou un dossier de plusieurs PDF
+// mis bout à bout : sert à la page de contrôle de la facturation et à l'envoi au Département. Rien d'autre n'est lisible.
+async function docLink(req: Request) {
+  const u = new URL(req.url);
+  const ids = String(u.searchParams.get("doc") || ""), name = String(u.searchParams.get("n") || "document.pdf").slice(0, 120);
+  const exp = Number(u.searchParams.get("e") || 0), sig = String(u.searchParams.get("s") || "");
+  const list = ids.split(",").filter((x) => /^[0-9a-z_-]{8,64}$/i.test(x)).slice(0, 40);
+  if (!list.length || !exp || exp * 1000 < Date.now()) return new Response("Lien expiré", { status: 410 });
+  if (await docSign(`${list.join(",")}|${name}|${exp}`) !== sig) return new Response("Lien invalide", { status: 403 });
+  const { data: files } = await sb.from("doc_files").select("id,data").in("id", list);
+  const byId: Record<string, Uint8Array> = {};
+  const H = new Uint8Array(128); for (let i = 0; i < 10; i++) H[48 + i] = i; for (let i = 0; i < 6; i++) { H[97 + i] = 10 + i; H[65 + i] = 10 + i; }
+  for (const f of files || []) {
+    const hex = String(f.data).replace(/^\\x/, ""); const u8 = new Uint8Array(hex.length >> 1);
+    for (let i = 0, j = 0; i < u8.length; i++, j += 2) u8[i] = (H[hex.charCodeAt(j)] << 4) | H[hex.charCodeAt(j + 1)];
+    byId[f.id] = u8;
+  }
+  let out: Uint8Array;
+  if (list.length === 1) { if (!byId[list[0]]) return new Response("Introuvable", { status: 404 }); out = byId[list[0]]; }
+  else {
+    const doc = await PDFDocument.create();
+    for (const id of list) {
+      if (!byId[id]) continue;
+      try { const src = await PDFDocument.load(byId[id], { ignoreEncryption: true }); (await doc.copyPages(src, src.getPageIndices())).forEach((p) => doc.addPage(p)); }
+      catch (_) { /* PDF illisible : on le saute */ }
+    }
+    out = await doc.save({ useObjectStreams: false });
+  }
+  return new Response(out, { headers: { "content-type": "application/pdf", "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(name)}`, "cache-control": "private, max-age=300", "Access-Control-Allow-Origin": "*" } });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
+  if (req.method === "GET" && new URL(req.url).searchParams.has("doc")) {
+    try { return await docLink(req); } catch (e) { console.error(e); return new Response("Erreur", { status: 500 }); }
+  }
   if (req.method !== "POST") return fail("method", 405);
   try { return ok(await handle(req)); }
   catch (e) {
