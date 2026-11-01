@@ -208,6 +208,11 @@ audio,video{width:100%;max-width:100%;border-radius:12px}
 .msg .meta{font-size:12px;color:var(--ink2)}
 .msg .txt{font-size:18px;white-space:pre-wrap;overflow-wrap:anywhere}
 .msg audio{min-width:220px}
+.msg .mhead{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+.msg .mx{background:none;border:0;color:var(--ink2);font-size:22px;line-height:1;padding:0 4px 4px;margin:-4px -6px 0 0;cursor:pointer;min-width:36px;min-height:28px}
+.msg .mrow{display:flex;flex-wrap:wrap;gap:6px}
+.msg textarea{width:100%;min-height:80px;font-size:17px;border-radius:12px;border:1px solid var(--line);padding:8px;background:var(--card);color:var(--ink);font-family:inherit}
+.msg.gone{background:transparent;border-style:dashed;box-shadow:none}
 .composer{position:sticky;bottom:0;background:var(--bg);padding:10px 0 calc(14px + env(safe-area-inset-bottom,0px));display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line)}
 .hold{touch-action:none;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
 .hold.rec{background:#EF6A5B!important;border-color:#EF6A5B!important;color:#fff!important}

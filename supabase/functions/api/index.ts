@@ -111,7 +111,7 @@ async function unreadCounts(ids: string[]) {
   await Promise.all((people || []).map(async (p: any) => {
     const [msgs, { data: reads }] = await Promise.all([visibleMsgs(p, 400), sb.from("conv_reads").select("conv,read_at").eq("staff_id", p.id)]);
     const r: Record<string, number> = {}; (reads || []).forEach((x: any) => r[x.conv] = new Date(x.read_at).getTime());
-    out[p.id] = msgs.filter((m: any) => m.from_staff !== p.id && new Date(m.created_at).getTime() > (r[m.conv] || 0)).length;
+    out[p.id] = msgs.filter((m: any) => m.from_staff !== p.id && m.media_type !== "deleted" && new Date(m.created_at).getTime() > (r[m.conv] || 0)).length;
   }));
   return out;
 }
@@ -138,7 +138,7 @@ function parisHour(d = new Date()) { return Number(new Intl.DateTimeFormat("en-G
 const isMgr = (me: any) => me.role === "owner" || me.role === "gerant";
 const isBrico = (me: any) => me.role === "bricoleur";
 // Accès donnés par le propriétaire à l'intendant (« reg_pec » : répartir les PEC reçues ; « reg_full » : tout le registre).
-const RO_OK = ["state", "push_sub", "push_test", "logout", "read_mark", "msg_send", "upload_url", "doc_get", "stats"];
+const RO_OK = ["state", "push_sub", "push_test", "logout", "read_mark", "msg_send", "msg_edit", "msg_delete", "upload_url", "doc_get", "stats"];
 const PERMS = ["reg_pec", "reg_full", "contacts"];
 const can = (me: any, p: string) => isMgr(me) || (isBrico(me) && Array.isArray(me.perms) && (me.perms.includes(p) || (p === "reg_pec" && me.perms.includes("reg_full"))));
 // Réparations : états, origines, priorités ; contacts visibles par l'intendant.
@@ -172,6 +172,65 @@ async function visibleMsgs(me: any, limit: number) {
     sb.from("messages").select("*").like("conv", `dm:%${me.id}%`).order("created_at", { ascending: false }).limit(limit),
   ]);
   return [...(a.data || []), ...(b.data || [])].filter((m: any) => convOk(me, m.conv)).sort((x: any, y: any) => x.created_at < y.created_at ? 1 : -1);
+}
+// Qui reçoit les messages d'une conversation (sert à l'envoi et aux notifications de modification).
+async function convTo(me: any, conv: string, hotel: string | null) {
+  const { data: all } = await sb.from("staff").select("id,role,active,only_hotel").eq("active", true);
+  const act = all || []; const byId: Record<string, any> = {}; act.forEach((x: any) => byId[x.id] = x);
+  const mgrIds = (h?: string | null) => act.filter((x: any) => (x.role === "owner" || x.role === "gerant") && (!h || !x.only_hotel || x.only_hotel === h)).map((x: any) => x.id);
+  let to: string[] = []; let thread: string | null = null; let label = "";
+  if (conv === "team") { to = act.map((x: any) => x.id); label = "📢 Toute l’équipe"; }
+  else if (conv === "mgrs") { to = mgrIds(); label = "👔 Responsables"; }
+  else if (conv.startsWith("staff:")) {
+    const x = conv.slice(6); if (!UUID.test(x) || !byId[x] || !["menage", "bricoleur"].includes(byId[x].role)) throw new E("bad");
+    thread = x; to = [x, ...mgrIds(hotel)];
+  } else if (conv.startsWith("dm:")) {
+    const pair = conv.slice(3).split("_");
+    if (pair.length !== 2 || !pair.every((p) => UUID.test(p)) || pair[0] >= pair[1]) throw new E("bad");
+    const other = pair[0] === me.id ? pair[1] : pair[0];
+    if (!byId[other]) throw new E("bad");
+    if (!isMgr(me) && !(byId[other].role === "owner" || byId[other].role === "gerant")) throw new E("forbidden", 403);
+    to = [other];
+  } else throw new E("bad");
+  return { to, thread, label };
+}
+// Modifier ou supprimer son propre message, pendant une heure après l'envoi.
+// L'ancien texte est gardé dans msg_log (jamais affiché dans l'appli) ; le vocal supprimé est effacé du stockage.
+const MSG_EDIT_MS = 60 * 60 * 1000;
+async function msgChange(me: any, a: string, body: any) {
+  const id = String(body.id || ""); if (!UUID.test(id)) throw new E("bad");
+  const { data: m } = await sb.from("messages").select("*").eq("id", id).maybeSingle();
+  if (!m || m.media_type === "deleted") throw new E("gone", 404);
+  if (m.from_staff !== me.id) throw new E("not_author", 403);
+  if (!convOk(me, m.conv)) throw new E("forbidden", 403);
+  if (Date.now() - new Date(m.created_at).getTime() > MSG_EDIT_MS) throw new E("too_late");
+  const now = new Date().toISOString();
+  let notif = "";
+  if (a === "msg_edit") {
+    if (!m.text) throw new E("bad");
+    const text = String(body.text || "").trim().slice(0, 1000); if (!text) throw new E("empty");
+    if (text === m.text) return { ok: true };
+    await sb.from("msg_log").insert({ msg_id: id, by_staff: me.id, action: "modifié", conv: m.conv, old_text: m.text });
+    const { error } = await sb.from("messages").update({ text, edited_at: now }).eq("id", id); if (error) throw new E("db");
+    notif = "✏️ " + text.slice(0, 120);
+  } else {
+    await sb.from("msg_log").insert({ msg_id: id, by_staff: me.id, action: "supprimé", conv: m.conv, old_text: m.text, old_media: m.media_path, old_duration: m.duration });
+    const { error } = await sb.from("messages").update({ text: null, media_path: null, media_type: "deleted", duration: null, deleted_at: now }).eq("id", id); if (error) throw new E("db");
+    if (m.media_path) await sb.storage.from("media").remove([m.media_path]).catch(() => {});
+    notif = "🚫 Message supprimé";
+  }
+  // Ceux qui n'ont pas encore ouvert la conversation ont toujours l'ancienne notification : on la remplace sans sonner.
+  try {
+    const { to } = await convTo(me, m.conv, m.hotel);
+    const others = to.filter((x) => x !== me.id);
+    if (others.length) {
+      const { data: reads } = await sb.from("conv_reads").select("staff_id,read_at").eq("conv", m.conv).in("staff_id", others);
+      const r: Record<string, number> = {}; (reads || []).forEach((x: any) => r[x.staff_id] = new Date(x.read_at).getTime());
+      const unread = others.filter((x) => (r[x] || 0) < new Date(m.created_at).getTime());
+      if (unread.length) await pushTo(unread, { title: `${m.media_path ? "🎤" : "💬"} ${me.label}`, body: notif, tag: "c-" + m.conv, conv: m.conv, silent: true } as any, { badge: true });
+    }
+  } catch (_) { /* la modification est faite, la notification n'est qu'un plus */ }
+  return { ok: true };
 }
 function hotelOk(me: any, h: string) { return !me.only_hotel || me.only_hotel === h; }
 async function getConfig() { const { data } = await sb.from("config").select("data").eq("id", 1).single(); return data?.data || {}; }
@@ -1147,24 +1206,8 @@ async function handle(req: Request) {
       let conv = typeof body.conv === "string" ? body.conv : "";
       if (!conv) conv = !mgr ? `staff:${me.id}` : (body.thread === "all" ? "team" : `staff:${body.thread}`);
       if (!convOk(me, conv)) throw new E("forbidden", 403);
-      const { data: all } = await sb.from("staff").select("id,role,active,only_hotel").eq("active", true);
-      const act = all || []; const byId: Record<string, any> = {}; act.forEach((x: any) => byId[x.id] = x);
-      const mgrIds = (h?: string | null) => act.filter((x: any) => (x.role === "owner" || x.role === "gerant") && (!h || !x.only_hotel || x.only_hotel === h)).map((x: any) => x.id);
       const hotel = HOTELS.includes(body.hotel) ? body.hotel : null;
-      let to: string[] = []; let thread: string | null = null; let label = "";
-      if (conv === "team") { to = act.map((x: any) => x.id); label = "📢 Toute l’équipe"; }
-      else if (conv === "mgrs") { to = mgrIds(); label = "👔 Responsables"; }
-      else if (conv.startsWith("staff:")) {
-        const x = conv.slice(6); if (!UUID.test(x) || !byId[x] || !["menage", "bricoleur"].includes(byId[x].role)) throw new E("bad");
-        thread = x; to = [x, ...mgrIds(hotel)];
-      } else if (conv.startsWith("dm:")) {
-        const pair = conv.slice(3).split("_");
-        if (pair.length !== 2 || !pair.every((p) => UUID.test(p)) || pair[0] >= pair[1]) throw new E("bad");
-        const other = pair[0] === me.id ? pair[1] : pair[0];
-        if (!byId[other]) throw new E("bad");
-        if (!mgr && !(byId[other].role === "owner" || byId[other].role === "gerant")) throw new E("forbidden", 403);
-        to = [other];
-      } else throw new E("bad");
+      const { to, thread, label } = await convTo(me, conv, hotel);
       const row = { conv, thread, from_staff: me.id, text, media_path: media, media_type: media ? String(body.media_type || "audio").slice(0, 10) : null, duration: body.duration ? Math.min(600, Math.round(body.duration)) : null, hotel, room: body.room ? String(body.room).slice(0, 40) : null };
       const { error } = await sb.from("messages").insert(row); if (error) throw new E("db");
       await sb.from("conv_reads").upsert({ staff_id: me.id, conv, read_at: new Date().toISOString() });
@@ -1176,6 +1219,8 @@ async function handle(req: Request) {
       } as any, { badge: true });
       return { ok: true };
     }
+    case "msg_edit": case "msg_delete":
+      return await msgChange(me, a, body);
     case "read_mark": {
       const conv = typeof body.conv === "string" ? body.conv : (mgr ? `staff:${body.thread}` : `staff:${me.id}`);
       if (!convOk(me, conv)) throw new E("forbidden", 403);

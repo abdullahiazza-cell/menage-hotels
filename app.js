@@ -115,7 +115,8 @@ const dmConv = (a, b) => 'dm:' + [a, b].sort().join('_');
 const isMgrRole = (r) => r === 'owner' || r === 'gerant';
 const readAt = (staffId, conv) => { const r = S.reads.find((x) => x.staff_id === staffId && x.conv === conv); return r ? ts(r.read_at) : 0; };
 const convMsgs = (c) => S.msgs.filter((m) => m.conv === c);
-function unreadIn(conv) { if (!S.me) return 0; const mine = readAt(S.me.id, conv); return convMsgs(conv).filter((m) => m.from_staff !== S.me.id && ts(m.created_at) > mine).length; }
+function unreadIn(conv) { if (!S.me) return 0; const mine = readAt(S.me.id, conv); return convMsgs(conv).filter((m) => m.from_staff !== S.me.id && m.media_type !== 'deleted' && ts(m.created_at) > mine).length; }
+const redrawThread = () => { if (S.sheet && S.sheet.startsWith('thread:')) threadSheet(S.sheet.slice(7)); };
 function myConvs() {
   const set = new Set(['team']);
   if (isMgr() && !S.preview) { set.add('mgrs'); threadPeople().forEach((c) => set.add('staff:' + c.id)); }
@@ -159,9 +160,10 @@ const ERR = {
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
   readonly: 'Lecture seule : vous pouvez tout regarder, mais rien n’est modifié. Demandez à Abdullah.',
   reason: 'Indique la raison.', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
+  too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
 };
 // Comptes en lecture seule : tout est visible, seules ces actions passent (lire, messages, notifications).
-const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info'];
+const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'msg_edit', 'msg_delete', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info'];
 async function api(a, payload = {}) {
   if (S.me && S.me.readonly && !RO_OK.includes(a)) { const err = new Error('readonly'); err.code = 'readonly'; throw err; }
   let r;
@@ -1682,7 +1684,7 @@ function viewMenageRead() {
 /* ----- messages ----- */
 function convRow(c) {
   const ms = convMsgs(c), last = ms[ms.length - 1], un = unreadIn(c);
-  const prev = !last ? '<span class="muted">Pas encore de message</span>' : `<span class="muted">${last.from_staff === S.me.id ? 'Moi' : esc(first(nameOf(last.from_staff)))} : ${last.media_path || last.media_type === 'expired' ? '🎤 Vocal' : esc((last.text || '').slice(0, 60))}${last.room ? ' · ch. ' + esc(last.room) : ''} · ${when(last.created_at)}</span>`;
+  const prev = !last ? '<span class="muted">Pas encore de message</span>' : `<span class="muted">${last.from_staff === S.me.id ? 'Moi' : esc(first(nameOf(last.from_staff)))} : ${last.media_type === 'deleted' ? '🚫 Message supprimé' : last.media_path || last.media_type === 'expired' ? '🎤 Vocal' : esc((last.text || '').slice(0, 60))}${last.room ? ' · ch. ' + esc(last.room) : ''} · ${when(last.created_at)}</span>`;
   return `<button class="li" style="text-align:left;cursor:pointer" data-a="threadOpen" data-id="${esc(c)}"><span class="t"><b>${esc(convLabel(c))}</b><br>${prev}</span>${un ? `<span class="badge">${un}</span>` : ''}</button>`;
 }
 const byLast = (a, b) => { const la = convMsgs(a), lb = convMsgs(b); return (ts(lb.length && lb[lb.length - 1].created_at) || 0) - (ts(la.length && la[la.length - 1].created_at) || 0); };
@@ -1714,23 +1716,41 @@ function heardText(m, conv) {
   if (!heard.length) return '✓ Envoyé';
   return '✓✓ Lu par ' + (heard.length <= 3 ? heard.map((id) => first(nameOf(id))).join(', ') : heard.length + ' personnes');
 }
+// On peut modifier ou supprimer son propre message pendant une heure (même règle côté serveur).
+const MSG_EDIT_MS = 60 * 60 * 1000;
+const msgChangeable = (m) => m.from_staff === S.me.id && m.media_type !== 'deleted' && Date.now() - ts(m.created_at) < MSG_EDIT_MS;
 function msgHtml(m, conv) {
   const mine = m.from_staff === S.me.id;
+  const who = esc(mine ? 'Moi' : nameOf(m.from_staff));
+  if (m.media_type === 'deleted') {
+    return `<div class="msg gone ${mine ? 'me' : ''}"><span class="meta">${who} · ${when(m.created_at)}</span><span class="muted">🚫 Message supprimé${m.deleted_at ? ' ' + when(m.deleted_at) : ''}</span></div>`;
+  }
   const u = mediaUrl(m.media_path);
   const media = m.media_path ? (u ? `<audio controls preload="metadata" data-mid="${esc(m.id)}" src="${esc(u)}"></audio>` : '<span class="muted">Vocal indisponible</span>') : (m.media_type === 'expired' ? '<span class="muted">🎤 Vocal effacé après 30 jours</span>' : (m.media_type === 'empty' ? '<span class="muted">🎤 Vocal vide : le micro n’a rien enregistré</span>' : ''));
   const heard = heardText(m, conv);
-  return `<div class="msg ${mine ? 'me' : ''}"><span class="meta">${esc(mine ? 'Moi' : nameOf(m.from_staff))} · ${when(m.created_at)}${m.room ? ` · ${H(m.hotel).e} ch. ${esc(m.room)}` : ''}</span>
-    ${m.text ? `<span class="txt">${esc(m.text)}</span>` : ''}${media}${m.duration ? `<span class="meta">${m.duration} s</span>` : ''}${heard ? `<span class="meta" style="align-self:flex-end">${heard}</span>` : ''}</div>`;
+  const can = msgChangeable(m), id = esc(m.id);
+  const head = `<div class="mhead"><span class="meta">${who} · ${when(m.created_at)}${m.room ? ` · ${H(m.hotel).e} ch. ${esc(m.room)}` : ''}${m.edited_at ? ' · modifié' : ''}</span>${can && S.msgEdit !== m.id ? `<button class="mx" data-a="msgMenu" data-id="${id}" aria-label="Modifier ou supprimer ce message" title="Modifier ou supprimer">⋯</button>` : ''}</div>`;
+  if (can && S.msgEdit === m.id) {
+    return `<div class="msg me">${head}<textarea id="msgEditTxt" maxlength="1000" aria-label="Modifier le message">${esc(m.text || '')}</textarea>
+      <div class="mrow"><button class="btn small pri" data-a="msgEditSave" data-id="${id}">Enregistrer</button><button class="btn small" data-a="msgEditCancel">Annuler</button></div></div>`;
+  }
+  const menu = can && S.msgMenu === m.id ? `<div class="mrow">${m.text ? `<button class="btn small" data-a="msgEdit" data-id="${id}">✏️ Modifier</button>` : ''}<button class="btn small ${S.msgDelOk === m.id ? 'bad' : ''}" data-a="msgDel" data-id="${id}">${S.msgDelOk === m.id ? 'Touche encore pour supprimer' : `🗑️ Supprimer${m.media_path ? ' le vocal' : ''}`}</button><button class="btn small" data-a="msgMenu" data-id="${id}">Annuler</button></div>` : '';
+  return `<div class="msg ${mine ? 'me' : ''}">${head}
+    ${m.text ? `<span class="txt">${esc(m.text)}</span>` : ''}${media}${m.duration ? `<span class="meta">${m.duration} s</span>` : ''}${heard ? `<span class="meta" style="align-self:flex-end">${heard}</span>` : ''}${menu}</div>`;
 }
 function threadSheet(conv, auto) {
   if (conv === 'all') conv = 'team';
   if (conv && !conv.includes(':') && conv !== 'team' && conv !== 'mgrs') conv = 'staff:' + conv;
   const ms = convMsgs(conv), since = readAt(S.me.id, conv);
+  // Même conversation redessinée : on garde la position si on était remonté plus haut (ex. pour modifier un ancien message).
+  const old = S.sheet === 'thread:' + conv ? $('thr') : null;
+  const keep = old && old.scrollHeight - old.scrollTop - old.clientHeight > 60 ? old.scrollTop : null;
+  if (!old) { S.msgMenu = null; S.msgEdit = null; S.msgDelOk = null; }
   openSheet('thread:' + conv, `<div class="row between"><div><h2>${esc(convLabel(conv))}</h2><span class="muted">${esc(convSub(conv))}</span></div><button class="btn small" data-a="close">Fermer</button></div>
     <div class="thread" id="thr">${ms.length ? ms.map((m) => msgHtml(m, conv)).join('') : '<p class="muted" style="text-align:center">Pas encore de message.</p>'}</div>
     <div class="composer">${holdBtn('conv:' + conv, 'Garde appuyé pour parler')}
       <div class="row"><input id="msgText" placeholder="Ou écris un message" style="flex:1"><button class="btn" data-a="sendText" data-ctx="${esc(conv)}">Envoyer</button></div></div>`, 'chat');
-  const el = $('thr'); if (el) el.scrollTop = el.scrollHeight;
+  const el = $('thr'); if (el) el.scrollTop = keep == null ? el.scrollHeight : keep;
   // Ouvert depuis la notification : les vocaux pas encore écoutés se lancent tout seuls, l'un après l'autre.
   if (auto) {
     const others = ms.filter((m) => m.from_staff !== S.me.id && m.media_path && mediaUrl(m.media_path));
@@ -1939,7 +1959,7 @@ function closeSheet() { S.sheet = null; S.rep = null; const s = $('sheet'); s.hi
 function refreshSheet() {
   if (!S.sheet) return;
   if (S.sheet.startsWith('room:')) roomSheet(S.sheet.slice(5));
-  else if (S.sheet.startsWith('thread:')) { if (!sheetPlaying()) threadSheet(S.sheet.slice(7)); }
+  else if (S.sheet.startsWith('thread:')) { if (!sheetPlaying() && !S.msgEdit) threadSheet(S.sheet.slice(7)); }
   else if (S.sheet === 'convs') convListSheet();
   else if (S.sheet.startsWith('occ:') && S.sheet.length > 4 && !isTyping()) occSheet(S.sheet.slice(4));
   else if (S.sheet.startsWith('sec:') && !isTyping()) secSheet(S.sheet.slice(4));
@@ -2329,6 +2349,26 @@ const A = {
     const t = ($('msgText').value || '').trim(); if (!t) { toast('Écris d’abord le message, ou garde le doigt sur 🎤.'); return; }
     $('msgText').value = '';
     await act(() => api('msg_send', { text: t, conv: d.ctx }), 'Envoyé ✓');
+  },
+  msgMenu(d) { S.msgMenu = S.msgMenu === d.id ? null : d.id; S.msgEdit = null; S.msgDelOk = null; redrawThread(); },
+  msgEdit(d) {
+    S.msgEdit = d.id; S.msgMenu = null; S.msgDelOk = null; redrawThread();
+    const t = $('msgEditTxt'); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); }
+  },
+  msgEditCancel() { S.msgEdit = null; redrawThread(); },
+  async msgEditSave(d) {
+    const t = (($('msgEditTxt') || {}).value || '').trim();
+    if (!t) { toast('Le message est vide. Pour l’effacer, utilise « Supprimer ».'); return; }
+    if (await act(() => api('msg_edit', { id: d.id, text: t }), 'Message modifié ✓')) { S.msgEdit = null; redrawThread(); }
+  },
+  async msgDel(d) {
+    if (S.msgDelOk !== d.id) {
+      S.msgDelOk = d.id; redrawThread();
+      setTimeout(() => { if (S.msgDelOk === d.id) { S.msgDelOk = null; redrawThread(); } }, 5000);
+      return;
+    }
+    S.msgDelOk = null; S.msgMenu = null;
+    await act(() => api('msg_delete', { id: d.id }), 'Message supprimé');
   },
   /* équipe */
   personNew() { personSheet(null); },

@@ -1,5 +1,5 @@
 // Service worker : coquille hors-ligne + notifications.
-const VERSION = 'v28';
+const VERSION = 'v29';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/badge-96.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
 
 self.addEventListener('install', (e) => {
@@ -22,7 +22,7 @@ self.addEventListener('push', (e) => {
   let d = {}; try { d = e.data ? e.data.json() : {}; } catch (_) { d = { title: 'Ma Réception', body: e.data ? e.data.text() : '' }; }
   e.waitUntil((async () => {
     await self.registration.showNotification(d.title || 'Ma Réception', {
-      body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag,
+      body: d.body || '', tag: d.tag || undefined, renotify: !!d.tag && !d.silent, silent: !!d.silent,
       icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', data: { conv: d.conv || null, point: d.point || null },
     });
     // Pastille rouge sur l'icône de l'appli avec le nombre de messages non lus.
