@@ -129,6 +129,35 @@ export async function bankSync(opt: { only?: string; manual?: boolean } = {}) {
   return n;
 }
 
+// 3 bis) Mouvements des 90 derniers jours (crédits seulement), une fois par jour avec la lecture du matin,
+// pour rapprocher les virements du Département des factures Chorus.
+export async function bankTxSync() {
+  const { data: accs } = await db.from("bank_accounts").select("uid,valid_until").eq("active", true);
+  const from = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  let n = 0;
+  for (const a of accs || []) {
+    if (a.valid_until && new Date(a.valid_until) < new Date()) continue;
+    try {
+      let key: string | null = null; const rows: any[] = [];
+      for (let i = 0; i < 10; i++) {
+        const r = await eb(`/accounts/${a.uid}/transactions?date_from=${from}${key ? `&continuation_key=${encodeURIComponent(key)}` : ""}`);
+        for (const t of r.transactions || []) {
+          if (t.credit_debit_indicator !== "CRDT" || (t.status && t.status !== "BOOK")) continue;
+          const amount = Number(t.transaction_amount?.amount);
+          const label = [...(t.remittance_information || []), t.note].filter(Boolean).join(" ").slice(0, 400);
+          const day = t.booking_date || t.value_date || t.transaction_date || null;
+          const tx_id = t.entry_reference || t.transaction_id || await sha(`${day}|${amount}|${label}`);
+          rows.push({ uid: a.uid, tx_id: String(tx_id).slice(0, 120), day, amount, currency: t.transaction_amount?.currency || "EUR", label, counterparty: t.debtor?.name || null });
+        }
+        key = r.continuation_key || null; if (!key) break;
+      }
+      if (rows.length) await db.from("bank_tx").upsert(rows, { onConflict: "uid,tx_id" });
+      n += rows.length;
+    } catch (e) { console.error("bank_tx", a.uid, (e as any).message, (e as any).detail); }
+  }
+  return n;
+}
+
 // 4) Ce que voit l'appli : nom, banque, 4 derniers chiffres, solde, écart avec la veille.
 export async function bankState(owner: boolean) {
   const { data: accs } = await db.from("bank_accounts").select("uid,bank,last4,label,currency,balance,balance_type,ref_date,fetched_at,valid_until,error,sort").eq("active", true).order("sort").order("bank").order("last4");

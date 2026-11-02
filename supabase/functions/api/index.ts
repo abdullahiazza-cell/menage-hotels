@@ -1,6 +1,7 @@
 // API unique de l'appli ménage : toute la lecture/écriture passe ici (clé service), les tables sont fermées au public.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
-import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring } from "./banque.ts";
+import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring, bankTxSync } from "./banque.ts";
+import { chorusSync, chorusDeposer, chorusState, rapprocher, paiementDecide, STRUCT } from "./chorus.ts";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
@@ -346,6 +347,7 @@ async function actState(me: any, device: any) {
     if (brico) out.verif = await verifState();
   }
   if (canBank(me)) out.banque = await bankState(me.role === "owner").catch(() => null);
+  if (canBank(me)) out.chorus = await chorusState(me.role === "owner").catch((e) => { console.error("chorus_state", e); return null; });
   out.urls = await signUrls(paths);
   return out;
 }
@@ -1031,6 +1033,24 @@ async function roomsPatch(me: any, ids: string[], patch: any, extraPerRoom?: Rec
   return { ok: true };
 }
 
+// Chorus : lecture des statuts (2 fois par jour), rapprochement, et notification au propriétaire.
+const CH_LIB: Record<string, string> = { MISE_EN_PAIEMENT: "mise en paiement 💶", MANDATEE: "mandatée", REJETEE: "rejetée ⚠️", A_RECYCLER: "à recycler ⚠️", SUSPENDUE: "suspendue ⚠️", SERVICE_FAIT: "service fait", COMPLETEE: "complétée", A_COMPLETER: "à compléter ⚠️" };
+async function ownerIds() { const { data } = await sb.from("staff").select("id").eq("role", "owner").eq("active", true); return (data || []).map((o: any) => o.id); }
+async function chorusPushPay(n: number) {
+  await pushTo(await ownerIds(), { title: "🏦 Virement à rapprocher", body: `${n} virement${n > 1 ? "s" : ""} du Département correspond${n > 1 ? "ent" : ""} à des factures : à confirmer dans Factures.`, tag: "chorus-pay" }).catch(() => {});
+}
+async function chorusCron() {
+  const r = await chorusSync();
+  const imp = r.changes.filter((c: any) => CH_LIB[c.nouveau]);
+  if (imp.length) {
+    const L = imp.slice(0, 4).map((c: any) => `${c.numero} (${STRUCT[c.structure]?.nom || c.structure}) ${CH_LIB[c.nouveau]}`).join(" · ");
+    await pushTo(await ownerIds(), { title: "🧾 Chorus Pro", body: L.slice(0, 160), tag: "chorus" }).catch(() => {});
+  }
+  const p = await rapprocher().catch(() => 0);
+  if (p) await chorusPushPay(p);
+  return { n: r.n, changes: r.changes.length, paiements: p };
+}
+
 async function handle(req: Request) {
   const body = await req.json().catch(() => ({}));
   const a = body.a;
@@ -1056,8 +1076,11 @@ async function handle(req: Request) {
       return { sent: Object.keys(per).length, sec: secSent, tasks: taskSent };
     }
     if (body.kind === "point_push") return { sent: await pointPush() };
+    if (body.kind === "chorus_sync") return await chorusCron();
     if (body.kind === "bank_sync") {
       const n = await bankSync();
+      // Mouvements (crédits) une fois par jour, le matin, puis rapprochement avec les factures Chorus.
+      if (parisHour() < 10) { const t = await bankTxSync().catch(() => 0); const p = await rapprocher().catch(() => 0); if (p) await chorusPushPay(p); if (!t) console.log("bank_tx: rien"); }
       // Prévenir le propriétaire 10 jours avant la fin de l'accord bancaire (une fois par jour, le matin).
       if (parisHour() < 10) {
         const exp = await bankExpiring(10);
@@ -1420,6 +1443,42 @@ async function handle(req: Request) {
       if (me.role !== "owner") throw new E("owner_only", 403);
       try { return await bankLinkStart(String(body.bank || ""), me.id, String(body.back || "")); }
       catch (e) { console.error("bank_link", e, (e as any).detail); throw new E(String((e as any).message) === "eb_no_key" ? "bank_no_key" : "bank_fail"); }
+    }
+    case "chorus_refresh": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      try { return await chorusCron(); } catch (e) { console.error(e, (e as any).detail); throw new E("chorus_fail"); }
+    }
+    case "chorus_pay": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      if (!UUID.test(String(body.id || ""))) throw new E("bad");
+      await paiementDecide(String(body.id), !!body.ok, me.id); return { ok: true };
+    }
+    case "chorus_annuler": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      const { data: d } = await sb.from("chorus_depots").select("id,statut").eq("id", String(body.id || "")).maybeSingle();
+      if (!d || !["a_valider", "erreur"].includes(d.statut)) throw new E("bad");
+      await sb.from("chorus_depots").update({ statut: "annule" }).eq("id", d.id); return { ok: true };
+    }
+    case "chorus_deposer": {
+      // Dépôt sur Chorus : uniquement le propriétaire, uniquement une facture qu'il a sous les yeux
+      // (numéro et montant renvoyés par l'écran de validation doivent correspondre).
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      const { data: d } = await sb.from("chorus_depots").select("*").eq("id", String(body.id || "")).maybeSingle();
+      if (!d || !["a_valider", "erreur"].includes(d.statut)) throw new E("bad");
+      if (String(body.numero) !== d.numero || Math.abs(Number(body.ttc) - Number(d.montant_ttc)) > 0.001) throw new E("chorus_changed");
+      const { data: lock } = await sb.from("chorus_depots").update({ statut: "en_cours", valide_par: me.id, valide_le: new Date().toISOString(), erreur: null }).eq("id", d.id).in("statut", ["a_valider", "erreur"]).select("id");
+      if (!lock || !lock.length) throw new E("bad");
+      try {
+        const r = await chorusDeposer(d);
+        await sb.from("chorus_depots").update({ statut: "depose", chorus_id: r.chorus_id }).eq("id", d.id);
+        await chorusSync().catch(() => null);
+        return { ok: true, chorus_id: r.chorus_id };
+      } catch (e) {
+        const msg = String((e as any).detail || (e as any).message || e).slice(0, 300);
+        console.error("chorus_deposer", msg);
+        await sb.from("chorus_depots").update({ statut: "erreur", erreur: msg }).eq("id", d.id);
+        throw new E("chorus_depot_fail");
+      }
     }
     case "bank_refresh": {
       if (me.role !== "owner") throw new E("owner_only", 403);

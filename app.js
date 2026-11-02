@@ -161,6 +161,7 @@ const ERR = {
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
   readonly: 'Lecture seule : vous pouvez tout regarder, mais rien n’est modifié. Demandez à Abdullah.',
   reason: 'Indique la raison.', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
+  chorus_fail: 'Chorus ne répond pas. Réessaie dans quelques minutes.', chorus_changed: 'La facture a changé entre-temps. Rouvre l’écran et revérifie.', chorus_depot_fail: 'Le dépôt a échoué. Le détail est affiché sur la facture ; rien n’a été déposé.',
   deja: 'Cette prise en charge est déjà dans le registre.', too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
 };
 // Comptes en lecture seule : tout est visible, seules ces actions passent (lire, messages, notifications).
@@ -203,7 +204,7 @@ async function refresh(force) {
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
       S.verif = d.verif || { lignes: [], log: [], mois: [] };
-      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || []; S.banque = d.banque || null;
+      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || []; S.banque = d.banque || null; S.chorus = d.chorus || null;
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
@@ -474,6 +475,7 @@ function onboardSheet() {
 
 /* ----- icônes (trait fin, style iOS) ----- */
 const ICO = {
+  invoice: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/><path d="M9 13h7M9 17h5"/>',
   bank: '<path d="M3 10h18"/><path d="M12 3 3 8v2h18V8z"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 21h18"/>',
   menage: '<path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/>',
   tool: '<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>',
@@ -566,7 +568,7 @@ function viewHome() {
       ${tile('projets', myTasks().length ? `${myTasks().length} tâche${myTasks().length > 1 ? 's' : ''} pour vous` : `${S.projects.filter((p) => p.statut !== 'termine').length} projets`, myTasks().filter((t) => tLate(t) || tToday(t)).length)}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
       ${tile('contacts', `${S.contacts.length} contacts`)}
-      ${bankTile()}
+      ${bankTile()}${chorusTile()}
     </div>
     <div class="group views"><div class="prow ro"><span class="pr-t"><b>Voir comme</b><span class="muted">et faire à leur place si besoin</span></span></div>
       <button class="prow" data-a="preview" data-k="menage"><span class="pr-t"><b>🧹 Femme de ménage</b><span class="muted">${myCleanings().length ? myCleanings().length + ' nettoyage' + (myCleanings().length > 1 ? 's' : '') + ' pour vous' : 'Les nettoyages qui vous sont donnés'}</span></span><span class="chev">›</span></button>
@@ -1451,6 +1453,63 @@ function bankSheet() {
       <div class="row">${(S.banque.banks || []).map((b) => `<button class="btn small soft" data-a="bankLink" data-k="${b.k}">${esc(b.l)}</button>`).join('')}</div>
       <p class="muted">Qui voit les soldes : réglez-le dans Équipe, personne par personne.</p></div>` : ''}`);
 }
+/* ----- factures Chorus Pro : dépôt validé par le propriétaire, suivi, virements ----- */
+const CH_ST = {
+  DEPOSEE: ['Déposée', 'slate'], EN_COURS_ACHEMINEMENT: ['En route', 'slate'], MISE_A_DISPOSITION: ['Reçue par le Département', 'slate'],
+  A_RECYCLER: ['À recycler', 'red'], REJETEE: ['Rejetée', 'red'], SUSPENDUE: ['Suspendue', 'red'], A_COMPLETER: ['À compléter', 'red'], COMPLETEE: ['Complétée', 'amber'],
+  SERVICE_FAIT: ['Service fait', 'amber'], MANDATEE: ['Mandatée', 'amber'], MISE_EN_PAIEMENT: ['Mise en paiement', 'green'], COMPTABILISEE: ['Comptabilisée', 'green'],
+  MISE_A_DISPOSITION_COMPTABLE: ['Comptabilisée', 'green'], ANNULEE: ['Annulée', 'plain'],
+};
+const chSt = (f) => f.paye_le ? ['Payée le ' + fdate(f.paye_le).slice(0, 5), 'green'] : (CH_ST[f.statut] || [String(f.statut || '?').toLowerCase().replace(/_/g, ' '), 'plain']);
+const chHotel = (k) => ((S.chorus && S.chorus.structs) || {})[k] || k;
+const chDepTodo = () => S.chorus ? (S.chorus.depots || []).filter((d) => d.statut === 'a_valider' || d.statut === 'erreur') : [];
+const chPayTodo = () => S.chorus ? (S.chorus.paiements || []).filter((p) => p.statut === 'propose') : [];
+const chAlert = () => S.chorus ? (S.chorus.factures || []).filter((f) => ['A_RECYCLER', 'REJETEE', 'SUSPENDUE', 'A_COMPLETER'].includes(f.statut)).length : 0;
+function chorusTile() {
+  if (!S.chorus || !S.me || S.preview) return '';
+  const own = S.me.role === 'owner', dep = own ? chDepTodo().length : 0, pay = own ? chPayTodo().length : 0, al = chAlert();
+  const wait = (S.chorus.factures || []).filter((f) => !f.paye_le && !['MISE_EN_PAIEMENT', 'ANNULEE', 'REJETEE'].includes(f.statut));
+  const sub = dep ? `${dep} à déposer` : (pay ? `${pay} virement${pay > 1 ? 's' : ''} à confirmer` : (al ? `${al} à corriger` : `${wait.length} en attente de paiement`));
+  return `<button class="tile" data-a="facOpen"><span class="ti-ic t-teal">${ico('invoice')}</span>${dep + pay + al ? `<span class="badge">${dep + pay + al}</span>` : ''}
+    <span class="ti-t">Factures</span><span class="ti-s">${sub}</span></button>`;
+}
+function facturesSheet() {
+  const C = S.chorus || {}, own = S.me.role === 'owner', U = C.urls || {};
+  const link = (path, label) => U[path] ? `<a class="btn small soft" href="${esc(U[path])}" target="_blank" rel="noopener">📄 ${esc(label)}</a>` : `<span class="muted">📄 ${esc(label)}</span>`;
+  const depCard = (d) => {
+    const pb = (C.checks || {})[d.id] || [], arm = S.facArm === d.id;
+    return `<div class="card"><div class="row between"><b>${esc(d.numero)} · ${esc(chHotel(d.structure))}</b><span class="pill p-${d.statut === 'erreur' ? 'red' : 'amber'}">${d.statut === 'erreur' ? 'Échec du dépôt' : 'À valider'}</span></div>
+      ${d.libelle ? `<p>${esc(d.libelle)}</p>` : ''}
+      <p class="muted">Facture du ${fdate(d.date_facture)} · Département du Loiret, service 30</p>
+      <div class="list"><div class="li"><span class="t">Hors taxes</span><b>${eur(d.montant_ht)}</b></div><div class="li"><span class="t">TVA ${Number(d.taux_tva)} %</span><b>${eur(d.montant_tva)}</b></div><div class="li"><span class="t"><b>Net à payer</b></span><b>${eur(d.montant_ttc)}</b></div></div>
+      ${own ? `<div class="row" style="flex-wrap:wrap;gap:6px;margin:8px 0">${link(d.facture_path, 'Facture')}${(d.annexes || []).map((a) => link(a.path, a.designation)).join('')}</div>` : ''}
+      ${pb.length ? `<p style="color:var(--red)">⚠️ ${esc(pb.join(' · '))}</p>` : ''}
+      ${d.statut === 'erreur' && d.erreur ? `<p style="color:var(--red)">Chorus a répondu : ${esc(d.erreur)}</p>` : ''}
+      ${own ? `<div class="row">${pb.length ? '' : `<button class="btn ${arm ? 'pri' : 'ok'}" data-a="facDepose" data-id="${d.id}">${arm ? `Confirmer le dépôt de ${esc(d.numero)} · ${eur(d.montant_ttc)}` : '✅ J’ai vérifié, déposer sur Chorus'}</button>`}
+        <button class="btn ghost" data-a="facCancel" data-id="${d.id}">Retirer</button></div>` : ''}</div>`;
+  };
+  const payCard = (p) => {
+    const F = (C.factures || []).filter((f) => p.chorus_ids.map(String).includes(String(f.chorus_id))), t = p.tx || {};
+    return `<div class="card"><div class="row between"><b>Virement de ${eur(t.amount)}</b><span class="muted">${fdate(t.day)}</span></div>
+      <p class="muted">${esc(t.counterparty || '')} ${esc(t.label || '')}</p>
+      <p>Correspond à : ${F.map((f) => `<b>${esc(f.numero)}</b> (${esc(chHotel(f.structure))}, ${eur(f.montant_ttc)})`).join(' + ')}</p>
+      ${own ? `<div class="row"><button class="btn ok" data-a="facPay" data-id="${p.id}" data-ok="1">✅ Oui, c’est payé</button><button class="btn ghost" data-a="facPay" data-id="${p.id}" data-ok="">Ce n’est pas ça</button></div>` : ''}</div>`;
+  };
+  const byMonth = {};
+  (C.factures || []).forEach((f) => { const m = /^\d{6}$/.test(f.numero) ? '20' + f.numero.slice(0, 2) + '-' + f.numero.slice(2, 4) : String(f.date_depot || '').slice(0, 7) || 'autre'; (byMonth[m] = byMonth[m] || []).push(f); });
+  const months = Object.keys(byMonth).sort().reverse();
+  const moisL = (m) => /^\d{4}-\d{2}$/.test(m) ? new Date(m + '-15').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) : m;
+  const row = (f) => { const [l, c] = chSt(f); return `<div class="li"><span class="t"><b>${esc(f.numero)}</b> · ${esc(chHotel(f.structure))}<br><span class="muted">déposée le ${fdate(f.date_depot)}</span></span><span style="text-align:right"><b>${eur(f.montant_ttc)}</b><br><span class="pill p-${c}">${esc(l)}</span></span></div>`; };
+  const deps = chDepTodo(), pays = chPayTodo();
+  openSheet('factures', `${sheetHead('🧾 Factures Chorus')}
+    ${own && deps.length ? `<p class="cap">À déposer</p>${deps.map(depCard).join('')}<p class="muted sm">Rien ne part sans votre confirmation. Ouvrez la facture et les pièces avant de valider.</p>` : ''}
+    ${pays.length ? `<p class="cap">Virements reçus à confirmer</p>${pays.map(payCard).join('')}` : ''}
+    <p class="cap">Suivi</p>
+    ${months.length ? months.slice(0, S.facAll ? 99 : 4).map((m) => `<div class="card"><h3>${esc(moisL(m))}</h3><div class="list">${byMonth[m].map(row).join('')}</div></div>`).join('') : '<div class="card"><p class="muted">Pas encore de lecture de Chorus.</p></div>'}
+    ${months.length > 4 && !S.facAll ? '<button class="btn ghost" data-a="facAll">Voir les mois précédents</button>' : ''}
+    <p class="muted sm">${C.last ? 'Statuts lus sur Chorus ' + when(C.last) + '.' : ''} Lecture automatique 2 fois par jour. « Payée » = virement retrouvé sur le compte et confirmé ; « Mise en paiement » = annoncée par Chorus.</p>
+    ${own ? '<button class="btn soft" data-a="facRefresh">🔄 Relire Chorus maintenant</button>' : ''}`);
+}
 const ptSegs = (lang) => `<div class="segc" role="group" aria-label="Langue"><button data-a="ptLang" data-k="ar" aria-pressed="${lang === 'ar'}">الدارجة</button><button data-a="ptLang" data-k="fr" aria-pressed="${lang === 'fr'}">Français</button></div>`;
 // Petit bouton à côté du compte : pastille tant que le dernier point n'a pas été ouvert.
 const ptSeen = () => LS.get('mh-pt-seen', []);
@@ -2005,6 +2064,7 @@ function refreshSheet() {
   else if (S.sheet.startsWith('sd:') && !isTyping()) sdSheet(S.sheet.slice(3));
   else if (S.sheet.startsWith('proj:') && !isTyping()) projSheet(S.sheet.slice(5));
   else if (S.sheet.startsWith('verif:') && !isTyping()) verifSheet(S.sheet.slice(6), S.vHist);
+  else if (S.sheet === 'factures') facturesSheet();
 }
 const sheetHead = (t) => `<div class="row between"><h2>${t}</h2><button class="btn small" data-a="close">Fermer</button></div>`;
 function roomSheet(id) {
@@ -2235,6 +2295,18 @@ const A = {
   ptVoice(d) { S.ptVoice = d.k; LS.set('mh-ptv', d.k); pointSheet(S.ptKind); },
   ptOpen(d) { pointSheet(d.k); },
   bankOpen() { bankSheet(); },
+  facOpen() { S.facArm = null; facturesSheet(); },
+  facAll() { S.facAll = true; facturesSheet(); },
+  async facRefresh() { toast('Lecture de Chorus…'); await act(() => api('chorus_refresh'), 'Statuts à jour'); if (S.sheet === 'factures') facturesSheet(); },
+  async facPay(d) { await act(() => api('chorus_pay', { id: d.id, ok: !!d.ok }), d.ok ? 'Paiement confirmé 💶' : 'Rapprochement écarté'); if (S.sheet === 'factures') facturesSheet(); },
+  async facCancel(d) { if (S.facCancelArm !== d.id) { S.facCancelArm = d.id; toast('Touche encore « Retirer » pour retirer cette facture de la liste à déposer.'); setTimeout(() => S.facCancelArm = null, 5000); return; } S.facCancelArm = null; await act(() => api('chorus_annuler', { id: d.id }), 'Retirée'); if (S.sheet === 'factures') facturesSheet(); },
+  async facDepose(d) {
+    const dep = chDepTodo().find((x) => x.id === d.id); if (!dep) return;
+    if (S.facArm !== d.id) { S.facArm = d.id; facturesSheet(); setTimeout(() => { if (S.facArm === d.id) { S.facArm = null; if (S.sheet === 'factures') facturesSheet(); } }, 8000); return; }
+    S.facArm = null; toast('Dépôt sur Chorus en cours…');
+    await act(() => api('chorus_deposer', { id: dep.id, numero: dep.numero, ttc: dep.montant_ttc }), `Facture ${dep.numero} déposée sur Chorus ✅`);
+    if (S.sheet === 'factures') facturesSheet();
+  },
   async bankRefresh() { if (await act(() => api('bank_refresh'), 'Soldes actualisés')) bankSheet(); },
   async bankLink(d) {
     try { const r = await api('bank_link', { bank: d.k, back: APP_URL }); if (r && r.url) location.href = r.url; }
