@@ -72,7 +72,7 @@ export async function courrierState() {
   const cols = "id,thread_id,de,de_nom,a,cc,sujet,recu_le,corps,pj,autres_pj,statut,importance,categorie,resume,demandes,reponse,repondre_a,copie,pieces,manque,note,propose_le,traite_le,envoye_le,erreur";
   const [{ data: open }, { data: done }, { count }] = await Promise.all([
     db.from("courrier").select(cols).in("statut", ["a_valider", "approuve", "envoi", "erreur"]).order("recu_le", { ascending: false }).limit(60),
-    db.from("courrier").select("id,de,de_nom,sujet,recu_le,statut,importance,resume,traite_le,envoye_le").in("statut", ["envoye", "ignore", "sans_reponse"]).gte("recu_le", since).order("recu_le", { ascending: false }).limit(80),
+    db.from("courrier").select("id,de,de_nom,sujet,recu_le,statut,importance,resume,note,traite_le,envoye_le").in("statut", ["envoye", "ignore", "sans_reponse"]).gte("recu_le", since).order("recu_le", { ascending: false }).limit(80),
     db.from("courrier").select("id", { count: "exact", head: true }).eq("statut", "nouveau"),
   ]);
   // Le texte des PDF reçus sert à Claude, pas à l'écran : on ne l'envoie pas à l'appli.
@@ -88,6 +88,12 @@ export async function courrierSet(meId: string, body: any) {
   if (body.do === "ignorer") {
     if (!["a_valider", "erreur", "sans_reponse"].includes(r.statut)) throw new CE("courrier_etat");
     await db.from("courrier").update({ statut: "ignore", traite_par: meId, traite_le: now, updated_at: now }).eq("id", r.id);
+    return { ok: true };
+  }
+  if (body.do === "fait") {
+    // Action sans réponse (ex. fuite à vérifier) : le propriétaire la marque comme faite.
+    if (r.statut !== "sans_reponse") throw new CE("courrier_etat");
+    await db.from("courrier").update({ importance: "info", traite_par: meId, traite_le: now, updated_at: now }).eq("id", r.id);
     return { ok: true };
   }
   if (body.do === "rouvrir") {

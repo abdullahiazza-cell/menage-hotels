@@ -1529,20 +1529,23 @@ function crWarn(r) {
 function courrierTile() {
   if (!S.courrier || !S.me || S.me.role !== 'owner' || S.preview) return '';
   const n = crTodo().length, urg = crTodo().filter((r) => r.importance === 'urgent').length, wait = S.courrier.nouveaux || 0;
-  const sub = n ? `${n} réponse${n > 1 ? 's' : ''} à relire${urg ? ` · <span class="ora">${urg} urgente${urg > 1 ? 's' : ''}</span>` : ''}` : (wait ? `${wait} mail${wait > 1 ? 's' : ''} à la prochaine lecture` : 'Rien à relire');
+  const act = (S.courrier.done || []).filter((r) => r.statut === 'sans_reponse' && r.importance === 'urgent').length;
+  const sub = n ? `${n} réponse${n > 1 ? 's' : ''} à relire${urg ? ` · <span class="ora">${urg} urgente${urg > 1 ? 's' : ''}</span>` : ''}` : (act ? `<span class="ora">${act} action${act > 1 ? 's' : ''} à faire</span>` : (wait ? `${wait} mail${wait > 1 ? 's' : ''} à la prochaine lecture` : 'Rien à relire'));
   return `<button class="tile" data-a="crList"><span class="ti-ic t-indigo">${ico('mail')}</span>${n ? `<span class="badge">${n}</span>` : ''}
     <span class="ti-t">Courrier</span><span class="ti-s">${sub}</span></button>`;
 }
 function courrierSheet() {
   const C = S.courrier || { open: [], done: [], nouveaux: 0 };
   const pill = (r) => { const [l, c] = CR_ST[r.statut] || [r.statut, 'plain']; return `<span class="pill p-${c}">${esc(l)}</span>`; };
-  const line = (r) => `<span class="pr-t"><b>${r.importance === 'urgent' ? '🔴 ' : ''}${esc(crWho(r))}</b><span>${esc(r.sujet || '(sans objet)')}</span>${r.resume ? `<span class="muted">${esc(r.resume)}</span>` : ''}<span class="muted sm">reçu ${when(r.recu_le)}</span></span>`;
+  const line = (r) => `<span class="pr-t"><b>${r.importance === 'urgent' ? '🔴 ' : ''}${esc(crWho(r))}</b><span>${esc(r.sujet || '(sans objet)')}</span>${r.resume ? `<span class="muted">${esc(r.resume)}</span>` : ''}${r.statut === 'sans_reponse' && r.note ? `<span>👉 ${esc(r.note)}</span>` : ''}<span class="muted sm">reçu ${when(r.recu_le)}</span></span>`;
   const btn = (r) => `<button class="prow" data-a="crOpen" data-id="${esc(r.id)}">${line(r)}${pill(r)}</button>`;
   const todo = crTodo().slice().sort((a, b) => (b.importance === 'urgent') - (a.importance === 'urgent') || String(b.recu_le).localeCompare(String(a.recu_le)));
   const going = crOpenRows().filter((r) => r.statut === 'approuve' || r.statut === 'envoi');
-  const done = C.done || [];
+  const done = (C.done || []).filter((r) => !(r.statut === 'sans_reponse' && r.importance === 'urgent'));
+  const actions = (C.done || []).filter((r) => r.statut === 'sans_reponse' && r.importance === 'urgent');
   openSheet('courrier', `${sheetHead('📬 Courrier')}
     ${todo.length ? `<p class="cap">À relire</p><div class="group">${todo.map(btn).join('')}</div>` : '<div class="card"><p class="muted">Aucune réponse à relire pour l’instant.</p></div>'}
+    ${actions.length ? `<p class="cap">À faire de votre côté (pas de réponse à écrire)</p><div class="group">${actions.map((r) => `<div class="prow ro">${line(r)}<button class="btn small soft" data-a="crFait" data-id="${esc(r.id)}">C’est fait</button></div>`).join('')}</div>` : ''}
     ${going.length ? `<p class="cap">Approuvées</p><div class="group">${going.map(btn).join('')}</div>` : ''}
     ${done.length ? `<p class="cap">Traités ces 14 derniers jours</p><div class="group">${done.slice(0, S.crAll ? 80 : 8).map((r) => `<div class="prow ro">${line(r)}${pill(r)}</div>`).join('')}</div>${done.length > 8 && !S.crAll ? '<button class="btn ghost" data-a="crAll">Tout afficher</button>' : ''}` : ''}
     <p class="muted sm">La boîte hoteldeparisadm est lue vers 10 h et 17 h (heure de France). Claude prépare une réponse pour chaque mail qui en demande une, avec les pièces retrouvées dans vos mails, le Drive et l’appli. Rien ne part sans votre accord.${C.nouveaux ? ` ${C.nouveaux} mail${C.nouveaux > 1 ? 's' : ''} attend${C.nouveaux > 1 ? 'ent' : ''} la prochaine lecture.` : ''}</p>`);
@@ -2393,6 +2396,7 @@ const A = {
     S.crIgnArm = null;
     if (await act(() => api('courrier_set', { id: d.id, do: 'ignorer' }), 'Mail classé sans réponse')) courrierSheet();
   },
+  async crFait(d) { if (await act(() => api('courrier_set', { id: d.id, do: 'fait' }), 'Noté ✅')) courrierSheet(); },
   async crReopen(d) { if (await act(() => api('courrier_set', { id: d.id, do: 'rouvrir' }), 'Envoi annulé : vous pouvez modifier')) crSheet(d.id); },
   facAll() { S.facAll = true; facturesSheet(); },
   async facRefresh() { toast('Lecture de Chorus…'); await act(() => api('chorus_refresh'), 'Statuts à jour'); if (S.sheet === 'factures') facturesSheet(); },
