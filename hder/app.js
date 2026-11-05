@@ -367,7 +367,7 @@ function migrateMods(p) {
 const LS = 'hder-app-v1';
 const fresh = p => ({ xp: 0, dh: 0, streak: 0, last: null, stars: {}, manches: {}, missions: {}, test: null, ear: false, mods2: {}, selfGrade: false, t: 0, ...p });
 const INIT = {
-  v: 1, cur: null, skin: null, fam: null, profiles: [], events: {}, revs: {}, dirty: [], pend: [],
+  v: 1, cur: null, me: null, role: null, why: null, applied: [], skin: null, fam: null, profiles: [], events: {}, revs: {}, dirty: [], pend: [],
   settings: { pinSet: false, rate: 1 }, synced: 0,
   cast: { m: 'male-9', f: 'female-6', ep: 'male-11', fe: 'female-5', en: 'female-10' }, castV: 2, likes: {}
 };
@@ -393,6 +393,8 @@ const IC = {
   wave: '<path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   palette: '<path d="M12 3a9 9 0 1 0 0 18c1.2 0 1.8-.8 1.8-1.7 0-1.3-1.1-1.6-1.1-2.8 0-1 .8-1.6 1.8-1.6h2.2A4.3 4.3 0 0 0 21 10.6C21 6.4 17 3 12 3z" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="7.5" cy="11" r="1.4" fill="currentColor"/><circle cx="10.5" cy="7" r="1.4" fill="currentColor"/><circle cx="15" cy="7.5" r="1.4" fill="currentColor"/>',
   mic: '<rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21M3 3l18 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
+  send: '<path d="M4 12 20 4l-4 16-4-7-8-1Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="m12 13 8-9" fill="none" stroke="currentColor" stroke-width="2"/>',
+  plus: '<path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>',
   copy: '<rect x="8" y="8" width="12" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M16 8V5.5A1.5 1.5 0 0 0 14.5 4h-9A1.5 1.5 0 0 0 4 5.5v9A1.5 1.5 0 0 0 5.5 16H8" fill="none" stroke="currentColor" stroke-width="2"/>',
   back: '<path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
   micon: '<rect x="9" y="3" width="6" height="11" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
@@ -571,7 +573,7 @@ function PlayerCard({ st, cur, go }) {
   const galons = Object.values(cur.manches).filter(Boolean).length;
   return html`<section className="card player" aria-label="Ton profil">
     <div className="player-top">
-      <button type="button" style=${{ border: 0, background: 'none', padding: 0 }} onClick=${() => go('who')} aria-label="Changer de joueur"><${Avatar} id=${cur.av} size=${64}/></button>
+      <button type="button" style=${{ border: 0, background: 'none', padding: 0 }} onClick=${() => go('who')} aria-label="Mon profil"><${Avatar} id=${cur.av} size=${64}/></button>
       <div style=${{ minWidth: 0, flex: 1 }}>
         <div className="eyebrow">Saison ${Math.floor(lv / 3) + 1} · ${L.season}</div>
         <div className="player-name">${cur.name}</div>
@@ -687,29 +689,30 @@ function Family({ st, cur, api, go }) {
       <div className="troupe-list">${sceneList(cur.track).map(sid => html`<button key=${sid} type="button" className="btn soft" onClick=${() => go('scene', { sid, mode: 'troupe' })}><span aria-hidden="true">${SCN[sid].emoji}</span>${SCN[sid].title}</button>`)}</div>
     </section>
     ${pending.length > 0 && html`<section className="card stack"><h3>Défis en cours</h3>${pending.map(d => html`<div key=${d.id} className="row small"><b>${pname(d.from)}</b> défie <b>${pname(d.to)}</b>. Le premier qui finit une manche de scène gagne 25 XP.</div>`)}</section>`}
-    <${Parents} st=${st} api=${api}/>
+    ${(st.role === 'owner' || st.role === 'parent') && html`<${Access} st=${st} cur=${cur} api=${api}/>`}
+    ${(st.role === 'owner' || st.role === 'parent') && html`<${Parents} st=${st} api=${api}/>`}
     <${Ranking} st=${st} cur=${cur} api=${api}/>
     <${Feed} st=${st} api=${api}/>
-    <p className="small muted">Chacun peut jouer sur son téléphone : la progression, le fil, les défis et les tirelires sont partagés avec toute la famille.</p>
+    <p className="small muted">Chacun joue sur son téléphone, dans son profil : la progression, le fil, les défis et les tirelires sont partagés avec toute la famille.</p>
   </div>`;
 }
 
-/* ---------- Profils ---------- */
-function Who({ st, cur, api, go, first }) {
+/* ---------- Mon profil (chacun ne modifie que le sien) ---------- */
+function Who({ st, cur, api, go }) {
+  const p = cur;
   return html`<div className="stack" style=${{ gap: '20px' }}>
-    ${first ? html`<h2>Qui joue sur ce téléphone ?</h2>` : html`<${BackBar} go=${go} title="Qui joue ?"/>`}
-    <p className="muted">Touche « Jouer » sur ton profil. Tu pourras changer plus tard dans Réglages.</p>
-    ${st.profiles.map(p => html`<section key=${p.id} className=${'card prof' + (p.id === cur.id ? ' cur' : '')}>
-      <div className="row"><${Avatar} id=${p.av} size=${52}/><div style=${{ flex: 1, minWidth: 0 }}><div className="player-name" style=${{ fontSize: '20px' }}>${p.name}</div><div className="small muted num">Niveau ${lvlOf(p.xp) + 1} · ${p.xp} XP${p.test ? ' · test : niveau ' + p.test.lvl : ''}</div></div>
-        ${p.id === cur.id ? html`<span className="pill acc">En jeu</span>` : html`<button type="button" className="btn sm" onClick=${() => { api.setCur(p.id); go('home'); }}>Jouer</button>`}</div>
-      <div className="field"><label htmlFor=${'n-' + p.id}>Prénom</label><input id=${'n-' + p.id} className="input" value=${p.name} maxLength="20" onChange=${e => api.patchProfile(p.id, { name: e.target.value })}/></div>
+    <${BackBar} go=${go} title="Mon profil"/>
+    <section className="card prof cur stack">
+      <div className="row"><${Avatar} id=${p.av} size=${56}/><div style=${{ flex: 1, minWidth: 0 }}><div className="player-name" style=${{ fontSize: '20px' }}>${p.name}</div><div className="small muted num">Niveau ${lvlOf(p.xp) + 1} · ${p.xp} XP${p.test ? ' · test : niveau ' + p.test.lvl : ''} · ${ROLE_TXT[st.role] || ''}</div></div></div>
+      <div className="field"><label htmlFor="n-me">Prénom</label><input id="n-me" className="input" value=${p.name} maxLength="20" onChange=${e => api.patchProfile(p.id, { name: e.target.value })}/></div>
       <div className="row">
         <div className="seg" role="group" aria-label="Genre"><button type="button" className=${p.g === 'm' ? 'on' : ''} onClick=${() => api.patchProfile(p.id, { g: 'm' })}>Homme ou garçon</button><button type="button" className=${p.g === 'f' ? 'on' : ''} onClick=${() => api.patchProfile(p.id, { g: 'f' })}>Femme ou fille</button></div>
         <div className="seg" role="group" aria-label="Parcours"><button type="button" className=${p.track === 'adultes' ? 'on' : ''} onClick=${() => api.patchProfile(p.id, { track: 'adultes' })}>Adultes</button><button type="button" className=${p.track === 'ados' ? 'on' : ''} onClick=${() => api.patchProfile(p.id, { track: 'ados' })}>Ados</button></div>
       </div>
       <div className="field"><label>Avatar</label><div className="av-pick">${Object.keys(AV).map(k => html`<button key=${k} type="button" className=${p.av === k ? 'on' : ''} onClick=${() => api.patchProfile(p.id, { av: k })} aria-label=${AV[k].name} title=${AV[k].name}><${Avatar} id=${k} size=${40}/></button>`)}</div><span className="xs muted">${AV[p.av].name}</span></div>
-      <label className="toggle" htmlFor=${'e-' + p.id}><input id=${'e-' + p.id} type="checkbox" checked=${!!p.ear} onChange=${e => api.patchProfile(p.id, { ear: e.target.checked })}/>À l'oreille seulement (QCM sans texte)</label>
-    </section>`)}
+      <label className="toggle" htmlFor="e-me"><input id="e-me" type="checkbox" checked=${!!p.ear} onChange=${e => api.patchProfile(p.id, { ear: e.target.checked })}/>À l'oreille seulement (QCM sans texte)</label>
+    </section>
+    <p className="small muted">Ce téléphone est celui de ${p.name}. Personne d'autre ne peut jouer dans ton profil, et tu ne peux pas jouer dans celui des autres.</p>
   </div>`;
 }
 
@@ -1310,29 +1313,181 @@ function mergeP(a, b) {
   return o;
 }
 
-/* ---------- Rejoindre la famille ---------- */
-function Join({ onJoined }) {
-  const [code, setCode] = useState('');
+/* ---------- Accès personnels : un téléphone = un profil ---------- */
+const IS_IOS = typeof navigator !== 'undefined' && (/iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+const IS_APP = typeof window !== 'undefined' && ((window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true);
+const fmtCode = c => { const x = String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 8); return x.length > 4 ? x.slice(0, 4) + '-' + x.slice(4) : x; };
+const appUrl = () => location.origin + location.pathname.replace(/index\.html$/, '');
+const inviteUrl = code => appUrl() + '#i=' + String(code).replace(/[^A-Z0-9]/gi, '');
+const devLabel = () => (IS_IOS ? 'iPhone' : (/Android/.test(navigator.userAgent) ? 'Android' : 'Navigateur')) + (IS_APP ? ' (appli)' : '');
+const ROLE_TXT = { owner: 'Propriétaire', parent: 'Parent', member: 'Membre' };
+let INSTALL_EVT = null;
+if (typeof window !== 'undefined') window.addEventListener('beforeinstallprompt', e => { e.preventDefault(); INSTALL_EVT = e; });
+
+function InstallSteps({ code }) {
+  if (IS_APP) return null;
+  return html`<div className="card soft-card stack-s install">
+    <div className="eyebrow">Installer l'appli sur ce téléphone</div>
+    ${IS_IOS ? html`<ol className="small steps-ol">
+        <li>En bas de Safari, touche <b>Partager</b> <span aria-hidden="true">⬆︎</span>, puis <b>« Sur l'écran d'accueil »</b>.</li>
+        <li>Ouvre <b>Hder !</b> depuis ton écran d'accueil.</li>
+        ${code ? html`<li>Tape ton code d'accès : <b className="num code-show">${fmtCode(code)}</b></li>` : html`<li>Tape ton code d'accès.</li>`}
+      </ol>`
+    : html`<p className="small">Dans Chrome, touche le menu <b>⋮</b> puis <b>« Installer l'application »</b> (ou « Ajouter à l'écran d'accueil »).</p>
+      ${INSTALL_EVT && html`<button type="button" className="btn soft sm" style=${{ justifySelf: 'start' }} onClick=${() => { INSTALL_EVT.prompt(); INSTALL_EVT = null; }}>Installer maintenant</button>`}`}
+  </div>`;
+}
+
+// Écran d'entrée : code d'accès personnel, retour de Papa sur un nouveau téléphone, mise à jour du téléphone de Papa
+function Gate({ mode0, invite, why, settings, onIn, onLegacyGone }) {
+  const [mode, setMode] = useState(mode0);
+  const [code, setCode] = useState(fmtCode(invite || ''));
+  const [famCode, setFamCode] = useState('');
+  const [pin, setPin] = useState('');
+  const [pin2, setPin2] = useState('');
+  const [info, setInfo] = useState(null);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState(false);
-  const submit = async e => {
-    if (e) e.preventDefault();
-    if (!code.trim()) return;
+  const [later, setLater] = useState(IS_IOS && !IS_APP && !!invite);
+  useEffect(() => {
+    if (!invite) return;
+    callApi('invite-info', { code: invite }).then(setInfo).catch(e => setErr(e.code === 'utilise' ? "Ce code a déjà servi. Demande un nouveau lien à Papa." : (e.code === 'expire' ? "Ce lien a expiré. Demande un nouveau lien à Papa." : (e.status === 404 ? "Ce lien ne marche pas. Demande un nouveau lien à Papa." : ''))));
+  }, []);
+  const fail = e => {
+    const c = e && e.code;
+    setErr(c === 'utilise' ? "Ce code a déjà servi. Demande un nouveau lien à Papa." : c === 'expire' ? "Ce code a expiré. Demande un nouveau lien à Papa." : c === 'code' ? "Ce code ne marche pas. Vérifie-le." : c === 'pin' ? 'Code parent incorrect.' : c === 'bloque' ? 'Trop d’essais : réessaie dans 15 minutes.' : c === 'liens' ? "Le téléphone de Papa est déjà enregistré. Demande ton lien personnel à Papa." : (e && e.status) ? 'Ça n’a pas marché. Réessaie.' : 'Pas de connexion. Réessaie quand tu as du réseau.');
+  };
+  const run = async (act, body) => {
     setBusy(true); setErr('');
-    try { const r = await callApi('join', { code }); onJoined(r); }
-    catch (x) { setErr(x.status === 404 ? "Ce code ne marche pas. Vérifie-le avec Papa ou Maman." : "Pas de connexion. Réessaie quand tu as du réseau."); }
+    try { const r = await callApi(act, { ...body, label: devLabel() }); try { history.replaceState(null, '', location.pathname); } catch (x) {} onIn(r); }
+    catch (e) { fail(e); if (e && e.status === 401 && e.code === 'liens' && onLegacyGone) onLegacyGone(); }
     setBusy(false);
   };
-  return html`<main className="wrap gut join"><form className="card stack" onSubmit=${submit}>
-    <div className="join-logo" aria-hidden="true"><img src="icons/icon-192.png" alt="" width="88" height="88"/></div>
-    <h1 className="brand" style=${{ fontSize: '40px', textAlign: 'center' }}>Hder<b> !</b></h1>
-    <p className="muted" style=${{ textAlign: 'center' }}>Parle darija sans peur, en famille.</p>
-    <div className="field"><label htmlFor="fam-code">Code de la famille</label>
-      <input id="fam-code" className="input code-in" autoComplete="off" autoCapitalize="characters" spellCheck="false" placeholder="IAZZA-XXXXX" value=${code} onChange=${e => setCode(e.target.value.toUpperCase())}/></div>
-    <button type="submit" className="btn block" disabled=${busy || !code.trim()}>${busy ? 'Connexion…' : 'Entrer'}</button>
-    ${err && html`<p className="small c-bad" role="alert">${err}</p>`}
-    <p className="xs muted">Le code est donné une fois par un parent. Ensuite, ce téléphone reste connecté à la famille.</p>
-  </form></main>`;
+  const pinField = (id, v, set, label, ph) => html`<div className="field"><label htmlFor=${id}>${label}</label><input id=${id} className="input pin num" type="password" inputMode="numeric" autoComplete="off" maxLength="4" placeholder=${ph || '••••'} value=${v} onChange=${e => set(e.target.value.replace(/\D/g, '').slice(0, 4))}/></div>`;
+  const newPinOK = /^\d{4}$/.test(pin) && pin === pin2;
+  const logo = html`<div className="join-logo" aria-hidden="true"><img src="icons/icon-192.png" alt="" width="80" height="80"/></div><h1 className="brand" style=${{ fontSize: '38px', textAlign: 'center' }}>Hder<b> !</b></h1>`;
+  let body;
+  if (mode === 'claim') {
+    const has = settings && settings.pinSet;
+    body = html`${logo}
+      <h2 style=${{ textAlign: 'center' }}>Nouveau : chacun son accès</h2>
+      <p className="muted">Chaque membre de la famille a maintenant son propre profil, protégé. Ce téléphone devient celui de <b>Papa</b>, le propriétaire : c'est toi qui enverras les liens d'accès aux autres.</p>
+      ${has ? pinField('cpin', pin, setPin, 'Ton code parent') : html`${pinField('cpin', pin, setPin, 'Choisis ton code parent secret (4 chiffres)')}${pinField('cpin2', pin2, setPin2, 'Retape-le', '')}<p className="xs muted">Il protège les vrais dirhams et ton accès. Ne le donne pas aux enfants.</p>`}
+      <button type="submit" className="btn block" disabled=${busy || (has ? pin.length !== 4 : !newPinOK)}>${busy ? 'Un instant…' : "C'est mon téléphone"}</button>`;
+  } else if (mode === 'recover') {
+    body = html`${logo}
+      <h2 style=${{ textAlign: 'center' }}>Retrouver l'accès de Papa</h2>
+      <p className="muted small">Sur un nouveau téléphone : tape le code de la famille et ton code parent.</p>
+      <div className="field"><label htmlFor="fcode">Code de la famille</label><input id="fcode" className="input code-in" autoComplete="off" autoCapitalize="characters" spellCheck="false" placeholder="IAZZA-XXXXX" value=${famCode} onChange=${e => setFamCode(e.target.value.toUpperCase())}/></div>
+      ${pinField('rpin', pin, setPin, 'Code parent')}
+      <button type="submit" className="btn block" disabled=${busy || !famCode.trim() || pin.length !== 4}>${busy ? 'Un instant…' : 'Entrer'}</button>
+      <button type="button" className="linkbtn" onClick=${() => { setMode('join'); setErr(''); }}>J'ai un code d'accès personnel</button>`;
+  } else {
+    const name = info && info.name;
+    body = html`${logo}
+      ${name ? html`<h2 style=${{ textAlign: 'center' }}>Salam ${name} !</h2><p className="muted" style=${{ textAlign: 'center' }}>${info.family ? info.family + ' t’invite' : 'Ta famille t’invite'} à parler darija sans peur.</p>` : html`<p className="muted" style=${{ textAlign: 'center' }}>Parle darija sans peur, en famille.</p>`}
+      ${why === 'revoked' && html`<p className="small c-bad" role="alert">Ce téléphone a été déconnecté. Demande un nouveau lien à Papa.</p>`}
+      ${why === 'claimed' && html`<p className="small" role="status">Nouveau : chacun a maintenant son accès personnel. Demande ton lien à Papa.</p>`}
+      ${later ? html`<${InstallSteps} code=${code}/>
+          <button type="button" className="linkbtn" onClick=${() => setLater(false)}>Utiliser Hder ! sans l'installer</button>`
+        : html`<div className="field"><label htmlFor="acode">Ton code d'accès personnel</label>
+            <input id="acode" className="input code-in" autoComplete="off" autoCapitalize="characters" spellCheck="false" placeholder="XXXX-XXXX" value=${code} onChange=${e => setCode(fmtCode(e.target.value))}/></div>
+          <button type="submit" className="btn block" disabled=${busy || code.replace('-', '').length !== 8}>${busy ? 'Connexion…' : (name ? 'Commencer' : 'Entrer')}</button>
+          <p className="xs muted">Papa t'envoie ton lien et ton code depuis son appli. Le code ne sert qu'une fois : ensuite ce téléphone reste connecté à ton profil.</p>
+          <button type="button" className="linkbtn" onClick=${() => { setMode('recover'); setErr(''); }}>Je suis Papa : retrouver mon accès</button>`}`;
+  }
+  const submit = e => {
+    e.preventDefault();
+    if (mode === 'claim') run('claim', { pin });
+    else if (mode === 'recover') run('recover', { code: famCode, pin });
+    else if (!later) run('redeem', { code });
+  };
+  return html`<main className="wrap gut join"><form className="card stack" onSubmit=${submit}>${body}${err && html`<p className="small c-bad" role="alert">${err}</p>`}</form></main>`;
+}
+
+// Papa (et les parents qu'il choisit) : envoyer les liens, déconnecter, ajouter ou modifier un membre
+function Access({ st, cur, api }) {
+  const [acc, setAcc] = useState(null);
+  const [err, setErr] = useState('');
+  const [inv, setInv] = useState(null);      // { pid, code, expires }
+  const [edit, setEdit] = useState(null);    // { pid?, name, g, track }
+  const [busy, setBusy] = useState(false);
+  const owner = st.role === 'owner';
+  const load = () => callApi('access').then(r => { setAcc(r.access || {}); setErr(''); }).catch(() => setErr('Pas de connexion : la gestion des accès a besoin du réseau.'));
+  useEffect(() => { load(); }, []);
+  const pname = pid => (st.profiles.find(p => p.id === pid) || {}).name || '';
+  const send = async pid => {
+    setBusy(true);
+    try { const r = await callApi('invite', { pid }); setInv({ pid, code: r.code, expires: r.expires }); load(); }
+    catch (e) { api.toast('Lien non créé : réessaie avec du réseau'); }
+    setBusy(false);
+  };
+  const msgOf = x => 'Salam ' + pname(x.pid) + ' ! Voici ton accès personnel à Hder !, l’appli de la famille pour parler darija.\n\n1. Ouvre ce lien sur TON téléphone : ' + inviteUrl(x.code) + '\n2. Ton code d’accès : ' + fmtCode(x.code) + '\n\nIl ne sert qu’une fois et reste valable 7 jours. ' + (cur.name || 'Papa');
+  const share = async x => {
+    const text = msgOf(x);
+    if (navigator.share) { try { await navigator.share({ title: 'Hder !', text }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+    copy(x);
+  };
+  const copy = async x => { try { await navigator.clipboard.writeText(msgOf(x)); api.toast('Message copié'); } catch (e) { api.toast('Copie impossible : recopie le code à la main'); } };
+  const revoke = async pid => {
+    if (!window.confirm('Déconnecter tous les téléphones de ' + pname(pid) + ' ? Sa progression est gardée ; il lui faudra un nouveau lien.')) return;
+    try { await callApi('revoke', { pid }); api.toast('Téléphones déconnectés'); load(); } catch (e) { api.toast('Impossible pour l’instant'); }
+  };
+  const saveEdit = async () => {
+    setBusy(true);
+    try {
+      const r = await callApi('member', { pid: edit.pid, name: edit.name, g: edit.g, track: edit.track });
+      api.toast(edit.pid ? 'Profil modifié' : 'Membre ajouté'); const isNew = !edit.pid; setEdit(null); await api.syncNow(); load();
+      if (isNew && r.pid) send(r.pid);
+    } catch (e) { api.toast(e.code === 'plein' ? '12 membres au maximum' : 'Enregistrement impossible'); }
+    setBusy(false);
+  };
+  const setParent = async (pid, on) => {
+    try { await callApi('parent', { pid, on }); api.setParents(on ? (st.settings.parents || []).concat([pid]) : (st.settings.parents || []).filter(x => x !== pid)); }
+    catch (e) { api.toast('Impossible pour l’instant'); }
+  };
+  const status = p => {
+    const a = (acc || {})[p.id] || {};
+    if (a.phones > 0) return a.phones + ' téléphone' + (a.phones > 1 ? 's' : '') + ' connecté' + (a.phones > 1 ? 's' : '') + (a.last ? ' · vu ' + ago(Date.parse(a.last)) : '');
+    if (a.invite) return 'Lien envoyé, valable jusqu’au ' + new Date(a.invite).toLocaleDateString('fr-FR');
+    return 'Aucun téléphone connecté';
+  };
+  const parents = (st.settings && st.settings.parents) || [];
+  const ownerPid = (st.settings && st.settings.owner) || 'p1';
+  const form = edit && html`<div className="card soft-card stack-s">
+    <div className="field"><label htmlFor="mname">Prénom</label><input id="mname" className="input" maxLength="20" value=${edit.name} onChange=${e => setEdit({ ...edit, name: e.target.value })}/></div>
+    <div className="row">
+      <div className="seg" role="group" aria-label="Genre"><button type="button" className=${edit.g === 'm' ? 'on' : ''} onClick=${() => setEdit({ ...edit, g: 'm' })}>Homme ou garçon</button><button type="button" className=${edit.g === 'f' ? 'on' : ''} onClick=${() => setEdit({ ...edit, g: 'f' })}>Femme ou fille</button></div>
+      <div className="seg" role="group" aria-label="Parcours"><button type="button" className=${edit.track === 'adultes' ? 'on' : ''} onClick=${() => setEdit({ ...edit, track: 'adultes' })}>Adultes</button><button type="button" className=${edit.track === 'ados' ? 'on' : ''} onClick=${() => setEdit({ ...edit, track: 'ados' })}>Ados</button></div>
+    </div>
+    <div className="row"><button type="button" className="btn sm" disabled=${busy || !edit.name.trim()} onClick=${saveEdit}>${edit.pid ? 'Enregistrer' : 'Ajouter et créer son lien'}</button><button type="button" className="btn sm ghost" onClick=${() => setEdit(null)}>Annuler</button></div>
+  </div>`;
+  return html`<section className="card stack" aria-label="Accès de la famille">
+    <div className="sec-h"><div><div className="eyebrow">${ROLE_TXT[st.role]}</div><h3>Accès de la famille</h3></div></div>
+    <p className="small muted">Chacun joue sur son téléphone, dans son profil à lui. Envoie à chacun son lien personnel : il contient un code d'accès qui ne sert qu'une fois.</p>
+    ${err && html`<p className="small c-bad">${err}</p>`}
+    ${st.profiles.map(p => { const isMe = p.id === cur.id, isOwner = p.id === ownerPid, canTouch = owner || !isOwner; const a = (acc || {})[p.id] || {}; return html`<div key=${p.id} className="acc-row">
+      <div className="row" style=${{ flexWrap: 'nowrap' }}><${Avatar} id=${p.av} size=${40}/><div style=${{ flex: 1, minWidth: 0 }}><b>${p.name}</b>${isMe ? html` <span className="xs muted">(toi)</span>` : ''} <span className="pill xs">${ROLE_TXT[isOwner ? 'owner' : (parents.includes(p.id) ? 'parent' : 'member')]}</span><div className="xs muted">${acc ? status(p) : '…'}</div></div></div>
+      ${canTouch && html`<div className="row acc-btns">
+        <button type="button" className="btn sm" disabled=${busy} onClick=${() => send(p.id)}><${Icon} n="send" s=${16}/>${a.phones > 0 ? 'Nouveau lien' : 'Envoyer son lien'}</button>
+        ${!isMe && a.phones > 0 && html`<button type="button" className="btn sm ghost" onClick=${() => revoke(p.id)}>Déconnecter</button>`}
+        ${!isMe && html`<button type="button" className="btn sm ghost" onClick=${() => setEdit({ pid: p.id, name: p.name, g: p.g, track: p.track })}>Modifier</button>`}
+        ${owner && !isOwner && p.track === 'adultes' && html`<label className="toggle xs" htmlFor=${'par-' + p.id}><input id=${'par-' + p.id} type="checkbox" checked=${parents.includes(p.id)} onChange=${e => setParent(p.id, e.target.checked)}/>Parent</label>`}
+      </div>`}
+      ${inv && inv.pid === p.id && html`<div className="card soft-card stack-s invite">
+        <div className="small">Code d'accès de ${p.name} : <b className="num code-show big-code">${fmtCode(inv.code)}</b></div>
+        <div className="xs muted">Valable 7 jours, une seule fois. Il s'ouvre sur le téléphone de ${p.name}.</div>
+        <div className="row">
+          <button type="button" className="btn sm" onClick=${() => share(inv)}><${Icon} n="send" s=${16}/>Envoyer…</button>
+          <a className="btn sm soft" href=${'https://wa.me/?text=' + encodeURIComponent(msgOf(inv))} target="_blank" rel="noopener">WhatsApp</a>
+          <button type="button" className="btn sm ghost" onClick=${() => copy(inv)}>Copier</button>
+        </div>
+      </div>`}
+      ${edit && edit.pid === p.id && form}
+    </div>`; })}
+    ${edit && !edit.pid ? form : html`<button type="button" className="btn soft" style=${{ justifySelf: 'start' }} onClick=${() => setEdit({ name: '', g: 'm', track: 'adultes' })}><${Icon} n="plus" s=${16}/>Ajouter un membre (famille, proches)</button>`}
+    <p className="xs muted">Personne ne peut jouer dans le profil d'un autre. En mode Troupe, les points de chacun sont envoyés sur son propre profil.</p>
+  </section>`;
 }
 
 /* ---------- Espace parents (code vérifié par le serveur) ---------- */
@@ -1377,9 +1532,9 @@ function Parents({ st, api }) {
       <div className="row" style=${{ flexWrap: 'nowrap' }}><label className="sr" htmlFor=${'amt-' + p.id}>Dirhams à convertir pour ${p.name}</label><input id=${'amt-' + p.id} className="input num" type="number" min="0" max=${w.conv} value=${v} disabled=${w.conv === 0} onChange=${e => setAmt({ ...amt, [p.id]: e.target.value })} style=${{ width: '90px' }}/><button type="button" className="btn soft" disabled=${n === 0} onClick=${async () => { if (await api.payout(p.id, n, okPin)) setAmt({ ...amt, [p.id]: undefined }); }}>Verser ${n} DH${rate !== 1 ? ' = ' + (n * rate) + ' vrais DH' : ''}</button></div>
     </div>`; })}
     ${hist.length > 0 && html`<div className="stack-s"><h3>Versements</h3>${hist.map(x => html`<div key=${x.id} className="row small" style=${{ justifyContent: 'space-between', flexWrap: 'nowrap' }}><span><b>${pname(x.pid)}</b> · ${x.amount} DH${(x.rate || 1) !== 1 ? ' (' + (x.amount * x.rate) + ' vrais DH)' : ''} · ${new Date(x.at).toLocaleDateString('fr-FR')}</span><button type="button" className="btn sm ghost" onClick=${() => api.unpay(x.id, okPin)}>Annuler</button></div>`)}</div>`}
-    <div className="stack-s"><h3>Ajouter un téléphone</h3><p className="small">Sur le nouveau téléphone, ouvre Hder ! et tape le code de la famille : <b className="num code-show">${(st.settings && st.settings.code) || '—'}</b></p></div>
+    ${st.role === 'owner' && html`<div className="stack-s"><h3>Ton accès de secours</h3><p className="small">Si tu changes de téléphone : « Je suis Papa : retrouver mon accès », puis le code de la famille <b className="num code-show">${(st.settings && st.settings.code) || '—'}</b> et ton code parent.</p></div>`}
     ${credit && html`<div className="stack-s"><h3>Note de prononciation</h3><p className="small muted">Crédit gratuit restant : environ ${hours >= 1 ? Math.floor(hours) + ' h' : Math.round(hours * 60) + ' min'} de paroles notées (${Math.round(100 * credit.balance / (credit.initial || 10))} %). Aujourd'hui : ${Math.round(credit.today.seconds / 60)} min sur ${Math.round(credit.limit / 60)} min autorisées.</p></div>`}
-    ${newPin === null ? html`<button type="button" className="btn sm ghost" style=${{ justifySelf: 'start' }} onClick=${() => setNewPin('')}>Changer le code parent</button>` : html`<div className="row" style=${{ flexWrap: 'nowrap' }}><label className="sr" htmlFor="npin">Nouveau code</label><input id="npin" className="input pin num" type="password" inputMode="numeric" maxLength="4" placeholder="Nouveau" value=${newPin} onChange=${e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}/><button type="button" className="btn sm" disabled=${newPin.length !== 4} onClick=${async () => { try { await callApi('pin', { pin: newPin, old: okPin }); setOkPin(newPin); setNewPin(null); api.toast('Code parent changé'); } catch (e) { api.toast('Changement impossible'); } }}>Enregistrer</button></div>`}
+    ${st.role === 'owner' && (newPin === null ? html`<button type="button" className="btn sm ghost" style=${{ justifySelf: 'start' }} onClick=${() => setNewPin('')}>Changer le code parent</button>` : html`<div className="row" style=${{ flexWrap: 'nowrap' }}><label className="sr" htmlFor="npin">Nouveau code</label><input id="npin" className="input pin num" type="password" inputMode="numeric" maxLength="4" placeholder="Nouveau" value=${newPin} onChange=${e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}/><button type="button" className="btn sm" disabled=${newPin.length !== 4} onClick=${async () => { try { await callApi('pin', { pin: newPin, old: okPin }); setOkPin(newPin); setNewPin(null); api.toast('Code parent changé'); } catch (e) { api.toast('Changement impossible'); } }}>Enregistrer</button></div>`)}
   </section>`;
 }
 
@@ -1403,7 +1558,7 @@ function Reglages({ st, cur, api, go, openSkin }) {
   return html`<div className="stack" style=${{ gap: '18px' }}>
     <h2>Réglages</h2>
     <section className="card stack">
-      <div className="row"><${Avatar} id=${cur.av} size=${48}/><div style=${{ flex: 1, minWidth: 0 }}><b>${cur.name}</b><div className="xs muted">joue sur ce téléphone</div></div><button type="button" className="btn sm" onClick=${() => go('who')}>Changer</button></div>
+      <div className="row"><${Avatar} id=${cur.av} size=${48}/><div style=${{ flex: 1, minWidth: 0 }}><b>${cur.name}</b><div className="xs muted">ce téléphone est le tien · ${ROLE_TXT[st.role] || ''}</div></div><button type="button" className="btn sm" onClick=${() => go('who')}>Modifier</button></div>
       <button type="button" className="btn ghost" onClick=${openSkin}><${Icon} n="palette" s=${18}/>Changer de skin</button>
     </section>
     <section className="card stack">
@@ -1422,7 +1577,6 @@ function Reglages({ st, cur, api, go, openSkin }) {
       <h3>Famille</h3>
       <p className="small muted">${(st.fam && st.fam.name) || 'Famille'} · ${st.profiles.length} joueurs · ${st.synced ? 'synchronisé ' + ago(st.synced) : 'pas encore synchronisé'}</p>
       <button type="button" className="btn sm ghost" style=${{ justifySelf: 'start' }} onClick=${() => api.sync()}>Synchroniser maintenant</button>
-      <button type="button" className="btn sm ghost" style=${{ justifySelf: 'start', color: 'var(--bad)' }} onClick=${() => { if (window.confirm('Déconnecter ce téléphone de la famille ? La progression reste sauvegardée sur le serveur.')) api.leave(); }}>Déconnecter ce téléphone</button>
     </section>
     <p className="xs muted">Hder ! · version ${DATA.version || ''} · voix et note : Sawalni (darija marocaine)</p>
   </div>`;
@@ -1435,6 +1589,7 @@ function App() {
   const ref = useRef(st);
   SECRET = st.fam ? st.fam.secret : null;
   const [view, setView] = useState({ n: 'home', p: null });
+  const [invite] = useState(() => { const m = (location.hash || '').match(/[#&]i=([A-Za-z0-9-]{8,9})/); return m ? m[1].replace(/-/g, '').toUpperCase() : null; });
   const [toasts, setToasts] = useState([]);
   const [lvl, setLvl] = useState(null);
   const [sheet, setSheet] = useState(false);
@@ -1462,8 +1617,8 @@ function App() {
     const events = {};
     (r.events || []).forEach(e => { events[e.id] = { k: e.kind, d: e.data }; });
     (s.pend || []).forEach(o => { if (o.op === 'del') delete events[o.id]; else events[o.id] = { k: o.k, d: o.d }; });
-    const cur = s.cur && profiles.some(p => p.id === s.cur) ? s.cur : null;
-    commitRaw({ ...s, profiles, revs, events, settings: { ...(s.settings || {}), ...(r.settings || {}) }, synced: Date.now(), cur });
+    const me = r.me ? r.me.pid : s.me, role = r.me ? r.me.role : s.role;
+    commitRaw({ ...s, profiles, revs, events, settings: { ...(s.settings || {}), ...(r.settings || {}) }, synced: Date.now(), me, role, cur: me });
     if (dirty.size || (s.pend || []).length) schedule();
   };
   const flush = async () => {
@@ -1486,21 +1641,22 @@ function App() {
         let profiles = s2.profiles;
         (r.res || []).forEach(x => {
           const sent = payload.find(y => y.pid === x.pid);
+          if (x.denied) { still.delete(x.pid); return; }
           if (x.conflict) { if (x.data) { revs[x.pid] = x.rev; profiles = profiles.map(p => p.id === x.pid ? mergeP(p, fresh({ ...x.data, id: x.pid })) : p); } again.current = true; }
           else { revs[x.pid] = x.rev; const now = profiles.find(p => p.id === x.pid); if (now && sent && now.t === sent.data.t) still.delete(x.pid); }
         });
         commitRaw({ ...s2, revs, profiles, dirty: Array.from(still) });
       }
       setNet('');
-    } catch (e) { setNet('off'); if (e && e.status === 401) leave(); }
+    } catch (e) { if (e && e.status === 401) leave(e.code); else if (!(e && e.status === 409)) setNet('off'); }
     finally { busy.current = false; if (again.current) { again.current = false; setTimeout(flush, 400); } }
   };
   const pull = async () => {
     if (!SECRET) return;
     try { const r = await callApi('pull'); applyRemote(r); setNet(''); }
-    catch (e) { setNet('off'); if (e && e.status === 401) leave(); }
+    catch (e) { if (e && e.status === 401) leave(e.code); else setNet('off'); }
   };
-  const leave = () => { SECRET = null; commitRaw({ ...INIT, skin: ref.current.skin, cast: ref.current.cast, likes: ref.current.likes }); };
+  const leave = why => { SECRET = null; commitRaw({ ...INIT, skin: ref.current.skin, cast: ref.current.cast, likes: ref.current.likes, why: why === 'deconnecte' ? 'revoked' : (why === 'liens' ? 'claimed' : null) }); };
   useEffect(() => {
     if (SECRET) { pull(); flush(); }
     const vis = () => { if (document.visibilityState === 'visible') pull(); else flush(); };
@@ -1515,15 +1671,34 @@ function App() {
   const toast = t => { const id = uid(); setToasts(a => a.concat([{ id, t }])); setTimeout(() => setToasts(a => a.filter(x => x.id !== id)), 2200); };
   const go = (n, p) => { stopClip(); setView({ n, p: p || null }); window.scrollTo(0, 0); };
 
-  if (!st.fam) return html`<${Join} onJoined=${r => { SECRET = r.secret; commitRaw({ ...INIT, skin: ref.current.skin, fam: { secret: r.secret, name: r.name, code: null } }); applyRemote(r); setView({ n: 'who', p: null }); }}/>`;
+  const giftRef = useRef(null);
+  useEffect(() => { if (giftRef.current) giftRef.current(); }, [st.events, st.me, st.profiles.length]);
+  useEffect(() => {
+    if (invite && st.me) { try { history.replaceState(null, '', location.pathname); } catch (e) {} toast('Ce lien d’accès est pour un autre téléphone : envoie-le à la bonne personne.'); }
+  }, []);
+  const enter = (r, keep) => {
+    SECRET = r.token;
+    const base = keep ? { ...ref.current, dirty: (ref.current.dirty || []).filter(x => r.me && x === r.me.pid) } : { ...INIT, skin: ref.current.skin, cast: ref.current.cast, likes: ref.current.likes };
+    commitRaw({ ...base, why: null, fam: { secret: r.token, name: r.name, code: keep ? (ref.current.fam || {}).code : null }, me: r.me.pid, role: r.me.role, cur: r.me.pid });
+    applyRemote(r); setView({ n: 'home', p: null });
+    setTimeout(() => { pull(); flush(); }, 50);
+  };
+  if (!st.fam) return html`<${Gate} key="join" mode0="join" invite=${invite} why=${st.why} onIn=${r => enter(r, false)}/>`;
+  if (!st.me) return html`<${Gate} key="claim" mode0="claim" settings=${st.settings} onIn=${r => enter(r, true)} onLegacyGone=${() => leave('liens')}/>`;
 
   const S = { ...st, ...shared(st) };
-  const curP = st.profiles.find(p => p.id === st.cur);
+  const curP = st.profiles.find(p => p.id === st.me);
   const mapP = (pid, fn) => ref.current.profiles.map(p => p.id === pid ? fn(p) : p);
   const ev = (s, op) => {
     const events = { ...(s.events || {}) };
     if (op.op === 'del') delete events[op.id]; else events[op.id] = { k: op.k, d: op.d };
     return { ...s, events, pend: (s.pend || []).concat([op]) };
+  };
+  const ME = () => ref.current.me;
+  const gift = (pid, op) => {
+    const s = ref.current;
+    commit(ev(s, { op: 'set', id: 'gf-' + Date.now().toString(36) + uid(), k: 'gift', d: { to: pid, from: s.me, op, ts: Date.now() } }));
+    return 'gift';
   };
   const pushFeed = (s, who, text) => ev(s, { op: 'set', id: 'fd-' + Date.now().toString(36) + uid(), k: 'feed', d: { who, text, ts: Date.now() } });
   const api = {
@@ -1532,10 +1707,12 @@ function App() {
     leave,
     pinSet: () => commitRaw({ ...ref.current, settings: { ...ref.current.settings, pinSet: true } }),
     setSkin: k => commitRaw({ ...ref.current, skin: k }),
-    setCur: id => commitRaw({ ...ref.current, cur: id }),
-    patchProfile: (id, patch) => commit({ ...ref.current, profiles: mapP(id, p => ({ ...p, ...patch })) }),
-    setStar: (pid, id, n) => commit({ ...ref.current, profiles: mapP(pid, p => ({ ...p, stars: { ...p.stars, [id]: n } })) }),
+    syncNow: () => pull().then(flush),
+    setParents: list => commitRaw({ ...ref.current, settings: { ...ref.current.settings, parents: list } }),
+    patchProfile: (id, patch) => { if (id !== ME()) return; commit({ ...ref.current, profiles: mapP(id, p => ({ ...p, ...patch })) }); },
+    setStar: (pid, id, n) => pid !== ME() ? gift(pid, { t: 'star', id, n }) : commit({ ...ref.current, profiles: mapP(pid, p => ({ ...p, stars: { ...p.stars, [id]: n } })) }),
     gain: (pid, xp, dh) => {
+      if (pid !== ME()) { if (xp || dh) gift(pid, { t: 'gain', xp, dh }); return; }
       const s = ref.current, t = today(), y = yesterday(); let up = null, name = '';
       const profiles = s.profiles.map(p => {
         if (p.id !== pid) return p;
@@ -1563,6 +1740,7 @@ function App() {
       toast('Défi lancé');
     },
     finishManche: (pid, sid, m, gal) => {
+      if (pid !== ME()) { gift(pid, { t: 'manche', sid, m, gal }); return; }
       const s = ref.current; const key = sid + '-' + m; const T = (SCN[sid] || {}).title || 'une scène';
       let n = { ...s, profiles: s.profiles.map(p => p.id === pid ? { ...p, manches: { ...p.manches, [key]: Math.max(p.manches[key] || 0, gal) } } : p) };
       n = pushFeed(n, pid, 'a fini ' + T + ' · manche ' + m + ', ' + GALON_TXT[gal]);
@@ -1572,6 +1750,7 @@ function App() {
       api.gain(pid, 30 + (d ? 25 : 0), 0);
     },
     module: (pid, key, pass) => {
+      if (pid !== ME()) return gift(pid, { t: 'module', key, pass });
       const s = ref.current, d = dayN();
       const p = s.profiles.find(x => x.id === pid); if (!p) return null;
       const S0 = modStatus(p, key, d), r = S0.r; let nr = null, res = 'none';
@@ -1608,6 +1787,7 @@ function App() {
       catch (e) { toast('Taux non enregistré'); }
     },
     mission: (pid, sid, m) => {
+      if (pid !== ME()) { gift(pid, { t: 'mission', sid, m }); return; }
       const s = ref.current; const T = (SCN[sid] || {}).title || 'une scène';
       let n = { ...s, profiles: s.profiles.map(p => p.id === pid ? { ...p, missions: { ...p.missions, [sid + '-' + m]: true } } : p) };
       commit(pushFeed(n, pid, 'a réussi une mission réelle · ' + T));
@@ -1615,7 +1795,27 @@ function App() {
     }
   };
 
-  const V = (!curP && view.n !== 'who') ? 'who' : view.n;
+  // Points envoyés par un autre téléphone (mode Troupe) : on les ajoute à son propre profil
+  giftRef.current = () => {
+    const s = ref.current; if (!s.me || !curP) return;
+    const ids = Object.keys(s.events || {}).filter(id => { const e = s.events[id]; return e && e.k === 'gift' && e.d && e.d.to === s.me && !(s.applied || []).includes(id); });
+    if (!ids.length) return;
+    commitRaw({ ...ref.current, applied: (ref.current.applied || []).concat(ids).slice(-300) });
+    const from = new Set(); let xp = 0, dh = 0;
+    ids.forEach(id => {
+      const d = s.events[id].d, o = d.op || {}; from.add(d.from);
+      if (o.t === 'gain') { xp += Number(o.xp) || 0; dh += Number(o.dh) || 0; }
+      else if (o.t === 'star') api.setStar(s.me, o.id, o.n);
+      else if (o.t === 'manche') api.finishManche(s.me, o.sid, o.m, o.gal);
+      else if (o.t === 'module') api.module(s.me, o.key, o.pass);
+      else if (o.t === 'mission') api.mission(s.me, o.sid, o.m);
+    });
+    if (xp || dh) api.gain(s.me, xp, dh);
+    let n = ref.current; ids.forEach(id => { n = ev(n, { op: 'del', id }); }); commit(n);
+    const names = Array.from(from).map(x => (s.profiles.find(p => p.id === x) || {}).name).filter(Boolean);
+    toast('Points de la troupe reçus' + (names.length ? ' (téléphone de ' + names.join(', ') + ')' : ''));
+  };
+  const V = !curP ? 'lost' : view.n;
   const cur = curP || fresh({ id: '?', name: '…', g: 'm', track: 'adultes', av: 'boxeur' });
   const tabs = [['home', 'Accueil', 'home'], ['scenes', 'Scènes', 'shop'], ['kit', 'Kit', 'book'], ['famille', 'Famille', 'users'], ['reglages', 'Réglages', 'gear']];
   return html`<div>
@@ -1625,11 +1825,12 @@ function App() {
       <span className="top-sp"></span>
       ${net === 'off' && html`<span className="pill" title="Hors connexion : tout est gardé sur le téléphone et sera envoyé plus tard">hors ligne</span>`}
       <button type="button" className="icon-btn" onClick=${() => setSheet(true)} aria-label="Changer de skin"><${Icon} n="palette"/></button>
-      ${curP && html`<button type="button" className="chip-me" onClick=${() => go('who')} aria-label="Changer de joueur"><${Avatar} id=${cur.av} size=${34}/><span>${cur.name}</span></button>`}
+      ${curP && html`<button type="button" className="chip-me" onClick=${() => go('who')} aria-label="Mon profil"><${Avatar} id=${cur.av} size=${34}/><span>${cur.name}</span></button>`}
     </div></header>
     <main className="wrap gut">
       ${V === 'home' && html`<${Home} st=${S} cur=${cur} go=${go} api=${api}/>`}
-      ${V === 'who' && html`<${Who} st=${S} cur=${cur} go=${go} api=${api} first=${!curP}/>`}
+      ${V === 'who' && html`<${Who} st=${S} cur=${cur} go=${go} api=${api}/>`}
+      ${V === 'lost' && html`<section className="card stack"><h2>Profil introuvable</h2><p className="muted">${st.synced ? 'Ton profil n’existe plus dans la famille. Demande à Papa.' : 'Chargement de ton profil…'}</p></section>`}
       ${V === 'test' && html`<${Test} key=${'t' + cur.id} cur=${cur} go=${go} api=${api}/>`}
       ${V === 'kit' && html`<${Kit} key=${'k' + cur.id + JSON.stringify(view.p)} cur=${cur} go=${go} api=${api} params=${view.p}/>`}
       ${V === 'scenes' && html`<${ScenesList} cur=${cur} go=${go}/>`}

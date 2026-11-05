@@ -203,7 +203,13 @@ header.top { position:sticky; top:env(safe-area-inset-top, 0px); z-index:30; bac
 .join-logo { display:grid; place-items:center; }
 .join-logo img { border-radius:22px; box-shadow:var(--shadow); }
 .code-in { font-size:22px; letter-spacing:.12em; text-align:center; text-transform:uppercase; }
-.code-show { letter-spacing:.1em; }
+.code-show { letter-spacing:.1em; white-space:nowrap; }
+.big-code { font-size:22px; display:inline-block; margin-left:4px; }
+.soft-card { box-shadow:none; background:var(--surface-2, var(--surface)); border-style:dashed; }
+.acc-row { display:grid; gap:10px; padding:12px 0; border-top:1px solid var(--line); min-width:0; }
+.acc-btns { gap:8px; }
+.steps-ol { margin:0; padding-left:20px; display:grid; gap:6px; }
+.install { margin-top:4px; }
 
 /* Tirelire et espace parents */
 .tl-big { display:flex; align-items:center; gap:6px; font-family:var(--f-display); font-weight:800; font-size:26px; color:var(--accent-2); }
@@ -378,7 +384,7 @@ nav.tabs { position:fixed; left:0; right:0; bottom:0; z-index:30; background:var
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/htm@3.1.1/dist/htm.umd.js"></script>
-<script src="data.js?v=20261105-1522"></script>
-<script src="app.js?v=20261105-1522"></script>
+<script src="data.js?v=20261105-1551"></script>
+<script src="app.js?v=20261105-1551"></script>
 </body>
 </html>
