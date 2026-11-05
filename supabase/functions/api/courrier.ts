@@ -207,5 +207,6 @@ export async function courrierChorusPdf(body: any) {
   try { u8 = await chorusPdf(f.structure, Number(f.chorus_id)); } catch (e) { const m = `${(e as any).message} ${(e as any).detail || ""}`.trim(); console.error("chorus_pdf", m); throw new CE("chorus_pdf: " + m.slice(0, 200)); }
   const name = `Facture ${f.numero} ${STRUCT[f.structure]?.nom || f.structure}.pdf`;
   const s = await storeBytes(u8, name, "application/pdf"); if (!s) throw new CE("chorus_pdf");
-  return { ok: true, id: s.id, name, size: s.size, numero: f.numero, structure: f.structure, montant_ttc: f.montant_ttc, date_depot: f.date_depot };
+  return { ok: true, id: s.id, name, size: s.size, numero: f.numero, structure: f.structure, montant_ttc: f.montant_ttc, date_depot: f.date_depot, text: (s.text || "").slice(0, 4000) };
+  // text : contenu lu dans le PDF, pour que Claude vérifie la facture avant de la proposer.
 }
