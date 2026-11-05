@@ -92,7 +92,7 @@ export async function chorusSync() {
 // ---------- PDF d'une facture déjà sur Chorus (pour la joindre à une réponse du Courrier) ----------
 export async function chorusPdf(structure: string, chorusId: number): Promise<Uint8Array> {
   if (!STRUCT[structure] || !chorusId) throw new Error("bad");
-  const j = await call(structure, "/cpro/factures/v1/telecharger/groupe", { listeFacture: [{ idFacture: chorusId }], format: "PDF", avecPiecesJointesComplementaires: false });
+  const j = await call(structure, "/cpro/factures/v1/telecharger/groupe", { listeFacture: [{ idFacture: chorusId }], format: "PDF", avecPiecesJointesComplementaires: "Non" });
   const raw = String(j?.fichierResultat || ""); if (!raw) throw new Error("chorus_pdf_vide");
   const bin = atob(raw); let u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   // Chorus renvoie parfois une archive ZIP : on en sort le premier PDF.
