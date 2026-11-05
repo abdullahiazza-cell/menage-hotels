@@ -111,11 +111,6 @@ const sceneList = track => {
 };
 const HERO_IDS = Object.keys(BYID).filter(k => BYID[k].kind === 'line' && BYID[k].hero);
 const MOD_PCT = 0.6;
-const SOON = {
-  commun: ['Café et jus', 'Demander son chemin', 'Petit taxi', 'Chez la famille', 'Les fêtes'],
-  ados: ['Le snack', 'Le glacier', 'Plage', 'Maillot au souk', 'Console et jeux', "Anniversaire d'un ami"],
-  adultes: ['Boucher', 'Marché', 'Coiffeur', 'Garagiste', 'Station-service', 'Pharmacie', 'Banque', 'Administration', 'Artisan et chantier', 'Location', 'Gare ONCF']
-};
 const PTS = { bien: 10, presque: 5, revoir: 2 };
 const CAST_PHRASE = { lat: 'salam 3alikoum, mer7ba bik. 3tini jouj dyal l7lib 3afak. bchhal kolchi?', fr: "Bonjour, bienvenue. Donne-moi deux laits, s'il te plaît. Ça fait combien en tout ?" };
 const voiceName = v => v.replace('male-', 'Homme ').replace('feHomme ', 'Femme ');

@@ -6,3 +6,4 @@ Appli familiale (PWA) pour apprendre la darija marocaine en parlant : scènes de
 - `audio/` : les voix (Sawalni ASAT) déjà converties ; les voix plus récentes sont servies par le stockage public `hder-audio` de Supabase.
 - L'API est la fonction Supabase `hder-api` (tables `hder_*`), séparée de Ma Réception.
 - `_gen/items.json` : liste des voix à générer (utilisée par la fonction `hder-voix`).
+- `_gen/cal.json` : phrases que le joueur dit, avec la voix modèle correspondante ; sert au calibrage de la note (la voix modèle notée sur sa propre phrase = 100 %).
