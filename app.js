@@ -38,7 +38,7 @@ const LS = {
 };
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
-  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, verif: { lignes: [], log: [], mois: [] }, vMois: null, vf: 'a_verifier', vHist: false, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, courrier: null, crKeep: {}, crDraft: {}, crArm: null, crAll: false, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
+  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, verif: { lignes: [], log: [], mois: [] }, vMois: null, vf: 'a_verifier', vHist: false, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, courrier: null, crKeep: {}, crDraft: {}, crAsk: {}, crArm: null, crAll: false, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
   hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [], docs: [], mail: [] }, sl: null, sd: null, docBlobs: {}, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), ptKind: LS.get('mh-ptk', 'jour'), ptLang: LS.get('mh-ptl', 'ar'), ptVoice: LS.get('mh-ptv', ''), points: [], pointSubs: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
@@ -1513,7 +1513,7 @@ function facturesSheet() {
     ${own ? '<button class="btn soft" data-a="facRefresh">🔄 Relire Chorus maintenant</button>' : ''}`);
 }
 /* ----- courrier : réponses préparées par Claude aux mails importants, relues et approuvées par le propriétaire ----- */
-const CR_ST = { a_valider: ['À relire', 'amber'], approuve: ['Part dans les 5 min', 'slate'], envoi: ['Envoi en cours', 'slate'], erreur: ['Non envoyée', 'red'], envoye: ['Envoyée', 'green'], ignore: ['Ignorée', 'plain'], sans_reponse: ['Pas de réponse à faire', 'plain'] };
+const CR_ST = { a_valider: ['À relire', 'amber'], retravail: ['Claude retravaille', 'slate'], approuve: ['Part dans les 5 min', 'slate'], envoi: ['Envoi en cours', 'slate'], erreur: ['Non envoyée', 'red'], envoye: ['Envoyée', 'green'], ignore: ['Ignorée', 'plain'], sans_reponse: ['Pas de réponse à faire', 'plain'] };
 const crOpenRows = () => S.courrier ? (S.courrier.open || []) : [];
 const crTodo = () => crOpenRows().filter((r) => r.statut === 'a_valider' || r.statut === 'erreur');
 const crWho = (r) => r.de_nom || String(r.de || '').replace(/<.*>/, '').trim() || r.de || '?';
@@ -1525,6 +1525,43 @@ function crWarn(r) {
   const nc = (r.demandes || []).filter((d) => !d.ok).length; if (nc) out.push(`${nc} demande${nc > 1 ? 's' : ''} non couverte${nc > 1 ? 's' : ''}`);
   const ret = (r.pieces || []).filter((p) => !kept.includes(String(p.id))).length; if (ret) out.push(`${ret} pièce${ret > 1 ? 's' : ''} retirée${ret > 1 ? 's' : ''}`);
   return out;
+}
+// Consigne à Claude (dictée ou tapée) : nouvelle réponse, pièce à aller chercher (Chorus, Drive…), copie à ajouter.
+// Claude la reprend au passage suivant (toutes les heures, 8 h – 20 h) et renvoie une proposition à relire.
+const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+let crRec = null;
+function crAskBox(id, title) {
+  const v = S.crAsk[id] || '', on = crRec && crRec.id === id;
+  return `<p class="cap">${title || 'Demander autre chose à Claude'}</p><div class="card">
+    <textarea id="cr-ask" data-input="crAsk" data-id="${esc(id)}" rows="3" placeholder="Ex. : « Va chercher les factures de septembre sur Chorus et joins-les » ou « Réponds plutôt que tout est sur JeFacture »">${esc(v)}</textarea>
+    <div class="row" style="flex-wrap:wrap;gap:8px;margin-top:8px"><button class="btn ${on ? 'bad' : 'soft'}" data-a="crMic" data-id="${esc(id)}">${on ? '⏹ Arrêter la dictée' : '🎤 Dicter'}</button>
+    <button class="btn pri" data-a="crAskSend" data-id="${esc(id)}">🤖 Envoyer à Claude</button></div>
+    <p class="muted sm">Claude repasse toutes les heures (8 h – 20 h) : il refait la réponse avec votre consigne, va chercher les pièces demandées (Chorus, Drive, mails, appli) et vous la renvoie à relire. Rien ne part sans votre accord.</p></div>`;
+}
+function crMicStop() { if (crRec) { try { crRec.r.stop(); } catch (_) {} } }
+function crMic(id) {
+  if (crRec) { const same = crRec.id === id; crMicStop(); if (same) return; }
+  if (!SpeechRec) { const t = $('cr-ask'); if (t) t.focus(); toast('Touchez la zone de texte, puis le 🎤 du clavier pour dicter.', 6000); return; }
+  const r = new SpeechRec(); r.lang = 'fr-FR'; r.continuous = true; r.interimResults = true;
+  const base = (S.crAsk[id] || '').trim();
+  r.onresult = (e) => {
+    let txt = ''; for (let i = 0; i < e.results.length; i++) txt += e.results[i][0].transcript;
+    S.crAsk[id] = (base ? base + ' ' : '') + txt.trim();
+    const t = $('cr-ask'); if (t && t.dataset.id === id) t.value = S.crAsk[id];
+  };
+  const end = () => { if (crRec && crRec.r === r) { crRec = null; redrawCr(id); } };
+  r.onerror = (e) => { if (e.error === 'not-allowed' || e.error === 'service-not-allowed') toast('Dictée refusée. Touchez la zone de texte puis le 🎤 du clavier.', 6000); end(); };
+  r.onend = end;
+  try { r.start(); crRec = { id, r }; if (navigator.vibrate) navigator.vibrate(30); redrawCr(id); }
+  catch (_) { toast('Touchez la zone de texte, puis le 🎤 du clavier pour dicter.', 6000); }
+}
+function redrawCr(id) { if (S.sheet === 'cr:' + id) crSheet(id); else if (S.sheet === 'crask:' + id) crAskSheet(id); }
+// Mail classé sans réponse : on peut quand même demander une réponse à Claude.
+function crAskSheet(id) {
+  const r = ((S.courrier || {}).done || []).find((x) => x.id === id); if (!r) { courrierSheet(); return; }
+  openSheet('crask:' + id, `${sheetHead('📬 ' + esc(crWho(r)))}
+    <div class="card"><b>${esc(r.sujet || '(sans objet)')}</b><p class="muted">reçu ${when(r.recu_le)}</p>${r.resume ? `<p>${esc(r.resume)}</p>` : ''}</div>
+    ${crAskBox(id, 'Que doit faire Claude ?')}`);
 }
 function courrierTile() {
   if (!S.courrier || !S.me || S.me.role !== 'owner' || S.preview) return '';
@@ -1541,13 +1578,15 @@ function courrierSheet() {
   const btn = (r) => `<button class="prow" data-a="crOpen" data-id="${esc(r.id)}">${line(r)}${pill(r)}</button>`;
   const todo = crTodo().slice().sort((a, b) => (b.importance === 'urgent') - (a.importance === 'urgent') || String(b.recu_le).localeCompare(String(a.recu_le)));
   const going = crOpenRows().filter((r) => r.statut === 'approuve' || r.statut === 'envoi');
+  const redo = crOpenRows().filter((r) => r.statut === 'retravail');
   const done = (C.done || []).filter((r) => !(r.statut === 'sans_reponse' && r.importance === 'urgent'));
   const actions = (C.done || []).filter((r) => r.statut === 'sans_reponse' && r.importance === 'urgent');
   openSheet('courrier', `${sheetHead('📬 Courrier')}
     ${todo.length ? `<p class="cap">À relire</p><div class="group">${todo.map(btn).join('')}</div>` : '<div class="card"><p class="muted">Aucune réponse à relire pour l’instant.</p></div>'}
     ${actions.length ? `<p class="cap">À faire de votre côté (pas de réponse à écrire)</p><div class="group">${actions.map((r) => `<div class="prow ro">${line(r)}<button class="btn small soft" data-a="crFait" data-id="${esc(r.id)}">C’est fait</button></div>`).join('')}</div>` : ''}
+    ${redo.length ? `<p class="cap">Claude retravaille (prochain passage dans l’heure)</p><div class="group">${redo.map(btn).join('')}</div>` : ''}
     ${going.length ? `<p class="cap">Approuvées</p><div class="group">${going.map(btn).join('')}</div>` : ''}
-    ${done.length ? `<p class="cap">Traités ces 14 derniers jours</p><div class="group">${done.slice(0, S.crAll ? 80 : 8).map((r) => `<div class="prow ro">${line(r)}${pill(r)}</div>`).join('')}</div>${done.length > 8 && !S.crAll ? '<button class="btn ghost" data-a="crAll">Tout afficher</button>' : ''}` : ''}
+    ${done.length ? `<p class="cap">Traités ces 14 derniers jours</p><div class="group">${done.slice(0, S.crAll ? 80 : 8).map((r) => `<div class="prow ro">${line(r)}${r.statut === 'sans_reponse' || r.statut === 'ignore' ? `<button class="btn small ghost" data-a="crAskOpen" data-id="${esc(r.id)}" aria-label="Demander une réponse à Claude">🤖 Répondre</button>` : pill(r)}</div>`).join('')}</div>${done.length > 8 && !S.crAll ? '<button class="btn ghost" data-a="crAll">Tout afficher</button>' : ''}` : ''}
     <p class="muted sm">La boîte hoteldeparisadm est lue vers 10 h et 17 h (heure de France). Claude prépare une réponse pour chaque mail qui en demande une, avec les pièces retrouvées dans vos mails, le Drive et l’appli. Rien ne part sans votre accord.${C.nouveaux ? ` ${C.nouveaux} mail${C.nouveaux > 1 ? 's' : ''} attend${C.nouveaux > 1 ? 'ent' : ''} la prochaine lecture.` : ''}</p>`);
 }
 function crSheet(id) {
@@ -1567,6 +1606,8 @@ function crSheet(id) {
       <p class="muted">${esc(r.de || '')} · reçu ${when(r.recu_le)}</p>
       ${r.resume ? `<p>${esc(r.resume)}</p>` : ''}
       ${r.statut === 'erreur' && r.erreur ? `<p style="color:var(--red)">Envoi impossible : ${esc(r.erreur)}</p>` : ''}</div>
+    ${r.statut === 'retravail' ? `<div class="banner c-slate">🤖 Claude retravaille cette réponse avec votre consigne (${when(r.consigne_le)}) : « ${esc(r.consigne || '')} ». La nouvelle proposition arrive au prochain passage (dans l’heure), avec une notification.</div><button class="btn ghost" data-a="crAskCancel" data-id="${esc(id)}">Annuler la demande</button>` : ''}
+    ${r.statut !== 'retravail' && (r.consignes || []).length ? `<p class="muted sm">Dernière consigne donnée à Claude : « ${esc(r.consignes[r.consignes.length - 1].texte)} »</p>` : ''}
     ${dem.length ? `<p class="cap">Ce qu’on vous demande</p><div class="card"><div class="list">${dem.map((d) => `<div class="li"><span class="t">${d.ok ? '✅' : '❌'} <b>${esc(d.demande)}</b>${d.reponse ? `<br><span class="muted">${esc(d.reponse)}</span>` : ''}</span></div>`).join('')}</div></div>` : ''}
     ${(r.manque || []).length ? `<div class="banner c-red">À fournir par vous : ${r.manque.map(esc).join(' · ')}</div>` : ''}
     ${r.note ? `<div class="banner c-slate">🤖 ${esc(r.note)}</div>` : ''}
@@ -1579,7 +1620,8 @@ function crSheet(id) {
       ${(r.autres_pj || []).length ? `<p class="muted sm">Autres pièces (dans Gmail) : ${r.autres_pj.map((o) => esc(o.name)).join(', ')}</p>` : ''}</details>
     ${edit ? `${warn.length ? `<p style="color:var(--red)">⚠️ ${esc(warn.join(' · '))}. Vérifiez avant d’envoyer.</p>` : ''}
       <div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn big ${arm ? 'pri' : 'ok'}" data-a="crSend" data-id="${esc(id)}">${arm ? '⚠️ Confirmer : envoyer quand même' : `✅ Approuver et envoyer${nKept ? ` (${nKept} pièce${nKept > 1 ? 's' : ''})` : ''}`}</button>
-      <button class="btn ghost" data-a="crIgnore" data-id="${esc(id)}">Ignorer ce mail</button></div>` : ''}
+      <button class="btn ghost" data-a="crIgnore" data-id="${esc(id)}">Ignorer ce mail</button></div>
+      ${crAskBox(id)}` : ''}
     ${r.statut === 'approuve' ? `<p class="muted">Approuvée ${when(r.traite_le)} : la réponse part dans les 5 minutes.</p><button class="btn ghost" data-a="crReopen" data-id="${esc(id)}">Annuler l’envoi et modifier</button>` : ''}
     ${r.statut === 'envoi' ? '<p class="muted">Envoi en cours par la boîte mail…</p>' : ''}`);
 }
@@ -2374,6 +2416,20 @@ const A = {
   crList() { S.crArm = null; courrierSheet(); },
   crAll() { S.crAll = true; courrierSheet(); },
   crOpen(d) { S.crArm = null; crSheet(d.id); },
+  crAskOpen(d) { crAskSheet(d.id); },
+  crMic(d) { crMic(d.id); },
+  async crAskSend(d) {
+    crMicStop();
+    const t = $('cr-ask'); const txt = ((t ? t.value : S.crAsk[d.id]) || '').trim();
+    if (txt.length < 3) { toast('Dites ou écrivez d’abord ce que Claude doit faire.'); return; }
+    const r = crOpenRows().find((x) => x.id === d.id);
+    const rt = $('cr-txt'); const brouillon = r && rt ? rt.value : (r && S.crDraft[r.id] != null ? S.crDraft[r.id] : null);
+    const payload = { id: d.id, do: 'consigne', texte: txt };
+    // Si vous aviez modifié la réponse, Claude repart de votre version.
+    if (r && brouillon != null && brouillon !== r.reponse) payload.reponse = brouillon;
+    if (await act(() => api('courrier_set', payload), 'Envoyé à Claude 🤖 Nouvelle proposition dans l’heure.')) { delete S.crAsk[d.id]; delete S.crDraft[d.id]; courrierSheet(); }
+  },
+  async crAskCancel(d) { if (await act(() => api('courrier_set', { id: d.id, do: 'annuler_consigne' }), 'Demande annulée')) crSheet(d.id); },
   crPiece(d) {
     const r = crOpenRows().find((x) => x.id === d.id); if (!r) return;
     const t = $('cr-txt'); if (t) S.crDraft[r.id] = t.value;
@@ -2723,6 +2779,7 @@ const C = {
 };
 const I = {
   crTxt(t) { S.crDraft[t.dataset.id] = t.value; },
+  crAsk(t) { S.crAsk[t.dataset.id] = t.value; },
   repText(el) { if (S.rep && S.rep.items && S.rep.items[el.dataset.k]) S.rep.items[el.dataset.k].text = el.value; },
   redoText(el) { if (S.rep) S.rep.text = el.value; },
   ctQ(el) { S.cq = el.value; const pos = el.selectionStart; render(); const n = $('ctQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} } },

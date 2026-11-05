@@ -3,7 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring, bankTxSync } from "./banque.ts";
 import { chorusSync, chorusDeposer, chorusState, rapprocher, paiementDecide, STRUCT } from "./chorus.ts";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
-import { CE, courrierIn, courrierState, courrierSet, courrierQueue, courrierDoc, courrierSent, courrierAValider } from "./courrier.ts";
+import { CE, courrierIn, courrierState, courrierSet, courrierQueue, courrierDoc, courrierSent, courrierAValider, courrierChorusPdf } from "./courrier.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
@@ -1090,6 +1090,7 @@ async function handle(req: Request) {
     if (body.kind === "point_push") return { sent: await pointPush() };
     if (body.kind === "chorus_sync") return await chorusCron();
     if (body.kind === "courrier_push") return await courrierPush();
+    if (body.kind === "courrier_chorus_pdf") return await cw(courrierChorusPdf(body));
     if (body.kind === "bank_sync") {
       const n = await bankSync();
       // Mouvements (crédits) une fois par jour, le matin, puis rapprochement avec les factures Chorus.

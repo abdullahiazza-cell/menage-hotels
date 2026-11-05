@@ -89,6 +89,22 @@ export async function chorusSync() {
   return { n: rows.length, changes };
 }
 
+// ---------- PDF d'une facture déjà sur Chorus (pour la joindre à une réponse du Courrier) ----------
+export async function chorusPdf(structure: string, chorusId: number): Promise<Uint8Array> {
+  if (!STRUCT[structure] || !chorusId) throw new Error("bad");
+  const j = await call(structure, "/cpro/factures/v1/telecharger/groupe", { listeFacture: [{ idFacture: chorusId }], format: "PDF", avecPiecesJointesComplementaires: false });
+  const raw = String(j?.fichierResultat || ""); if (!raw) throw new Error("chorus_pdf_vide");
+  const bin = atob(raw); let u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  // Chorus renvoie parfois une archive ZIP : on en sort le premier PDF.
+  if (u8[0] === 0x50 && u8[1] === 0x4b) {
+    const { unzipSync } = await import("npm:fflate@0.8.2");
+    const files = unzipSync(u8); const k = Object.keys(files).find((n) => /\.pdf$/i.test(n));
+    if (!k) throw new Error("chorus_pdf_vide"); u8 = files[k];
+  }
+  if (!(u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46)) throw new Error("chorus_pdf_vide");
+  return u8;
+}
+
 // ---------- 2) dépôt d'une facture validée par le propriétaire ----------
 const b64 = (u8: Uint8Array) => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
 const r2 = (n: number) => Math.round(Number(n) * 100) / 100;

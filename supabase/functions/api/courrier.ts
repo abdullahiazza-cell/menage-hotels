@@ -3,6 +3,7 @@
 // corrige au besoin et approuve d'un clic ; le script Google envoie alors la réponse dans le fil d'origine.
 // Rien n'est jamais envoyé sans cette approbation.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
+import { chorusPdf, STRUCT } from "./chorus.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
@@ -26,6 +27,9 @@ async function pdfText(u8: Uint8Array) {
 async function storeFile(b64: string, name: string, type: string) {
   if (!b64 || b64.length > 14_000_000) return null;
   const bin = atob(b64); const u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
+  return await storeBytes(u8, name, type);
+}
+async function storeBytes(u8: Uint8Array, name: string, type: string) {
   const pdf = u8[0] === 0x25 && u8[1] === 0x50 && u8[2] === 0x44 && u8[3] === 0x46;
   if (!pdf && !/^image\/(jpeg|png)$/.test(type)) return null;
   const sha = [...new Uint8Array(await crypto.subtle.digest("SHA-256", u8))].map((x) => x.toString(16).padStart(2, "0")).join("");
@@ -62,16 +66,16 @@ export async function courrierIn(body: any) {
   const { error } = await db.from("courrier").insert(row);
   if (error) { console.error("courrier_in", error); throw new CE("db"); }
   // Un nouveau message dans le même fil remplace la proposition précédente encore en attente.
-  if (thread) await db.from("courrier").update({ statut: "remplace", updated_at: new Date().toISOString() }).eq("thread_id", thread).neq("id", id).in("statut", ["nouveau", "a_valider", "sans_reponse"]);
+  if (thread) await db.from("courrier").update({ statut: "remplace", updated_at: new Date().toISOString() }).eq("thread_id", thread).neq("id", id).in("statut", ["nouveau", "a_valider", "retravail", "sans_reponse"]);
   return { ok: true, id, files: pj.length };
 }
 
 // 2) Ce que voit le propriétaire dans l'appli.
 export async function courrierState() {
   const since = new Date(Date.now() - 14 * 864e5).toISOString();
-  const cols = "id,thread_id,de,de_nom,a,cc,sujet,recu_le,corps,pj,autres_pj,statut,importance,categorie,resume,demandes,reponse,repondre_a,copie,pieces,manque,note,propose_le,traite_le,envoye_le,erreur";
+  const cols = "id,thread_id,de,de_nom,a,cc,sujet,recu_le,corps,pj,autres_pj,statut,importance,categorie,resume,demandes,reponse,repondre_a,copie,pieces,manque,note,propose_le,traite_le,envoye_le,erreur,consigne,consigne_le,consignes";
   const [{ data: open }, { data: done }, { count }] = await Promise.all([
-    db.from("courrier").select(cols).in("statut", ["a_valider", "approuve", "envoi", "erreur"]).order("recu_le", { ascending: false }).limit(60),
+    db.from("courrier").select(cols).in("statut", ["a_valider", "retravail", "approuve", "envoi", "erreur"]).order("recu_le", { ascending: false }).limit(60),
     db.from("courrier").select("id,de,de_nom,sujet,recu_le,statut,importance,resume,note,traite_le,envoye_le").in("statut", ["envoye", "ignore", "sans_reponse"]).gte("recu_le", since).order("recu_le", { ascending: false }).limit(80),
     db.from("courrier").select("id", { count: "exact", head: true }).eq("statut", "nouveau"),
   ]);
@@ -94,6 +98,25 @@ export async function courrierSet(meId: string, body: any) {
     // Action sans réponse (ex. fuite à vérifier) : le propriétaire la marque comme faite.
     if (r.statut !== "sans_reponse") throw new CE("courrier_etat");
     await db.from("courrier").update({ importance: "info", traite_par: meId, traite_le: now, updated_at: now }).eq("id", r.id);
+    return { ok: true };
+  }
+  if (body.do === "consigne") {
+    // Le propriétaire dit à Claude quoi changer (réponse autre, pièce à aller chercher, copie…).
+    // Claude la traite au passage suivant (toutes les heures) et renvoie une nouvelle proposition à relire.
+    const texte = S_(body.texte, 2000); if (!texte) throw new CE("courrier_vide");
+    if (!["a_valider", "erreur", "sans_reponse", "ignore", "retravail"].includes(r.statut)) throw new CE("courrier_etat");
+    const brouillon = S_(body.reponse, 20000);
+    const hist = [...(r.consignes || []), { le: now, texte, de: r.statut }].slice(-20);
+    const { data: lock } = await db.from("courrier").update({ statut: "retravail", consigne: texte, consigne_le: now, consignes: hist, ...(brouillon ? { reponse: brouillon } : {}), erreur: null, updated_at: now })
+      .eq("id", r.id).eq("statut", r.statut).select("id");
+    if (!lock || !lock.length) throw new CE("courrier_etat");
+    return { ok: true };
+  }
+  if (body.do === "annuler_consigne") {
+    if (r.statut !== "retravail") throw new CE("courrier_etat");
+    const prev = ((r.consignes || []).slice(-1)[0] || {}).de;
+    const back = prev && prev !== "retravail" ? prev : (r.reponse ? "a_valider" : "sans_reponse");
+    await db.from("courrier").update({ statut: back, consigne: null, updated_at: now }).eq("id", r.id).eq("statut", "retravail");
     return { ok: true };
   }
   if (body.do === "rouvrir") {
@@ -169,4 +192,20 @@ export async function courrierAValider(sinceHours = 3) {
     db.from("courrier").select("sujet").eq("statut", "a_valider").eq("importance", "urgent").gte("propose_le", since).limit(3),
   ]);
   return { all: all || 0, fresh: fresh || 0, urgent: (urg || []).map((u: any) => u.sujet) };
+}
+
+// 8) Claude (tâche planifiée) demande le PDF d'une facture déposée sur Chorus, pour la joindre à une réponse.
+// Le PDF est rangé dans doc_files : il devient une pièce « doc » comme les autres.
+export async function courrierChorusPdf(body: any) {
+  const numero = S_(String(body.numero ?? ""), 20); if (!numero) throw new CE("bad");
+  let q = db.from("chorus_factures").select("chorus_id,structure,numero,montant_ttc,statut,date_depot").eq("numero", numero).not("statut", "in", "(BROUILLON,SUPPRIMEE)");
+  if (body.structure) q = q.eq("structure", String(body.structure));
+  const { data: rows } = await q.order("date_depot", { ascending: false }).limit(5);
+  const f = (rows || [])[0]; if (!f) throw new CE("chorus_introuvable", 404);
+  if ((rows || []).length > 1 && !body.structure) throw new CE("chorus_ambigu");
+  let u8: Uint8Array;
+  try { u8 = await chorusPdf(f.structure, Number(f.chorus_id)); } catch (e) { const m = `${(e as any).message} ${(e as any).detail || ""}`.trim(); console.error("chorus_pdf", m); throw new CE("chorus_pdf: " + m.slice(0, 200)); }
+  const name = `Facture ${f.numero} ${STRUCT[f.structure]?.nom || f.structure}.pdf`;
+  const s = await storeBytes(u8, name, "application/pdf"); if (!s) throw new CE("chorus_pdf");
+  return { ok: true, id: s.id, name, size: s.size, numero: f.numero, structure: f.structure, montant_ttc: f.montant_ttc, date_depot: f.date_depot };
 }
