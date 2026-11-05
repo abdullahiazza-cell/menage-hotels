@@ -12,7 +12,7 @@ S'il n'y en a aucun, arrête-toi là (rien à écrire, pas de notification).
 ## 2. Pour chaque mail : faut-il répondre ?
 - Pas de réponse à faire (bon de livraison, facture fournisseur sans question, avis de prélèvement, accusé de réception, notification, information sans demande, simple « merci ») :
   `update courrier set statut = 'sans_reponse', importance = 'info', categorie = …, resume = …, note = …, propose_le = now(), updated_at = now() where id = '…' and statut = 'nouveau';`
-  Dans `resume`, une phrase utile (ex. « CFE 2026 de l'Archange : 2 745 € prélevés le 28/12, à prévoir en banque »). Dans `note`, ce qu'Abdullah doit faire s'il y a une action sans réponse (payer, prévoir, vérifier une fuite…).
+  Dans `resume`, une phrase utile (ex. « CFE 2026 de l'Archange : 2 745 € prélevés le 28/12, à prévoir en banque »). Dans `note`, ce qu'Abdullah doit faire s'il y a une action sans réponse (payer, prévoir, vérifier une fuite…), en une phrase courte qui commence par un verbe. Si cette action est à faire rapidement (fuite, coupure, impayé, échéance sous 7 jours, sécurité), mets `importance = 'urgent'` au lieu de 'info' : elle s'affichera en haut de l'appli, dans « À faire de votre côté ».
 - Les PEC envoyées par le Département sont déjà déposées dans le registre par une autre tâche : un mail qui transmet seulement une PEC, ou un « rappel » de message (message retiré par l'expéditeur), n'appelle pas de réponse (`sans_reponse`, résumé : qui, quelle période, quel hôtel).
 - Sinon, prépare une réponse (étapes 3 à 5).
 
