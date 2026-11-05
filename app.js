@@ -2167,7 +2167,13 @@ function viewCleanRoom() {
 }
 
 /* ---------- feuilles ---------- */
-function openSheet(kind, html, cls) { S.sheet = kind; const s = $('sheet'); s.innerHTML = `<div class="panel ${cls || ''}" role="dialog" aria-modal="true">${html}</div>`; s.hidden = false; }
+// Redessiner la même fiche (rafraîchissement automatique, bouton à l'intérieur) garde la position de défilement :
+// sinon la page remonte toute seule en haut pendant qu'on lit.
+function openSheet(kind, html, cls) {
+  const s = $('sheet'), old = s.querySelector('.panel'), top = !s.hidden && old && S.sheet === kind ? old.scrollTop : 0;
+  S.sheet = kind; s.innerHTML = `<div class="panel ${cls || ''}" role="dialog" aria-modal="true">${html}</div>`; s.hidden = false;
+  if (top) { const p = s.querySelector('.panel'); if (p) p.scrollTop = top; }
+}
 function closeSheet() { S.sheet = null; S.rep = null; const s = $('sheet'); s.hidden = true; s.innerHTML = ''; if (S.dirty) softRender(); }
 function refreshSheet() {
   if (!S.sheet) return;
