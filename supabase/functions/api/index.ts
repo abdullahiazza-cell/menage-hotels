@@ -3,7 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring, bankTxSync } from "./banque.ts";
 import { chorusSync, chorusDeposer, chorusState, rapprocher, paiementDecide, STRUCT } from "./chorus.ts";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
-import { CE, courrierIn, courrierState, courrierSet, courrierQueue, courrierDoc, courrierSent, courrierAValider, courrierChorusPdf } from "./courrier.ts";
+import { CE, courrierIn, courrierState, courrierSet, courrierQueue, courrierDoc, courrierSent, courrierAValider, courrierChorusPdf, courrierHist } from "./courrier.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
@@ -1471,6 +1471,10 @@ async function handle(req: Request) {
     case "courrier_set": {
       if (me.role !== "owner") throw new E("owner_only", 403);
       return await cw(courrierSet(me.id, body));
+    }
+    case "courrier_hist": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      return await cw(courrierHist(body));
     }
     case "chorus_refresh": {
       if (me.role !== "owner") throw new E("owner_only", 403);

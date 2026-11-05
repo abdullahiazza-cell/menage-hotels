@@ -38,7 +38,7 @@ const LS = {
 };
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
-  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, verif: { lignes: [], log: [], mois: [] }, vMois: null, vf: 'a_verifier', vHist: false, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, courrier: null, crKeep: {}, crDraft: {}, crAsk: {}, crArm: null, crAll: false, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
+  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, verif: { lignes: [], log: [], mois: [] }, vMois: null, vf: 'a_verifier', vHist: false, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, courrier: null, crKeep: {}, crDraft: {}, crAsk: {}, crHist: null, crArm: null, crAll: false, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
   hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [], docs: [], mail: [] }, sl: null, sd: null, docBlobs: {}, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), ptKind: LS.get('mh-ptk', 'jour'), ptLang: LS.get('mh-ptl', 'ar'), ptVoice: LS.get('mh-ptv', ''), points: [], pointSubs: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
@@ -1563,6 +1563,35 @@ function crAskSheet(id) {
     <div class="card"><b>${esc(r.sujet || '(sans objet)')}</b><p class="muted">reçu ${when(r.recu_le)}</p>${r.resume ? `<p>${esc(r.resume)}</p>` : ''}</div>
     ${crAskBox(id, 'Que doit faire Claude ?')}`);
 }
+// Historique : les réponses envoyées, avec le mail reçu, les pièces et les consignes données à Claude.
+async function crHistLoad(more) {
+  const H = S.crHist || { items: [], q: '' };
+  const before = more && H.items.length ? H.items[H.items.length - 1].envoye_le : null;
+  try {
+    const d = await api('courrier_hist', { q: H.q || null, before });
+    S.crHist = { q: H.q || '', items: more ? H.items.concat(d.items || []) : (d.items || []), more: !!d.more, loaded: true };
+  } catch (e) { toast('Historique indisponible. Vérifiez la connexion.'); S.crHist = { ...H, loaded: true }; }
+  if (S.sheet === 'crhist') crHistSheet();
+}
+function crHistSheet() {
+  const H = S.crHist || { items: [], q: '' };
+  openSheet('crhist', `${sheetHead('📚 Réponses envoyées')}
+    <div class="row" style="gap:8px"><input id="crh-q" type="search" placeholder="Chercher (expéditeur, objet, texte)" value="${esc(H.q || '')}" data-input="crHq" style="flex:1"><button class="btn soft" data-a="crHistFind">Chercher</button></div>
+    ${!H.loaded ? '<p class="muted">Chargement…</p>' : (H.items.length ? `<div class="group">${H.items.map((r) => `<button class="prow" data-a="crHistOpen" data-id="${esc(r.id)}"><span class="pr-t"><b>${esc(crWho(r))}</b><span>${esc(r.sujet || '(sans objet)')}</span><span class="muted sm">envoyée ${when(r.envoye_le)}${(r.pieces || []).length ? ` · 📎 ${r.pieces.length}` : ''}${(r.consignes || []).length ? ' · 🤖 consigne' : ''}</span></span></button>`).join('')}</div>
+      ${H.more ? '<button class="btn ghost" data-a="crHistMore">Voir plus ancien</button>' : ''}` : `<div class="card"><p class="muted">${H.q ? 'Aucune réponse trouvée.' : 'Aucune réponse envoyée pour l’instant.'}</p></div>`)}`);
+}
+function crHistItem(id) {
+  const r = ((S.crHist || {}).items || []).find((x) => x.id === id); if (!r) { crHistSheet(); return; }
+  const pieces = r.pieces || [];
+  const open = (p) => p.src === 'drive' ? `<a class="doc" href="https://drive.google.com/file/d/${encodeURIComponent(p.id)}/view" target="_blank" rel="noopener">📄 ${esc(p.name || 'Fichier du Drive')}</a>` : docLink({ id: p.id, name: p.name });
+  openSheet('crh:' + id, `${sheetHead('📬 ' + esc(crWho(r)))}
+    <button class="btn ghost" data-a="crHistBack">‹ Toutes les réponses</button>
+    <div class="card"><b>${esc(r.sujet || '(sans objet)')}</b><p class="muted">${esc(r.de || '')} · reçu ${when(r.recu_le)}</p><p class="muted">Réponse envoyée ${when(r.envoye_le)} · À : ${esc(r.repondre_a || r.de || '')}${r.copie ? ' · Copie : ' + esc(r.copie) : ''}</p></div>
+    <p class="cap">Votre réponse</p><div class="card"><p style="white-space:pre-wrap">${esc(r.reponse || '')}</p></div>
+    ${pieces.length ? `<p class="cap">Pièces envoyées</p><div class="card"><div class="list">${pieces.map((p) => `<div class="li"><span class="t">${open(p)}</span></div>`).join('')}</div></div>` : ''}
+    ${(r.consignes || []).length ? `<p class="cap">Vos consignes à Claude</p><div class="card"><div class="list">${r.consignes.map((c) => `<div class="li"><span class="t">🤖 « ${esc(c.texte)} »<br><span class="muted sm">${when(c.le)}</span></span></div>`).join('')}</div></div>` : ''}
+    <details class="card"><summary><b>Mail reçu</b></summary><p style="white-space:pre-wrap">${esc(r.corps || '')}</p>${docsHtml((r.pj || []).map((p) => ({ id: p.id, name: p.name })))}</details>`);
+}
 function courrierTile() {
   if (!S.courrier || !S.me || S.me.role !== 'owner' || S.preview) return '';
   const n = crTodo().length, urg = crTodo().filter((r) => r.importance === 'urgent').length, wait = S.courrier.nouveaux || 0;
@@ -1587,6 +1616,7 @@ function courrierSheet() {
     ${redo.length ? `<p class="cap">Claude retravaille (prochain passage dans l’heure)</p><div class="group">${redo.map(btn).join('')}</div>` : ''}
     ${going.length ? `<p class="cap">Approuvées</p><div class="group">${going.map(btn).join('')}</div>` : ''}
     ${done.length ? `<p class="cap">Traités ces 14 derniers jours</p><div class="group">${done.slice(0, S.crAll ? 80 : 8).map((r) => `<div class="prow ro">${line(r)}${r.statut === 'sans_reponse' || r.statut === 'ignore' ? `<button class="btn small ghost" data-a="crAskOpen" data-id="${esc(r.id)}" aria-label="Demander une réponse à Claude">🤖 Répondre</button>` : pill(r)}</div>`).join('')}</div>${done.length > 8 && !S.crAll ? '<button class="btn ghost" data-a="crAll">Tout afficher</button>' : ''}` : ''}
+    <button class="btn soft" data-a="crHist">📚 Historique des réponses envoyées</button>
     <p class="muted sm">La boîte hoteldeparisadm est lue vers 10 h et 17 h (heure de France). Claude prépare une réponse pour chaque mail qui en demande une, avec les pièces retrouvées dans vos mails, le Drive et l’appli. Rien ne part sans votre accord.${C.nouveaux ? ` ${C.nouveaux} mail${C.nouveaux > 1 ? 's' : ''} attend${C.nouveaux > 1 ? 'ent' : ''} la prochaine lecture.` : ''}</p>`);
 }
 function crSheet(id) {
@@ -2423,6 +2453,11 @@ const A = {
   crAll() { S.crAll = true; courrierSheet(); },
   crOpen(d) { S.crArm = null; crSheet(d.id); },
   crAskOpen(d) { crAskSheet(d.id); },
+  crHist() { if (!S.crHist) S.crHist = { items: [], q: '' }; crHistSheet(); crHistLoad(false); },
+  crHistFind() { const t = $('crh-q'); S.crHist = { items: [], q: t ? t.value.trim() : '' }; crHistSheet(); crHistLoad(false); },
+  crHistMore() { crHistLoad(true); },
+  crHistOpen(d) { crHistItem(d.id); },
+  crHistBack() { crHistSheet(); },
   crMic(d) { crMic(d.id); },
   async crAskSend(d) {
     crMicStop();
@@ -2786,6 +2821,7 @@ const C = {
 const I = {
   crTxt(t) { S.crDraft[t.dataset.id] = t.value; },
   crAsk(t) { S.crAsk[t.dataset.id] = t.value; },
+  crHq(t) { if (S.crHist) S.crHist.q = t.value; },
   repText(el) { if (S.rep && S.rep.items && S.rep.items[el.dataset.k]) S.rep.items[el.dataset.k].text = el.value; },
   redoText(el) { if (S.rep) S.rep.text = el.value; },
   ctQ(el) { S.cq = el.value; const pos = el.selectionStart; render(); const n = $('ctQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} } },
@@ -2799,7 +2835,7 @@ document.addEventListener('click', (e) => {
 $('sheet').addEventListener('click', (e) => { if (e.target === $('sheet')) closeSheet(); });
 document.addEventListener('change', (e) => { const t = e.target.closest('[data-change]'); if (t && C[t.dataset.change]) C[t.dataset.change](t); });
 document.addEventListener('input', (e) => { const t = e.target.closest('[data-input]'); if (t && I[t.dataset.input]) I[t.dataset.input](t); });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.sheet) closeSheet(); if (e.key === 'Enter' && e.target.id === 'codeIn') A.codeGo(); });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && S.sheet) closeSheet(); if (e.key === 'Enter' && e.target.id === 'codeIn') A.codeGo(); if (e.key === 'Enter' && e.target.id === 'crh-q') A.crHistFind(); });
 window.addEventListener('hashchange', () => { if (!S.secret) { S.act = null; render(); } });
 
 function openConvWhenReady(conv) {

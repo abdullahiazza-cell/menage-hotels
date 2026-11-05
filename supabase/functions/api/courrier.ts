@@ -210,3 +210,17 @@ export async function courrierChorusPdf(body: any) {
   return { ok: true, id: s.id, name, size: s.size, numero: f.numero, structure: f.structure, montant_ttc: f.montant_ttc, date_depot: f.date_depot, text: (s.text || "").slice(0, 4000) };
   // text : contenu lu dans le PDF, pour que Claude vérifie la facture avant de la proposer.
 }
+
+// 9) Historique des réponses envoyées (et des consignes données à Claude), du plus récent au plus ancien.
+export async function courrierHist(body: any) {
+  const lim = 30;
+  let q = db.from("courrier").select("id,de,de_nom,sujet,recu_le,envoye_le,traite_le,corps,pj,reponse,repondre_a,copie,pieces,consignes,categorie")
+    .eq("statut", "envoye").order("envoye_le", { ascending: false }).limit(lim + 1);
+  if (typeof body.before === "string" && body.before) q = q.lt("envoye_le", body.before);
+  const qq = S_(body.q, 80);
+  if (qq) { const t = qq.replace(/[%,()]/g, " "); q = q.or(`sujet.ilike.%${t}%,de.ilike.%${t}%,de_nom.ilike.%${t}%,reponse.ilike.%${t}%`); }
+  const { data, error } = await q;
+  if (error) { console.error("courrier_hist", error); throw new CE("db"); }
+  const rows = (data || []).slice(0, lim).map((r: any) => ({ ...r, pj: (r.pj || []).map((p: any) => ({ id: p.id, name: p.name })) }));
+  return { items: rows, more: (data || []).length > lim };
+}
