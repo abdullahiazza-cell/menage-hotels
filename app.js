@@ -1597,7 +1597,7 @@ function crSheet(id) {
   const pieceRow = (p) => {
     const on = kept.includes(String(p.id));
     const open = p.src === 'drive' ? `<a class="doc" href="https://drive.google.com/file/d/${encodeURIComponent(p.id)}/view" target="_blank" rel="noopener">📄 ${esc(p.name || 'Fichier du Drive')}</a>` : docLink({ id: p.id, name: p.name });
-    return `<div class="li"><span class="t">${open}${p.pourquoi ? `<br><span class="muted sm">${esc(p.pourquoi)}</span>` : ''}</span>${edit ? `<button class="toggle" data-a="crPiece" data-id="${esc(r.id)}" data-k="${esc(p.id)}" aria-pressed="${on}">${on ? '✓ Jointe' : 'Retirée'}</button>` : ''}</div>`;
+    return `<div class="li"><span class="t">${open}${p.pourquoi ? `<br><span class="muted sm">${esc(p.pourquoi)}</span>` : ''}</span>${edit ? `<button class="pswitch" data-a="crPiece" data-id="${esc(r.id)}" data-k="${esc(p.id)}" role="switch" aria-checked="${on}" aria-label="${on ? 'Jointe : toucher pour retirer' : 'Retirée : toucher pour joindre'}"><span class="${on ? 'on' : 'off'}">${on ? 'Jointe' : 'Retirée'}</span><span class="sw ${on ? 'on' : ''}" aria-hidden="true"><i></i></span></button>` : ''}</div>`;
   };
   const txt = S.crDraft[id] != null ? S.crDraft[id] : (r.reponse || '');
   const nKept = (r.pieces || []).filter((p) => kept.includes(String(p.id))).length;
