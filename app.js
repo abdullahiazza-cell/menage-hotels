@@ -38,7 +38,7 @@ const LS = {
 };
 const S = {
   secret: LS.get('mh-secret', null), loaded: false, data: null,
-  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, verif: { lignes: [], log: [], mois: [] }, vMois: null, vf: 'a_verifier', vHist: false, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
+  me: null, cfg: DEFAULT_CFG, reg: { occ: [], pecs: [], inbox: [], log: [] }, verif: { lignes: [], log: [], mois: [] }, vMois: null, vf: 'a_verifier', vHist: false, rsub: 'chambres', rq: '', rSortis: false, rDone: false, rooms: {}, docUrls: {}, courrier: null, crKeep: {}, crDraft: {}, crArm: null, crAll: false, staff: [], devices: [], invites: [], plan: { avail: {} }, issues: [], msgs: [], reads: [], urls: {}, vapid: null,
   hotel: LS.get('mh-hotel', 'arc'), scope: LS.get('mh-scope', 'all'), tab: 'home', sub: 'rooms', sel: new Set(), assignTo: '', open: null, preview: false, rf: 'a_faire', cq: '', notes: [], contacts: [], sec: { checks: [], logs: [], docs: [], mail: [] }, sl: null, sd: null, docBlobs: {}, projects: [], tasks: [], mtOpen: LS.get('mh-mt', false), ptKind: LS.get('mh-ptk', 'jour'), ptLang: LS.get('mh-ptl', 'ar'), ptVoice: LS.get('mh-ptv', ''), points: [], pointSubs: [], psub: 'projets', tf: 'mine', pFin: false, pDone: false,
   work: LS.get('mh-work', {}), busy: {}, rep: null, sheet: null, stats: null, proposal: null, withFond: true, rebalance: true,
   localUrls: {}, rec: null, pin: '', act: null, dirty: false, installEvt: null,
@@ -162,6 +162,7 @@ const ERR = {
   readonly: 'Lecture seule : vous pouvez tout regarder, mais rien n’est modifié. Demandez à Abdullah.',
   reason: 'Indique la raison.', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
   chorus_fail: 'Chorus ne répond pas. Réessaie dans quelques minutes.', chorus_changed: 'La facture a changé entre-temps. Rouvre l’écran et revérifie.', chorus_depot_fail: 'Le dépôt a échoué. Le détail est affiché sur la facture ; rien n’a été déposé.',
+  courrier_incomplet: 'Il manque quelque chose dans cette réponse : confirmez pour l’envoyer quand même.', courrier_etat: 'Ce mail a déjà été traité. Rouvrez Courrier.', courrier_vide: 'La réponse est vide.',
   deja: 'Cette prise en charge est déjà dans le registre.', too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
 };
 // Comptes en lecture seule : tout est visible, seules ces actions passent (lire, messages, notifications).
@@ -204,7 +205,7 @@ async function refresh(force) {
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
       S.verif = d.verif || { lignes: [], log: [], mois: [] };
-      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || []; S.banque = d.banque || null; S.chorus = d.chorus || null;
+      S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || []; S.banque = d.banque || null; S.chorus = d.chorus || null; S.courrier = d.courrier || null;
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
@@ -224,7 +225,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('sw.js').catch(() => {});
-  navigator.serviceWorker.addEventListener('message', (e) => { if (!e.data) return; if (e.data.type === 'refresh') refresh(); if (e.data.type === 'open' && e.data.conv) openConvWhenReady(e.data.conv); if (e.data.type === 'open' && e.data.point) refresh(true).then(() => pointSheet(e.data.point, true)); });
+  navigator.serviceWorker.addEventListener('message', (e) => { if (!e.data) return; if (e.data.type === 'refresh') refresh(); if (e.data.type === 'open' && e.data.conv) openConvWhenReady(e.data.conv); if (e.data.type === 'open' && e.data.point) refresh(true).then(() => pointSheet(e.data.point, true)); if (e.data.type === 'open' && e.data.sheet === 'courrier') refresh(true).then(() => { if (S.courrier) courrierSheet(); }); });
 }
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; if (S.sheet === 'onboard') onboardSheet(); });
 
@@ -475,6 +476,7 @@ function onboardSheet() {
 
 /* ----- icônes (trait fin, style iOS) ----- */
 const ICO = {
+  mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/>',
   invoice: '<path d="M6 2h9l5 5v15H6z"/><path d="M14 2v6h6"/><path d="M9 13h7M9 17h5"/>',
   bank: '<path d="M3 10h18"/><path d="M12 3 3 8v2h18V8z"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 21h18"/>',
   menage: '<path d="M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9z"/><path d="M19 15l.8 1.7 1.7.8-1.7.8L19 20l-.8-1.7-1.7-.8 1.7-.8z"/>',
@@ -568,7 +570,7 @@ function viewHome() {
       ${tile('projets', myTasks().length ? `${myTasks().length} tâche${myTasks().length > 1 ? 's' : ''} pour vous` : `${S.projects.filter((p) => p.statut !== 'termine').length} projets`, myTasks().filter((t) => tLate(t) || tToday(t)).length)}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
       ${tile('contacts', `${S.contacts.length} contacts`)}
-      ${bankTile()}${chorusTile()}
+      ${courrierTile()}${bankTile()}${chorusTile()}
     </div>
     <div class="group views"><div class="prow ro"><span class="pr-t"><b>Voir comme</b><span class="muted">et faire à leur place si besoin</span></span></div>
       <button class="prow" data-a="preview" data-k="menage"><span class="pr-t"><b>🧹 Femme de ménage</b><span class="muted">${myCleanings().length ? myCleanings().length + ' nettoyage' + (myCleanings().length > 1 ? 's' : '') + ' pour vous' : 'Les nettoyages qui vous sont donnés'}</span></span><span class="chev">›</span></button>
@@ -1510,6 +1512,74 @@ function facturesSheet() {
     <p class="muted sm">${C.last ? 'Statuts lus sur Chorus ' + when(C.last) + '.' : ''} Lecture automatique 2 fois par jour. « Payée » = virement retrouvé sur le compte et confirmé ; « Mise en paiement » = annoncée par Chorus.</p>
     ${own ? '<button class="btn soft" data-a="facRefresh">🔄 Relire Chorus maintenant</button>' : ''}`);
 }
+/* ----- courrier : réponses préparées par Claude aux mails importants, relues et approuvées par le propriétaire ----- */
+const CR_ST = { a_valider: ['À relire', 'amber'], approuve: ['Part dans les 5 min', 'slate'], envoi: ['Envoi en cours', 'slate'], erreur: ['Non envoyée', 'red'], envoye: ['Envoyée', 'green'], ignore: ['Ignorée', 'plain'], sans_reponse: ['Pas de réponse à faire', 'plain'] };
+const crOpenRows = () => S.courrier ? (S.courrier.open || []) : [];
+const crTodo = () => crOpenRows().filter((r) => r.statut === 'a_valider' || r.statut === 'erreur');
+const crWho = (r) => r.de_nom || String(r.de || '').replace(/<.*>/, '').trim() || r.de || '?';
+const crKept = (r) => { if (!S.crKeep[r.id]) S.crKeep[r.id] = (r.pieces || []).map((p) => String(p.id)); return S.crKeep[r.id]; };
+// Ce qui doit être vérifié avant d'envoyer : pièces à fournir, demandes non couvertes, pièces retirées.
+function crWarn(r) {
+  const out = [], kept = crKept(r);
+  if ((r.manque || []).length) out.push(`${r.manque.length} élément${r.manque.length > 1 ? 's' : ''} à fournir par vous`);
+  const nc = (r.demandes || []).filter((d) => !d.ok).length; if (nc) out.push(`${nc} demande${nc > 1 ? 's' : ''} non couverte${nc > 1 ? 's' : ''}`);
+  const ret = (r.pieces || []).filter((p) => !kept.includes(String(p.id))).length; if (ret) out.push(`${ret} pièce${ret > 1 ? 's' : ''} retirée${ret > 1 ? 's' : ''}`);
+  return out;
+}
+function courrierTile() {
+  if (!S.courrier || !S.me || S.me.role !== 'owner' || S.preview) return '';
+  const n = crTodo().length, urg = crTodo().filter((r) => r.importance === 'urgent').length, wait = S.courrier.nouveaux || 0;
+  const sub = n ? `${n} réponse${n > 1 ? 's' : ''} à relire${urg ? ` · <span class="ora">${urg} urgente${urg > 1 ? 's' : ''}</span>` : ''}` : (wait ? `${wait} mail${wait > 1 ? 's' : ''} à la prochaine lecture` : 'Rien à relire');
+  return `<button class="tile" data-a="crList"><span class="ti-ic t-indigo">${ico('mail')}</span>${n ? `<span class="badge">${n}</span>` : ''}
+    <span class="ti-t">Courrier</span><span class="ti-s">${sub}</span></button>`;
+}
+function courrierSheet() {
+  const C = S.courrier || { open: [], done: [], nouveaux: 0 };
+  const pill = (r) => { const [l, c] = CR_ST[r.statut] || [r.statut, 'plain']; return `<span class="pill p-${c}">${esc(l)}</span>`; };
+  const line = (r) => `<span class="pr-t"><b>${r.importance === 'urgent' ? '🔴 ' : ''}${esc(crWho(r))}</b><span>${esc(r.sujet || '(sans objet)')}</span>${r.resume ? `<span class="muted">${esc(r.resume)}</span>` : ''}<span class="muted sm">reçu ${when(r.recu_le)}</span></span>`;
+  const btn = (r) => `<button class="prow" data-a="crOpen" data-id="${esc(r.id)}">${line(r)}${pill(r)}</button>`;
+  const todo = crTodo().slice().sort((a, b) => (b.importance === 'urgent') - (a.importance === 'urgent') || String(b.recu_le).localeCompare(String(a.recu_le)));
+  const going = crOpenRows().filter((r) => r.statut === 'approuve' || r.statut === 'envoi');
+  const done = C.done || [];
+  openSheet('courrier', `${sheetHead('📬 Courrier')}
+    ${todo.length ? `<p class="cap">À relire</p><div class="group">${todo.map(btn).join('')}</div>` : '<div class="card"><p class="muted">Aucune réponse à relire pour l’instant.</p></div>'}
+    ${going.length ? `<p class="cap">Approuvées</p><div class="group">${going.map(btn).join('')}</div>` : ''}
+    ${done.length ? `<p class="cap">Traités ces 14 derniers jours</p><div class="group">${done.slice(0, S.crAll ? 80 : 8).map((r) => `<div class="prow ro">${line(r)}${pill(r)}</div>`).join('')}</div>${done.length > 8 && !S.crAll ? '<button class="btn ghost" data-a="crAll">Tout afficher</button>' : ''}` : ''}
+    <p class="muted sm">La boîte hoteldeparisadm est lue vers 10 h et 17 h (heure de France). Claude prépare une réponse pour chaque mail qui en demande une, avec les pièces retrouvées dans vos mails, le Drive et l’appli. Rien ne part sans votre accord.${C.nouveaux ? ` ${C.nouveaux} mail${C.nouveaux > 1 ? 's' : ''} attend${C.nouveaux > 1 ? 'ent' : ''} la prochaine lecture.` : ''}</p>`);
+}
+function crSheet(id) {
+  const r = crOpenRows().find((x) => x.id === id); if (!r) { courrierSheet(); return; }
+  const [l, c] = CR_ST[r.statut] || [r.statut, 'plain'];
+  const edit = r.statut === 'a_valider' || r.statut === 'erreur', kept = crKept(r), warn = crWarn(r), arm = S.crArm === id;
+  const dem = r.demandes || [];
+  const pieceRow = (p) => {
+    const on = kept.includes(String(p.id));
+    const open = p.src === 'drive' ? `<a class="doc" href="https://drive.google.com/file/d/${encodeURIComponent(p.id)}/view" target="_blank" rel="noopener">📄 ${esc(p.name || 'Fichier du Drive')}</a>` : docLink({ id: p.id, name: p.name });
+    return `<div class="li"><span class="t">${open}${p.pourquoi ? `<br><span class="muted sm">${esc(p.pourquoi)}</span>` : ''}</span>${edit ? `<button class="toggle" data-a="crPiece" data-id="${esc(r.id)}" data-k="${esc(p.id)}" aria-pressed="${on}">${on ? '✓ Jointe' : 'Retirée'}</button>` : ''}</div>`;
+  };
+  const txt = S.crDraft[id] != null ? S.crDraft[id] : (r.reponse || '');
+  const nKept = (r.pieces || []).filter((p) => kept.includes(String(p.id))).length;
+  openSheet('cr:' + id, `${sheetHead('📬 ' + esc(crWho(r)))}
+    <div class="card"><div class="row between"><b>${r.importance === 'urgent' ? '🔴 ' : ''}${esc(r.sujet || '(sans objet)')}</b><span class="pill p-${c}">${esc(l)}</span></div>
+      <p class="muted">${esc(r.de || '')} · reçu ${when(r.recu_le)}</p>
+      ${r.resume ? `<p>${esc(r.resume)}</p>` : ''}
+      ${r.statut === 'erreur' && r.erreur ? `<p style="color:var(--red)">Envoi impossible : ${esc(r.erreur)}</p>` : ''}</div>
+    ${dem.length ? `<p class="cap">Ce qu’on vous demande</p><div class="card"><div class="list">${dem.map((d) => `<div class="li"><span class="t">${d.ok ? '✅' : '❌'} <b>${esc(d.demande)}</b>${d.reponse ? `<br><span class="muted">${esc(d.reponse)}</span>` : ''}</span></div>`).join('')}</div></div>` : ''}
+    ${(r.manque || []).length ? `<div class="banner c-red">À fournir par vous : ${r.manque.map(esc).join(' · ')}</div>` : ''}
+    ${r.note ? `<div class="banner c-slate">🤖 ${esc(r.note)}</div>` : ''}
+    <p class="cap">Réponse proposée</p>
+    <div class="card"><p class="muted sm">À : ${esc(r.repondre_a || r.de || '')}${r.copie ? ' · Copie : ' + esc(r.copie) : ''} · dans le même fil, depuis hoteldeparisadm</p>
+      ${edit ? `<textarea id="cr-txt" data-input="crTxt" data-id="${esc(id)}" rows="16" style="min-height:300px;font-size:15px">${esc(txt)}</textarea>` : `<p style="white-space:pre-wrap">${esc(r.reponse || '')}</p>`}</div>
+    ${(r.pieces || []).length ? `<p class="cap">Pièces jointes à la réponse</p><div class="card"><div class="list">${r.pieces.map(pieceRow).join('')}</div><p class="muted sm">Ouvrez chaque pièce avant d’envoyer.</p></div>` : '<p class="muted">Aucune pièce jointe à la réponse.</p>'}
+    <details class="card"><summary><b>Mail reçu</b>${(r.pj || []).length ? ` · ${r.pj.length} pièce${r.pj.length > 1 ? 's' : ''}` : ''}</summary>
+      <p style="white-space:pre-wrap">${esc(r.corps || '')}</p>${docsHtml((r.pj || []).map((p) => ({ id: p.id, name: p.name })))}
+      ${(r.autres_pj || []).length ? `<p class="muted sm">Autres pièces (dans Gmail) : ${r.autres_pj.map((o) => esc(o.name)).join(', ')}</p>` : ''}</details>
+    ${edit ? `${warn.length ? `<p style="color:var(--red)">⚠️ ${esc(warn.join(' · '))}. Vérifiez avant d’envoyer.</p>` : ''}
+      <div class="row" style="flex-wrap:wrap;gap:8px"><button class="btn big ${arm ? 'pri' : 'ok'}" data-a="crSend" data-id="${esc(id)}">${arm ? '⚠️ Confirmer : envoyer quand même' : `✅ Approuver et envoyer${nKept ? ` (${nKept} pièce${nKept > 1 ? 's' : ''})` : ''}`}</button>
+      <button class="btn ghost" data-a="crIgnore" data-id="${esc(id)}">Ignorer ce mail</button></div>` : ''}
+    ${r.statut === 'approuve' ? `<p class="muted">Approuvée ${when(r.traite_le)} : la réponse part dans les 5 minutes.</p><button class="btn ghost" data-a="crReopen" data-id="${esc(id)}">Annuler l’envoi et modifier</button>` : ''}
+    ${r.statut === 'envoi' ? '<p class="muted">Envoi en cours par la boîte mail…</p>' : ''}`);
+}
 const ptSegs = (lang) => `<div class="segc" role="group" aria-label="Langue"><button data-a="ptLang" data-k="ar" aria-pressed="${lang === 'ar'}">الدارجة</button><button data-a="ptLang" data-k="fr" aria-pressed="${lang === 'fr'}">Français</button></div>`;
 // Petit bouton à côté du compte : pastille tant que le dernier point n'a pas été ouvert.
 const ptSeen = () => LS.get('mh-pt-seen', []);
@@ -2065,6 +2135,8 @@ function refreshSheet() {
   else if (S.sheet.startsWith('proj:') && !isTyping()) projSheet(S.sheet.slice(5));
   else if (S.sheet.startsWith('verif:') && !isTyping()) verifSheet(S.sheet.slice(6), S.vHist);
   else if (S.sheet === 'factures') facturesSheet();
+  else if (S.sheet === 'courrier') courrierSheet();
+  else if (S.sheet.startsWith('cr:') && !isTyping()) crSheet(S.sheet.slice(3));
 }
 const sheetHead = (t) => `<div class="row between"><h2>${t}</h2><button class="btn small" data-a="close">Fermer</button></div>`;
 function roomSheet(id) {
@@ -2296,6 +2368,32 @@ const A = {
   ptOpen(d) { pointSheet(d.k); },
   bankOpen() { bankSheet(); },
   facOpen() { S.facArm = null; facturesSheet(); },
+  crList() { S.crArm = null; courrierSheet(); },
+  crAll() { S.crAll = true; courrierSheet(); },
+  crOpen(d) { S.crArm = null; crSheet(d.id); },
+  crPiece(d) {
+    const r = crOpenRows().find((x) => x.id === d.id); if (!r) return;
+    const t = $('cr-txt'); if (t) S.crDraft[r.id] = t.value;
+    const k = crKept(r), i = k.indexOf(String(d.k)); if (i >= 0) k.splice(i, 1); else k.push(String(d.k));
+    S.crArm = null; crSheet(r.id);
+  },
+  async crSend(d) {
+    const r = crOpenRows().find((x) => x.id === d.id); if (!r) return;
+    const t = $('cr-txt'); const txt = (t ? t.value : (S.crDraft[r.id] != null ? S.crDraft[r.id] : r.reponse)) || '';
+    if (!txt.trim()) { toast('La réponse est vide.'); return; }
+    const warn = crWarn(r);
+    // Tout est couvert : un seul clic. Sinon, un second clic pour confirmer en connaissance de cause.
+    if (warn.length && S.crArm !== r.id) { S.crDraft[r.id] = txt; S.crArm = r.id; crSheet(r.id); setTimeout(() => { if (S.crArm === r.id) { S.crArm = null; if (S.sheet === 'cr:' + r.id && !isTyping()) crSheet(r.id); } }, 10000); return; }
+    S.crArm = null;
+    const pieces = crKept(r).filter((id) => (r.pieces || []).some((p) => String(p.id) === id));
+    if (await act(() => api('courrier_set', { id: r.id, do: 'approuver', reponse: txt, pieces, force: warn.length > 0 }), 'Réponse approuvée ✅ Elle part dans les 5 minutes.')) { delete S.crDraft[r.id]; delete S.crKeep[r.id]; courrierSheet(); }
+  },
+  async crIgnore(d) {
+    if (S.crIgnArm !== d.id) { S.crIgnArm = d.id; toast('Touchez encore « Ignorer » pour classer ce mail sans répondre.'); setTimeout(() => S.crIgnArm = null, 5000); return; }
+    S.crIgnArm = null;
+    if (await act(() => api('courrier_set', { id: d.id, do: 'ignorer' }), 'Mail classé sans réponse')) courrierSheet();
+  },
+  async crReopen(d) { if (await act(() => api('courrier_set', { id: d.id, do: 'rouvrir' }), 'Envoi annulé : vous pouvez modifier')) crSheet(d.id); },
   facAll() { S.facAll = true; facturesSheet(); },
   async facRefresh() { toast('Lecture de Chorus…'); await act(() => api('chorus_refresh'), 'Statuts à jour'); if (S.sheet === 'factures') facturesSheet(); },
   async facPay(d) { await act(() => api('chorus_pay', { id: d.id, ok: !!d.ok }), d.ok ? 'Paiement confirmé 💶' : 'Rapprochement écarté'); if (S.sheet === 'factures') facturesSheet(); },
@@ -2620,6 +2718,7 @@ const C = {
   mvFond(el) { const i = +el.dataset.i; if (el.value) S.proposal.fond[i].uid = el.value; else S.proposal.fond.splice(i, 1); render(); },
 };
 const I = {
+  crTxt(t) { S.crDraft[t.dataset.id] = t.value; },
   repText(el) { if (S.rep && S.rep.items && S.rep.items[el.dataset.k]) S.rep.items[el.dataset.k].text = el.value; },
   redoText(el) { if (S.rep) S.rep.text = el.value; },
   ctQ(el) { S.cq = el.value; const pos = el.selectionStart; render(); const n = $('ctQ'); if (n) { n.focus(); try { n.setSelectionRange(pos, pos); } catch (e) {} } },
@@ -2645,13 +2744,15 @@ function openConvWhenReady(conv) {
   const cm = location.hash.match(/[#&]c=([^&]+)/); const openC = cm ? decodeURIComponent(cm[1]) : null;
   const pm = location.hash.match(/[#&]pt=(jour|semaine)/); const openP = pm ? pm[1] : null;
   const bm = location.hash.match(/[#&]banque=(\w+)/); const bankRes = bm ? bm[1] : null;
-  if (S.secret && (readHashCode() || openC || openP || bankRes)) history.replaceState(null, '', location.pathname);
+  const openCr = /[#&]courrier\b/.test(location.hash);
+  if (S.secret && (readHashCode() || openC || openP || bankRes || openCr)) history.replaceState(null, '', location.pathname);
   render();
   if (S.secret) {
     await refresh(true);
     if (S.loaded && pushSupported() && Notification.permission === 'granted') enablePush(true);
     if (S.loaded && openC) threadSheet(openC, true);
     if (S.loaded && openP && isMgr()) pointSheet(openP, true);
+    if (S.loaded && openCr && S.courrier) courrierSheet();
     if (S.loaded && bankRes) { toast({ ok: 'Comptes reliés ✅', refus: 'Accord refusé à la banque.', expire: 'Lien expiré, recommence.', erreur: 'La liaison n’a pas abouti, réessaie.' }[bankRes] || ''); if (S.banque) bankSheet(); }
   }
 })();

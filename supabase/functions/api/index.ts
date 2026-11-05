@@ -3,6 +3,7 @@ import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring, bankTxSync } from "./banque.ts";
 import { chorusSync, chorusDeposer, chorusState, rapprocher, paiementDecide, STRUCT } from "./chorus.ts";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
+import { CE, courrierIn, courrierState, courrierSet, courrierQueue, courrierDoc, courrierSent, courrierAValider } from "./courrier.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
 const SB_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ??
@@ -348,6 +349,7 @@ async function actState(me: any, device: any) {
   }
   if (canBank(me)) out.banque = await bankState(me.role === "owner").catch(() => null);
   if (canBank(me)) out.chorus = await chorusState(me.role === "owner").catch((e) => { console.error("chorus_state", e); return null; });
+  if (me.role === "owner") out.courrier = await courrierState().catch((e) => { console.error("courrier_state", e); return null; });
   out.urls = await signUrls(paths);
   return out;
 }
@@ -1039,6 +1041,16 @@ async function ownerIds() { const { data } = await sb.from("staff").select("id")
 async function chorusPushPay(n: number) {
   await pushTo(await ownerIds(), { title: "🏦 Virement à rapprocher", body: `${n} virement${n > 1 ? "s" : ""} du Département correspond${n > 1 ? "ent" : ""} à des factures : à confirmer dans Factures.`, tag: "chorus-pay" }).catch(() => {});
 }
+// Erreurs du module courrier → erreurs de l'API.
+async function cw<T>(p: Promise<T>): Promise<T> { try { return await p; } catch (e) { if (e instanceof CE) throw new E(e.code, e.status); throw e; } }
+// Après le passage de Claude (10 h et 17 h) : une notification si des réponses attendent le propriétaire.
+async function courrierPush() {
+  const n = await courrierAValider();
+  if (!n.fresh) return { sent: 0, all: n.all };
+  const urg = n.urgent.length ? `\nUrgent : ${n.urgent.join(" · ").slice(0, 90)}` : "";
+  await pushTo(await ownerIds(), { title: "📬 Courrier à relire", body: `${n.fresh} réponse${n.fresh > 1 ? "s" : ""} préparée${n.fresh > 1 ? "s" : ""}, à relire et approuver.${urg}`, tag: "courrier", sheet: "courrier" } as any).catch(() => {});
+  return { sent: 1, all: n.all };
+}
 async function chorusCron() {
   const r = await chorusSync();
   const imp = r.changes.filter((c: any) => CH_LIB[c.nouveau]);
@@ -1077,6 +1089,7 @@ async function handle(req: Request) {
     }
     if (body.kind === "point_push") return { sent: await pointPush() };
     if (body.kind === "chorus_sync") return await chorusCron();
+    if (body.kind === "courrier_push") return await courrierPush();
     if (body.kind === "bank_sync") {
       const n = await bankSync();
       // Mouvements (crédits) une fois par jour, le matin, puis rapprochement avec les factures Chorus.
@@ -1106,6 +1119,16 @@ async function handle(req: Request) {
   }
 
   if (a === "pec_pdf") return await pecPdf(req, body);
+  // --- courrier : le script Google de la boîte mail dépose les mails reçus et envoie les réponses approuvées ---
+  if (a === "courrier_in") { await gasAuth(req); return await cw(courrierIn(body)); }
+  if (a === "courrier_queue") { await gasAuth(req); return await cw(courrierQueue()); }
+  if (a === "courrier_doc") { await gasAuth(req); return await cw(courrierDoc(body)); }
+  if (a === "courrier_sent") {
+    await gasAuth(req);
+    const r = await cw(courrierSent(body));
+    if (r.failed) await pushTo(await ownerIds(), { title: "📬 Réponse non envoyée", body: "Une réponse approuvée n’a pas pu partir. Ouvrez Courrier pour voir pourquoi.", tag: "courrier", sheet: "courrier" } as any).catch(() => {});
+    return r;
+  }
   if (a === "mail_doc") return await mailDoc(req, body);
   if (a === "pec_relances") { await gasAuth(req); return await relancesTodo(); }
   if (a === "pec_relance_done") {
@@ -1443,6 +1466,10 @@ async function handle(req: Request) {
       if (me.role !== "owner") throw new E("owner_only", 403);
       try { return await bankLinkStart(String(body.bank || ""), me.id, String(body.back || "")); }
       catch (e) { console.error("bank_link", e, (e as any).detail); throw new E(String((e as any).message) === "eb_no_key" ? "bank_no_key" : "bank_fail"); }
+    }
+    case "courrier_set": {
+      if (me.role !== "owner") throw new E("owner_only", 403);
+      return await cw(courrierSet(me.id, body));
     }
     case "chorus_refresh": {
       if (me.role !== "owner") throw new E("owner_only", 403);
