@@ -439,12 +439,20 @@ const refOf = clip => Math.max(0.6, ((DATA.ref || {})[clip]) || 0.92);
 const SRec = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition || null) : null;
 const STT_OFF_KEY = 'hder-stt-off';
 let STT_SESSION_OFF = false;
-const sttOff = () => { if (STT_SESSION_OFF) return true; try { return Date.now() - Number(localStorage.getItem(STT_OFF_KEY) || 0) < 3 * 3600e3; } catch (e) { return false; } };
+const sttOff = () => { if (STT_SESSION_OFF) return true; try { return Date.now() - Number(localStorage.getItem(STT_OFF_KEY) || 0) < 30 * 60e3; } catch (e) { return false; } };
 const setSttOff = keep => { STT_SESSION_OFF = true; if (keep) { try { localStorage.setItem(STT_OFF_KEY, String(Date.now())); } catch (e) {} } };
+const setSttOn = () => { STT_SESSION_OFF = false; try { localStorage.removeItem(STT_OFF_KEY); } catch (e) {} };
+// L'iPhone n'autorise pas la reconnaissance vocale dans les applis ajoutées à l'écran d'accueil (seulement dans Safari, avec la dictée activée)
+const onIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && 'ontouchend' in document);
+const inApp = () => (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+const phoneSR = () => !!SRec && !(onIOS() && inApp());
+let PHONE_FAILS = 0;
+// Au démarrage puis toutes les 10 minutes : le service de note du serveur marche-t-il ?
+const checkStt = () => callApi('credits').then(c => { if (c && (c.keyOk === false || (typeof c.balance === 'number' && c.balance <= 0.01))) setSttOff(true); else setSttOn(); }).catch(() => {});
 const PHONE_REF = 0.85; // la reconnaissance du téléphone comprend moins bien la darija : on est un peu plus indulgent
 function phoneListen() {
   const r = new SRec();
-  r.lang = (/iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document) ? 'ar-SA' : 'ar-MA';
+  r.lang = onIOS() ? 'ar-SA' : 'ar-MA';
   r.interimResults = false; r.maxAlternatives = 5; r.continuous = false;
   const result = new Promise((res, rej) => {
     const got = []; let best = '';
@@ -453,8 +461,10 @@ function phoneListen() {
       for (let i = 0; i < e.results.length; i++) { const R = e.results[i]; if (R[0] && R[0].transcript) parts.push(R[0].transcript); for (let k = 0; k < R.length; k++) if (R[k].transcript && !got.includes(R[k].transcript)) got.push(R[k].transcript); }
       best = parts.join(' ');
     };
-    r.onerror = e => { if (e.error === 'no-speech' || e.error === 'aborted') return; const x = new Error(e.error); x.code = 'sr-' + e.error; rej(x); };
-    r.onend = () => res(best && !got.includes(best) ? [best].concat(got) : got);
+    let over = false;
+    const guard = setTimeout(() => { if (over) return; over = true; try { r.abort(); } catch (e) {} const x = new Error('timeout'); x.code = 'sr-timeout'; rej(x); }, 15000);
+    r.onerror = e => { if (e.error === 'no-speech') return; if (over) return; over = true; clearTimeout(guard); const x = new Error(e.error); x.code = 'sr-' + e.error; rej(x); };
+    r.onend = () => { if (over) return; over = true; clearTimeout(guard); res(best && !got.includes(best) ? [best].concat(got) : got); };
   });
   try { r.start(); } catch (e) { const x = new Error('start'); x.code = 'sr-start'; return { stop: () => {}, result: Promise.reject(x) }; }
   return { stop: () => { try { r.stop(); } catch (e) {} }, result };
@@ -476,21 +486,23 @@ function ScoreCard({ res, lat }) {
 
 function Speak({ who, api, target, clip, lat, onGrade }) {
   const can = micOK();
-  const [self, setSelf] = useState(!can || !!(who && who.selfGrade));
+  const [self, setSelf] = useState(() => !can || !!(who && who.selfGrade) || (sttOff() && !phoneSR()));
   const [step, setStep] = useState('idle');
   const [lvl, setLvl] = useState(0);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState('');
   const rec = useRef(null), best = useRef(null), alive = useRef(true);
   useEffect(() => () => { alive.current = false; if (rec.current) rec.current.stop(); }, []);
-  const [phone, setPhone] = useState(() => sttOff() && !!SRec);
+  const [phone, setPhone] = useState(() => sttOff() && phoneSR());
+  useEffect(() => { if (sttOff() && !phoneSR() && can && !(who && who.selfGrade)) setErr('La note au micro est en pause pour l’instant : note-toi toi-même, elle revient bientôt.'); }, []);
   const startPhone = async () => {
     stopClip(); setErr('');
     try {
       const r = phoneListen(); rec.current = r; setLvl(0.35); setStep('rec');
       const cands = await r.result; rec.current = null;
       if (!alive.current) return;
-      if (!cands.length) { setStep(res ? 'done' : 'idle'); setErr("Je n'ai rien entendu. Approche le téléphone et parle un peu plus fort."); return; }
+      if (!cands.length) { setStep(res ? 'done' : 'idle'); if (++PHONE_FAILS >= 2) { setSelf(true); setErr("La reconnaissance vocale du téléphone ne m'entend pas : note-toi toi-même pour l'instant."); } else setErr("Je n'ai rien entendu. Approche le téléphone et parle un peu plus fort."); return; }
+      PHONE_FAILS = 0;
       const sc = scoreAll(target, cands);
       const pct = Math.round(100 * Math.max(0, Math.min(1, sc.raw / Math.min(refOf(clip), PHONE_REF))));
       const r2 = { pct, per: sc.per, heard: sc.heard, src: 'phone' };
@@ -504,11 +516,12 @@ function Speak({ who, api, target, clip, lat, onGrade }) {
       if (c === 'sr-not-allowed' || c === 'sr-service-not-allowed') { setErr("La reconnaissance vocale du téléphone est bloquée (autorise le micro et la dictée). Note-toi toi-même en attendant."); setSelf(true); }
       else if (c === 'sr-network') setErr("Pas de connexion. Note-toi toi-même, ou réessaie avec du réseau.");
       else if (c === 'sr-language-not-supported') { setErr("Ce téléphone ne reconnaît pas l'arabe. Note-toi toi-même."); setSelf(true); }
+      else if (++PHONE_FAILS >= 2) { setSelf(true); setErr("La reconnaissance vocale du téléphone ne marche pas ici : note-toi toi-même pour l'instant."); }
       else setErr("La note n'a pas marché. Réessaie, ou note-toi toi-même.");
     }
   };
   const start = async () => {
-    if (phone && SRec) return startPhone();
+    if (phone && phoneSR()) return startPhone();
     stopClip(); setErr('');
     try {
       const r = await startRecorder(v => { if (alive.current) setLvl(v); });
@@ -532,8 +545,8 @@ function Speak({ who, api, target, clip, lat, onGrade }) {
       if (c === 'cle' || c === 'credit' || c === 'stt') {
         // le service de note du serveur ne répond plus : on passe à la reconnaissance du téléphone (gratuite)
         setSttOff(c !== 'stt');
-        if (SRec) { setPhone(true); setErr("Le service de note ne répond pas pour l'instant : je passe à la reconnaissance vocale du téléphone. Touche « Parle ! » et redis la phrase."); }
-        else { setSelf(true); setErr("Le service de note ne répond pas pour l'instant. Note-toi toi-même en attendant."); }
+        if (phoneSR()) { setPhone(true); setErr("Le service de note ne répond pas pour l'instant : je passe à la reconnaissance vocale du téléphone. Touche « Parle ! » et redis la phrase."); }
+        else { setSelf(true); setErr("La note au micro est en pause pour l’instant : note-toi toi-même, elle revient bientôt."); }
         return;
       }
       setErr(c === 'NotAllowedError' || c === 'SecurityError' ? "Le micro est bloqué. Autorise-le pour Hder ! dans les réglages du téléphone, ou note-toi toi-même."
@@ -1717,13 +1730,14 @@ function App() {
   };
   const leave = why => { SECRET = null; commitRaw({ ...INIT, skin: ref.current.skin, cast: ref.current.cast, likes: ref.current.likes, why: why === 'deconnecte' ? 'revoked' : (why === 'liens' ? 'claimed' : null) }); };
   useEffect(() => {
-    if (SECRET) { pull(); flush(); }
+    if (SECRET) { pull(); flush(); checkStt(); }
+    const ivs = setInterval(() => { if (SECRET && document.visibilityState === 'visible') checkStt(); }, 600000);
     const vis = () => { if (document.visibilityState === 'visible') pull(); else flush(); };
     document.addEventListener('visibilitychange', vis);
     const iv = setInterval(() => { if (document.visibilityState === 'visible') pull(); }, 60000);
     const on = () => { pull(); flush(); };
     window.addEventListener('online', on);
-    return () => { document.removeEventListener('visibilitychange', vis); clearInterval(iv); window.removeEventListener('online', on); };
+    return () => { document.removeEventListener('visibilitychange', vis); clearInterval(iv); clearInterval(ivs); window.removeEventListener('online', on); };
   }, [!!st.fam]);
   useEffect(() => { const r = document.documentElement; if (st.skin) r.setAttribute('data-skin', st.skin); else r.removeAttribute('data-skin'); }, [st.skin]);
 
