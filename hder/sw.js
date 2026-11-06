@@ -1,8 +1,8 @@
 // Hder ! : service worker. Coquille réseau d'abord (mises à jour), sons et bibliothèques en cache d'abord (hors-ligne).
-const VERSION = 'hder-20261105-1551';
+const VERSION = 'hder-20261106-1407';
 const AUDIO = 'hder-audio-v1';
 const LIBS = 'hder-libs-v1';
-const SHELL = ['./', './index.html', './app.js?v=20261105-1551', './data.js?v=20261105-1551', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
+const SHELL = ['./', './index.html', './app.js?v=20261106-1407', './data.js?v=20261106-1407', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png'];
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting()));
 });

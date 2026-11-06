@@ -435,6 +435,30 @@ function Grade({ onPick }) {
 /* ---------- « Parle » : le joueur dit la phrase, l'appli la note en % ---------- */
 const arOf = (id, g) => { const p = BYID[id]; if (!p) return ''; if (p.kind === 'pol') return (p[g] || p.m).ar || ''; if (p.var && g === 'f' && p.var.ar) return p.var.ar; return p.ar || ''; };
 const refOf = clip => Math.max(0.6, ((DATA.ref || {})[clip]) || 0.92);
+// Plan B gratuit : la reconnaissance vocale du téléphone (Google sur Android, Apple sur iPhone)
+const SRec = typeof window !== 'undefined' ? (window.SpeechRecognition || window.webkitSpeechRecognition || null) : null;
+const STT_OFF_KEY = 'hder-stt-off';
+let STT_SESSION_OFF = false;
+const sttOff = () => { if (STT_SESSION_OFF) return true; try { return Date.now() - Number(localStorage.getItem(STT_OFF_KEY) || 0) < 3 * 3600e3; } catch (e) { return false; } };
+const setSttOff = keep => { STT_SESSION_OFF = true; if (keep) { try { localStorage.setItem(STT_OFF_KEY, String(Date.now())); } catch (e) {} } };
+const PHONE_REF = 0.85; // la reconnaissance du téléphone comprend moins bien la darija : on est un peu plus indulgent
+function phoneListen() {
+  const r = new SRec();
+  r.lang = (/iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent) && 'ontouchend' in document) ? 'ar-SA' : 'ar-MA';
+  r.interimResults = false; r.maxAlternatives = 5; r.continuous = false;
+  const result = new Promise((res, rej) => {
+    const got = []; let best = '';
+    r.onresult = e => {
+      const parts = [];
+      for (let i = 0; i < e.results.length; i++) { const R = e.results[i]; if (R[0] && R[0].transcript) parts.push(R[0].transcript); for (let k = 0; k < R.length; k++) if (R[k].transcript && !got.includes(R[k].transcript)) got.push(R[k].transcript); }
+      best = parts.join(' ');
+    };
+    r.onerror = e => { if (e.error === 'no-speech' || e.error === 'aborted') return; const x = new Error(e.error); x.code = 'sr-' + e.error; rej(x); };
+    r.onend = () => res(best && !got.includes(best) ? [best].concat(got) : got);
+  });
+  try { r.start(); } catch (e) { const x = new Error('start'); x.code = 'sr-start'; return { stop: () => {}, result: Promise.reject(x) }; }
+  return { stop: () => { try { r.stop(); } catch (e) {} }, result };
+}
 const PCT_TXT = pct => pct >= 85 ? 'Mzyan bezzaf !' : (pct >= 60 ? 'Presque !' : 'À revoir');
 
 function ScoreCard({ res, lat }) {
@@ -445,6 +469,7 @@ function ScoreCard({ res, lat }) {
   return html`<div className=${'score ' + cls} role="status" aria-live="polite">
     <div className="score-top"><span className="score-pct num">${res.pct} %</span><b>${PCT_TXT(res.pct)}</b></div>
     ${colored ? html`<div className="score-words lat">${words.map((w, k) => html`<span key=${k} className=${per[k] >= 0.75 ? 'w-ok' : (per[k] >= 0.45 ? 'w-mid' : 'w-ko')}>${w} </span>`)}</div>` : ''}
+    ${res.src === 'phone' && html`<p className="xs muted">Note donnée par la reconnaissance vocale du téléphone (moins précise en darija).</p>`}
     <p className="xs muted">${res.pct >= 85 ? "La machine t'a très bien compris." : (res.pct >= 60 ? (colored ? 'Réécoute le modèle, puis redis les mots en orange ou en rouge.' : 'Réécoute le modèle, puis réessaie.') : 'Écoute le modèle en vitesse lente, puis réessaie.')}</p>
   </div>`;
 }
@@ -458,7 +483,32 @@ function Speak({ who, api, target, clip, lat, onGrade }) {
   const [err, setErr] = useState('');
   const rec = useRef(null), best = useRef(null), alive = useRef(true);
   useEffect(() => () => { alive.current = false; if (rec.current) rec.current.stop(); }, []);
+  const [phone, setPhone] = useState(() => sttOff() && !!SRec);
+  const startPhone = async () => {
+    stopClip(); setErr('');
+    try {
+      const r = phoneListen(); rec.current = r; setLvl(0.35); setStep('rec');
+      const cands = await r.result; rec.current = null;
+      if (!alive.current) return;
+      if (!cands.length) { setStep(res ? 'done' : 'idle'); setErr("Je n'ai rien entendu. Approche le téléphone et parle un peu plus fort."); return; }
+      const sc = scoreAll(target, cands);
+      const pct = Math.round(100 * Math.max(0, Math.min(1, sc.raw / Math.min(refOf(clip), PHONE_REF))));
+      const r2 = { pct, per: sc.per, heard: sc.heard, src: 'phone' };
+      if (!best.current || pct >= best.current.pct) best.current = r2;
+      setRes(r2); setStep('done');
+    } catch (e) {
+      rec.current = null;
+      if (!alive.current) return;
+      setStep(res ? 'done' : 'idle');
+      const c = e && e.code;
+      if (c === 'sr-not-allowed' || c === 'sr-service-not-allowed') { setErr("La reconnaissance vocale du téléphone est bloquée (autorise le micro et la dictée). Note-toi toi-même en attendant."); setSelf(true); }
+      else if (c === 'sr-network') setErr("Pas de connexion. Note-toi toi-même, ou réessaie avec du réseau.");
+      else if (c === 'sr-language-not-supported') { setErr("Ce téléphone ne reconnaît pas l'arabe. Note-toi toi-même."); setSelf(true); }
+      else setErr("La note n'a pas marché. Réessaie, ou note-toi toi-même.");
+    }
+  };
   const start = async () => {
+    if (phone && SRec) return startPhone();
     stopClip(); setErr('');
     try {
       const r = await startRecorder(v => { if (alive.current) setLvl(v); });
@@ -479,6 +529,13 @@ function Speak({ who, api, target, clip, lat, onGrade }) {
       if (!alive.current) return;
       setStep(res ? 'done' : 'idle');
       const c = e && (e.code || e.name);
+      if (c === 'cle' || c === 'credit' || c === 'stt') {
+        // le service de note du serveur ne répond plus : on passe à la reconnaissance du téléphone (gratuite)
+        setSttOff(c !== 'stt');
+        if (SRec) { setPhone(true); setErr("Le service de note ne répond pas pour l'instant : je passe à la reconnaissance vocale du téléphone. Touche « Parle ! » et redis la phrase."); }
+        else { setSelf(true); setErr("Le service de note ne répond pas pour l'instant. Note-toi toi-même en attendant."); }
+        return;
+      }
       setErr(c === 'NotAllowedError' || c === 'SecurityError' ? "Le micro est bloqué. Autorise-le pour Hder ! dans les réglages du téléphone, ou note-toi toi-même."
         : c === 'NotFoundError' ? "Aucun micro trouvé sur cet appareil. Note-toi toi-même."
         : c === 'credit' ? "Le crédit de notation est épuisé. Note-toi toi-même pour l'instant."
@@ -489,6 +546,7 @@ function Speak({ who, api, target, clip, lat, onGrade }) {
   };
   const done = () => { const b = best.current; onGrade(gradeOf(b.pct), b.pct); };
   if (self) return html`<div className="stack-s">
+    ${err && html`<p className="small c-bad" role="alert">${err}</p>`}
     <${Grade} onPick=${onGrade}/>
     ${can && html`<button type="button" className="linkbtn" onClick=${() => setSelf(false)}><${Icon} n="micon" s=${16}/>Utiliser le micro pour avoir une note</button>`}
   </div>`;
@@ -501,7 +559,7 @@ function Speak({ who, api, target, clip, lat, onGrade }) {
       ${res && step !== 'rec' && step !== 'wait' && html`<button type="button" className="btn" onClick=${done}>Continuer${best.current && best.current.pct !== res.pct ? ' (' + best.current.pct + ' %)' : ''}</button>`}
     </div>
     ${err && html`<p className="small c-bad" role="alert">${err}</p>`}
-    ${step === 'idle' && !res && html`<p className="xs muted">Touche « Parle ! », dis la phrase, puis attends un instant : la note s'affiche toute seule.</p>`}
+    ${step === 'idle' && !res && !err && html`<p className="xs muted">${phone ? 'Touche « Parle ! » et dis la phrase : la reconnaissance vocale du téléphone te note.' : "Touche « Parle ! », dis la phrase, puis attends un instant : la note s'affiche toute seule."}</p>`}
     <button type="button" className="linkbtn" onClick=${() => setSelf(true)}>Pas de micro ? Me noter moi-même</button>
   </div>`;
 }
@@ -1533,7 +1591,8 @@ function Parents({ st, api }) {
     </div>`; })}
     ${hist.length > 0 && html`<div className="stack-s"><h3>Versements</h3>${hist.map(x => html`<div key=${x.id} className="row small" style=${{ justifyContent: 'space-between', flexWrap: 'nowrap' }}><span><b>${pname(x.pid)}</b> · ${x.amount} DH${(x.rate || 1) !== 1 ? ' (' + (x.amount * x.rate) + ' vrais DH)' : ''} · ${new Date(x.at).toLocaleDateString('fr-FR')}</span><button type="button" className="btn sm ghost" onClick=${() => api.unpay(x.id, okPin)}>Annuler</button></div>`)}</div>`}
     ${st.role === 'owner' && html`<div className="stack-s"><h3>Ton accès de secours</h3><p className="small">Si tu changes de téléphone : « Je suis Papa : retrouver mon accès », puis le code de la famille <b className="num code-show">${(st.settings && st.settings.code) || '—'}</b> et ton code parent.</p></div>`}
-    ${credit && html`<div className="stack-s"><h3>Note de prononciation</h3><p className="small muted">Crédit gratuit restant : environ ${hours >= 1 ? Math.floor(hours) + ' h' : Math.round(hours * 60) + ' min'} de paroles notées (${Math.round(100 * credit.balance / (credit.initial || 10))} %). Aujourd'hui : ${Math.round(credit.today.seconds / 60)} min sur ${Math.round(credit.limit / 60)} min autorisées.</p></div>`}
+    ${credit && credit.keyOk === false && html`<div className="stack-s"><h3>Note de prononciation</h3><p className="small c-bad">Le service Sawalni refuse la clé : la note au micro passe par la reconnaissance vocale du téléphone (moins précise). Pour la réparer, il faut une nouvelle clé Sawalni.</p></div>`}
+    ${credit && credit.keyOk !== false && html`<div className="stack-s"><h3>Note de prononciation</h3><p className="small muted">Crédit gratuit restant : environ ${hours >= 1 ? Math.floor(hours) + ' h' : Math.round(hours * 60) + ' min'} de paroles notées (${Math.round(100 * credit.balance / (credit.initial || 10))} %). Aujourd'hui : ${Math.round(credit.today.seconds / 60)} min sur ${Math.round(credit.limit / 60)} min autorisées.</p></div>`}
     ${st.role === 'owner' && (newPin === null ? html`<button type="button" className="btn sm ghost" style=${{ justifySelf: 'start' }} onClick=${() => setNewPin('')}>Changer le code parent</button>` : html`<div className="row" style=${{ flexWrap: 'nowrap' }}><label className="sr" htmlFor="npin">Nouveau code</label><input id="npin" className="input pin num" type="password" inputMode="numeric" maxLength="4" placeholder="Nouveau" value=${newPin} onChange=${e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}/><button type="button" className="btn sm" disabled=${newPin.length !== 4} onClick=${async () => { try { await callApi('pin', { pin: newPin, old: okPin }); setOkPin(newPin); setNewPin(null); api.toast('Code parent changé'); } catch (e) { api.toast('Changement impossible'); } }}>Enregistrer</button></div>`)}
   </section>`;
 }
