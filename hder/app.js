@@ -1422,11 +1422,11 @@ function Gate({ mode0, invite, why, settings, onIn, onLegacyGone }) {
   const [later, setLater] = useState(IS_IOS && !IS_APP && !!invite);
   useEffect(() => {
     if (!invite) return;
-    callApi('invite-info', { code: invite }).then(setInfo).catch(e => setErr(e.code === 'utilise' ? "Ce code a déjà servi. Demande un nouveau lien à Papa." : (e.code === 'expire' ? "Ce lien a expiré. Demande un nouveau lien à Papa." : (e.status === 404 ? "Ce lien ne marche pas. Demande un nouveau lien à Papa." : ''))));
+    callApi('invite-info', { code: invite }).then(setInfo).catch(e => setErr(e.code === 'utilise' ? "Ce code a déjà servi. Demande un nouveau lien à la personne qui t’a invité." : (e.code === 'expire' ? "Ce lien a expiré. Demande un nouveau lien à la personne qui t’a invité." : (e.status === 404 ? "Ce lien ne marche pas. Demande un nouveau lien à la personne qui t’a invité." : ''))));
   }, []);
   const fail = e => {
     const c = e && e.code;
-    setErr(c === 'utilise' ? "Ce code a déjà servi. Demande un nouveau lien à Papa." : c === 'expire' ? "Ce code a expiré. Demande un nouveau lien à Papa." : c === 'code' ? "Ce code ne marche pas. Vérifie-le." : c === 'pin' ? 'Code parent incorrect.' : c === 'bloque' ? 'Trop d’essais : réessaie dans 15 minutes.' : c === 'liens' ? "Le téléphone de Papa est déjà enregistré. Demande ton lien personnel à Papa." : (e && e.status) ? 'Ça n’a pas marché. Réessaie.' : 'Pas de connexion. Réessaie quand tu as du réseau.');
+    setErr(c === 'utilise' ? "Ce code a déjà servi. Demande un nouveau lien à la personne qui t’a invité." : c === 'expire' ? "Ce code a expiré. Demande un nouveau lien à la personne qui t’a invité." : c === 'code' ? "Ce code ne marche pas. Vérifie-le." : c === 'pin' ? 'Code parent incorrect.' : c === 'bloque' ? 'Trop d’essais : réessaie dans 15 minutes.' : c === 'liens' ? "Le téléphone de Papa est déjà enregistré. Demande ton lien personnel à Papa." : (e && e.status) ? 'Ça n’a pas marché. Réessaie.' : 'Pas de connexion. Réessaie quand tu as du réseau.');
   };
   const run = async (act, body) => {
     setBusy(true); setErr('');
@@ -1457,15 +1457,15 @@ function Gate({ mode0, invite, why, settings, onIn, onLegacyGone }) {
     const name = info && info.name;
     body = html`${logo}
       ${name ? html`<h2 style=${{ textAlign: 'center' }}>Salam ${name} !</h2><p className="muted" style=${{ textAlign: 'center' }}>${info.family ? info.family + ' t’invite' : 'Ta famille t’invite'} à parler darija sans peur.</p>` : html`<p className="muted" style=${{ textAlign: 'center' }}>Parle darija sans peur, en famille.</p>`}
-      ${why === 'revoked' && html`<p className="small c-bad" role="alert">Ce téléphone a été déconnecté. Demande un nouveau lien à Papa.</p>`}
-      ${why === 'claimed' && html`<p className="small" role="status">Nouveau : chacun a maintenant son accès personnel. Demande ton lien à Papa.</p>`}
+      ${why === 'revoked' && html`<p className="small c-bad" role="alert">Ce téléphone a été déconnecté. Demande un nouveau lien à la personne qui t’a invité.</p>`}
+      ${why === 'claimed' && html`<p className="small" role="status">Nouveau : chacun a maintenant son accès personnel. Demande ton lien à la personne qui t’a invité.</p>`}
       ${later ? html`<${InstallSteps} code=${code}/>
           <button type="button" className="linkbtn" onClick=${() => setLater(false)}>Utiliser Hder ! sans l'installer</button>`
         : html`<div className="field"><label htmlFor="acode">Ton code d'accès personnel</label>
             <input id="acode" className="input code-in" autoComplete="off" autoCapitalize="characters" spellCheck="false" placeholder="XXXX-XXXX" value=${code} onChange=${e => setCode(fmtCode(e.target.value))}/></div>
           <button type="submit" className="btn block" disabled=${busy || code.replace('-', '').length !== 8}>${busy ? 'Connexion…' : (name ? 'Commencer' : 'Entrer')}</button>
-          <p className="xs muted">Papa t'envoie ton lien et ton code depuis son appli. Le code ne sert qu'une fois : ensuite ce téléphone reste connecté à ton profil.</p>
-          <button type="button" className="linkbtn" onClick=${() => { setMode('recover'); setErr(''); }}>Je suis Papa : retrouver mon accès</button>`}`;
+          <p className="xs muted">Ton lien et ton code t'ont été envoyés depuis l'appli de la famille. Le code ne sert qu'une fois : ensuite ce téléphone reste connecté à ton profil.</p>
+          <button type="button" className="linkbtn" onClick=${() => { setMode('recover'); setErr(''); }}>Je suis le propriétaire : retrouver mon accès</button>`}`;
   }
   const submit = e => {
     e.preventDefault();
@@ -1489,11 +1489,11 @@ function Access({ st, cur, api }) {
   const pname = pid => (st.profiles.find(p => p.id === pid) || {}).name || '';
   const send = async pid => {
     setBusy(true);
-    try { const r = await callApi('invite', { pid }); setInv({ pid, code: r.code, expires: r.expires }); load(); }
+    try { const r = await callApi('invite', { pid }); setEdit(null); setInv({ pid, code: r.code, expires: r.expires }); load(); }
     catch (e) { api.toast('Lien non créé : réessaie avec du réseau'); }
     setBusy(false);
   };
-  const msgOf = x => 'Salam ' + pname(x.pid) + ' ! Voici ton accès personnel à Hder !, l’appli de la famille pour parler darija.\n\n1. Ouvre ce lien sur TON téléphone : ' + inviteUrl(x.code) + '\n2. Ton code d’accès : ' + fmtCode(x.code) + '\n\nIl ne sert qu’une fois et reste valable 7 jours. ' + (cur.name || 'Papa');
+  const msgOf = x => 'Salam ' + pname(x.pid) + ' ! ' + ((st.settings && st.settings.name) || 'La famille') + ' t’invite sur Hder !, l’appli pour apprendre à parler darija en jouant.\n\n1. Ouvre ce lien sur TON téléphone : ' + inviteUrl(x.code) + '\n2. Ton code d’accès : ' + fmtCode(x.code) + '\n\nIl ne sert qu’une fois et reste valable 7 jours.';
   const share = async x => {
     const text = msgOf(x);
     if (navigator.share) { try { await navigator.share({ title: 'Hder !', text }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
@@ -1510,7 +1510,7 @@ function Access({ st, cur, api }) {
       const r = await callApi('member', { pid: edit.pid, name: edit.name, g: edit.g, track: edit.track });
       api.toast(edit.pid ? 'Profil modifié' : 'Membre ajouté'); const isNew = !edit.pid; setEdit(null); await api.syncNow(); load();
       if (isNew && r.pid) send(r.pid);
-    } catch (e) { api.toast(e.code === 'plein' ? '12 membres au maximum' : 'Enregistrement impossible'); }
+    } catch (e) { api.toast(e.code === 'plein' ? '30 membres au maximum' : 'Enregistrement impossible'); }
     setBusy(false);
   };
   const setParent = async (pid, on) => {
@@ -1531,12 +1531,24 @@ function Access({ st, cur, api }) {
       <div className="seg" role="group" aria-label="Genre"><button type="button" className=${edit.g === 'm' ? 'on' : ''} onClick=${() => setEdit({ ...edit, g: 'm' })}>Homme ou garçon</button><button type="button" className=${edit.g === 'f' ? 'on' : ''} onClick=${() => setEdit({ ...edit, g: 'f' })}>Femme ou fille</button></div>
       <div className="seg" role="group" aria-label="Parcours"><button type="button" className=${edit.track === 'adultes' ? 'on' : ''} onClick=${() => setEdit({ ...edit, track: 'adultes' })}>Adultes</button><button type="button" className=${edit.track === 'ados' ? 'on' : ''} onClick=${() => setEdit({ ...edit, track: 'ados' })}>Ados</button></div>
     </div>
-    <div className="row"><button type="button" className="btn sm" disabled=${busy || !edit.name.trim()} onClick=${saveEdit}>${edit.pid ? 'Enregistrer' : 'Ajouter et créer son lien'}</button><button type="button" className="btn sm ghost" onClick=${() => setEdit(null)}>Annuler</button></div>
+    <div className="row"><button type="button" className="btn sm" disabled=${busy || !edit.name.trim()} onClick=${saveEdit}>${edit.pid ? 'Enregistrer' : 'Créer son profil et son lien'}</button><button type="button" className="btn sm ghost" onClick=${() => setEdit(null)}>Annuler</button></div>
   </div>`;
   return html`<section className="card stack" aria-label="Accès de la famille">
     <div className="sec-h"><div><div className="eyebrow">${ROLE_TXT[st.role]}</div><h3>Accès de la famille</h3></div></div>
     <p className="small muted">Chacun joue sur son téléphone, dans son profil à lui. Envoie à chacun son lien personnel : il contient un code d'accès qui ne sert qu'une fois.</p>
     ${err && html`<p className="small c-bad">${err}</p>`}
+    ${edit && !edit.pid ? html`<div className="stack-s"><h4 style=${{ margin: 0 }}>Inviter quelqu'un</h4><p className="xs muted">Un cousin, une tante, un ami de la famille… Il aura son propre profil, ses points, et pourra jouer aux défis et au classement avec vous.</p>${form}</div>`
+      : html`<button type="button" className="btn" style=${{ justifySelf: 'start' }} onClick=${() => { setInv(null); setEdit({ name: '', g: 'm', track: 'adultes' }); }}><${Icon} n="plus" s=${18}/>Inviter quelqu'un</button>`}
+    ${inv && html`<div className="card soft-card stack-s invite" ref=${el => { if (el && !el.dataset.seen) { el.dataset.seen = 1; try { el.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (e) {} } }}>
+        <div className="small">Lien de <b>${pname(inv.pid)}</b> prêt. Code d'accès : <b className="num code-show big-code">${fmtCode(inv.code)}</b></div>
+        <div className="xs muted">Valable 7 jours, une seule fois, sur le téléphone de ${pname(inv.pid)}.</div>
+        <div className="row">
+          <button type="button" className="btn sm" onClick=${() => share(inv)}><${Icon} n="send" s=${16}/>Envoyer…</button>
+          <a className="btn sm soft" href=${'https://wa.me/?text=' + encodeURIComponent(msgOf(inv))} target="_blank" rel="noopener">WhatsApp</a>
+          <button type="button" className="btn sm ghost" onClick=${() => copy(inv)}>Copier</button>
+          <button type="button" className="btn sm ghost" onClick=${() => setInv(null)}>Fermer</button>
+        </div>
+      </div>`}
     ${st.profiles.map(p => { const isMe = p.id === cur.id, isOwner = p.id === ownerPid, canTouch = owner || !isOwner; const a = (acc || {})[p.id] || {}; return html`<div key=${p.id} className="acc-row">
       <div className="row" style=${{ flexWrap: 'nowrap' }}><${Avatar} id=${p.av} size=${40}/><div style=${{ flex: 1, minWidth: 0 }}><b>${p.name}</b>${isMe ? html` <span className="xs muted">(toi)</span>` : ''} <span className="pill xs">${ROLE_TXT[isOwner ? 'owner' : (parents.includes(p.id) ? 'parent' : 'member')]}</span><div className="xs muted">${acc ? status(p) : '…'}</div></div></div>
       ${canTouch && html`<div className="row acc-btns">
@@ -1545,18 +1557,8 @@ function Access({ st, cur, api }) {
         ${!isMe && html`<button type="button" className="btn sm ghost" onClick=${() => setEdit({ pid: p.id, name: p.name, g: p.g, track: p.track })}>Modifier</button>`}
         ${owner && !isOwner && p.track === 'adultes' && html`<label className="toggle xs" htmlFor=${'par-' + p.id}><input id=${'par-' + p.id} type="checkbox" checked=${parents.includes(p.id)} onChange=${e => setParent(p.id, e.target.checked)}/>Parent</label>`}
       </div>`}
-      ${inv && inv.pid === p.id && html`<div className="card soft-card stack-s invite">
-        <div className="small">Code d'accès de ${p.name} : <b className="num code-show big-code">${fmtCode(inv.code)}</b></div>
-        <div className="xs muted">Valable 7 jours, une seule fois. Il s'ouvre sur le téléphone de ${p.name}.</div>
-        <div className="row">
-          <button type="button" className="btn sm" onClick=${() => share(inv)}><${Icon} n="send" s=${16}/>Envoyer…</button>
-          <a className="btn sm soft" href=${'https://wa.me/?text=' + encodeURIComponent(msgOf(inv))} target="_blank" rel="noopener">WhatsApp</a>
-          <button type="button" className="btn sm ghost" onClick=${() => copy(inv)}>Copier</button>
-        </div>
-      </div>`}
       ${edit && edit.pid === p.id && form}
     </div>`; })}
-    ${edit && !edit.pid ? form : html`<button type="button" className="btn soft" style=${{ justifySelf: 'start' }} onClick=${() => setEdit({ name: '', g: 'm', track: 'adultes' })}><${Icon} n="plus" s=${16}/>Ajouter un membre (famille, proches)</button>`}
     <p className="xs muted">Personne ne peut jouer dans le profil d'un autre. En mode Troupe, les points de chacun sont envoyés sur son propre profil.</p>
   </section>`;
 }
@@ -1603,7 +1605,7 @@ function Parents({ st, api }) {
       <div className="row" style=${{ flexWrap: 'nowrap' }}><label className="sr" htmlFor=${'amt-' + p.id}>Dirhams à convertir pour ${p.name}</label><input id=${'amt-' + p.id} className="input num" type="number" min="0" max=${w.conv} value=${v} disabled=${w.conv === 0} onChange=${e => setAmt({ ...amt, [p.id]: e.target.value })} style=${{ width: '90px' }}/><button type="button" className="btn soft" disabled=${n === 0} onClick=${async () => { if (await api.payout(p.id, n, okPin)) setAmt({ ...amt, [p.id]: undefined }); }}>Verser ${n} DH${rate !== 1 ? ' = ' + (n * rate) + ' vrais DH' : ''}</button></div>
     </div>`; })}
     ${hist.length > 0 && html`<div className="stack-s"><h3>Versements</h3>${hist.map(x => html`<div key=${x.id} className="row small" style=${{ justifyContent: 'space-between', flexWrap: 'nowrap' }}><span><b>${pname(x.pid)}</b> · ${x.amount} DH${(x.rate || 1) !== 1 ? ' (' + (x.amount * x.rate) + ' vrais DH)' : ''} · ${new Date(x.at).toLocaleDateString('fr-FR')}</span><button type="button" className="btn sm ghost" onClick=${() => api.unpay(x.id, okPin)}>Annuler</button></div>`)}</div>`}
-    ${st.role === 'owner' && html`<div className="stack-s"><h3>Ton accès de secours</h3><p className="small">Si tu changes de téléphone : « Je suis Papa : retrouver mon accès », puis le code de la famille <b className="num code-show">${(st.settings && st.settings.code) || '—'}</b> et ton code parent.</p></div>`}
+    ${st.role === 'owner' && html`<div className="stack-s"><h3>Ton accès de secours</h3><p className="small">Si tu changes de téléphone : « Je suis le propriétaire : retrouver mon accès », puis le code de la famille <b className="num code-show">${(st.settings && st.settings.code) || '—'}</b> et ton code parent.</p></div>`}
     ${credit && credit.keyOk === false && html`<div className="stack-s"><h3>Note de prononciation</h3><p className="small c-bad">Le service Sawalni refuse la clé : la note au micro passe par la reconnaissance vocale du téléphone (moins précise). Pour la réparer, il faut une nouvelle clé Sawalni.</p></div>`}
     ${credit && credit.keyOk !== false && html`<div className="stack-s"><h3>Note de prononciation</h3><p className="small muted">Crédit gratuit restant : environ ${hours >= 1 ? Math.floor(hours) + ' h' : Math.round(hours * 60) + ' min'} de paroles notées (${Math.round(100 * credit.balance / (credit.initial || 10))} %). Aujourd'hui : ${Math.round(credit.today.seconds / 60)} min sur ${Math.round(credit.limit / 60)} min autorisées.</p></div>`}
     ${st.role === 'owner' && (newPin === null ? html`<button type="button" className="btn sm ghost" style=${{ justifySelf: 'start' }} onClick=${() => setNewPin('')}>Changer le code parent</button>` : html`<div className="row" style=${{ flexWrap: 'nowrap' }}><label className="sr" htmlFor="npin">Nouveau code</label><input id="npin" className="input pin num" type="password" inputMode="numeric" maxLength="4" placeholder="Nouveau" value=${newPin} onChange=${e => setNewPin(e.target.value.replace(/\D/g, '').slice(0, 4))}/><button type="button" className="btn sm" disabled=${newPin.length !== 4} onClick=${async () => { try { await callApi('pin', { pin: newPin, old: okPin }); setOkPin(newPin); setNewPin(null); api.toast('Code parent changé'); } catch (e) { api.toast('Changement impossible'); } }}>Enregistrer</button></div>`)}
@@ -1903,7 +1905,7 @@ function App() {
     <main className="wrap gut">
       ${V === 'home' && html`<${Home} st=${S} cur=${cur} go=${go} api=${api}/>`}
       ${V === 'who' && html`<${Who} st=${S} cur=${cur} go=${go} api=${api}/>`}
-      ${V === 'lost' && html`<section className="card stack"><h2>Profil introuvable</h2><p className="muted">${st.synced ? 'Ton profil n’existe plus dans la famille. Demande à Papa.' : 'Chargement de ton profil…'}</p></section>`}
+      ${V === 'lost' && html`<section className="card stack"><h2>Profil introuvable</h2><p className="muted">${st.synced ? 'Ton profil n’existe plus dans la famille. Demande à la personne qui t’a invité.' : 'Chargement de ton profil…'}</p></section>`}
       ${V === 'test' && html`<${Test} key=${'t' + cur.id} cur=${cur} go=${go} api=${api}/>`}
       ${V === 'kit' && html`<${Kit} key=${'k' + cur.id + JSON.stringify(view.p)} cur=${cur} go=${go} api=${api} params=${view.p}/>`}
       ${V === 'scenes' && html`<${ScenesList} cur=${cur} go=${go}/>`}
