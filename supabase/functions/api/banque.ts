@@ -186,7 +186,7 @@ export async function bankTxSync(opt: { from?: string } = {}) {
 // (un compte relié à nouveau change d'identifiant chez Enable Banking ; on le retrouve par son IBAN haché).
 // Chaque mouvement reçoit un prestataire lisible, une catégorie, et un repère pour les prélèvements rejetés
 // et les virements entre comptes reliés.
-export const BANK_CATS = ["Encaissements Département", "Encaissements clients", "Apports d'associé", "Charges sociales", "Impôts et taxes",
+export const BANK_CATS = ["Encaissements Département", "Encaissements clients", "Loyers encaissés", "Apports d'associé", "Charges sociales", "Impôts et taxes",
   "Loyers et charges", "Énergie", "Télécom et internet", "Assurances", "Alimentation et fournitures", "Véhicule et déplacements",
   "Abonnements et logiciels", "Achats divers", "Emprunts", "Frais bancaires", "Chèques émis", "Entre vos comptes", "À classer"];
 // Nom brut (majuscules) -> [nom propre, catégorie]. La première règle qui correspond gagne.
@@ -240,23 +240,27 @@ function classify(label: string, amount: number, bankL: string) {
 }
 const dayDiff = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5);
 export async function bankTxList() {
-  const [{ data: accs }, { data: names }] = await Promise.all([
-    db.from("bank_accounts").select("uid,iban_hash,active,bank,last4,label,sort,created_at").order("created_at", { ascending: false }),
+  const [{ data: accs }, { data: names }, { data: notes }] = await Promise.all([
+    db.from("bank_accounts").select("uid,iban_hash,active,bank,last4,label,sort,societe,created_at").order("created_at", { ascending: false }),
     db.from("bank_names").select("key,name,cat"),
+    db.from("bank_notes").select("acc_key,tx_id,note"),
   ]);
   const main: Record<string, any> = {}, canon: Record<string, string> = {};
   for (const a of accs || []) { const k = a.iban_hash || a.uid; if (!main[k] || (a.active && !main[k].active)) main[k] = a; }
   for (const a of accs || []) canon[a.uid] = main[a.iban_hash || a.uid].uid;
   const bankOf: Record<string, string> = {}; Object.values(main).forEach((a: any) => bankOf[a.uid] = BANKS[a.bank]?.label || a.bank);
   const fix: Record<string, any> = {}; (names || []).forEach((n: any) => fix[n.key] = n);
+  const note: Record<string, string> = {}; (notes || []).forEach((n: any) => note[n.acc_key + "|" + n.tx_id] = n.note);
+  const accKey: Record<string, string> = {}, soc: Record<string, string> = {};
+  Object.values(main).forEach((a: any) => { accKey[a.uid] = a.iban_hash || a.uid; soc[a.uid] = a.societe || ""; });
   const seen = new Set<string>(), tx: any[] = [];
   for (let i = 0; i < 30; i++) {
-    const { data, error } = await db.from("bank_tx").select("uid,tx_id,day,amount,label,counterparty").order("day", { ascending: false }).order("tx_id").range(i * 1000, i * 1000 + 999);
+    const { data, error } = await db.from("bank_tx").select("uid,tx_id,day,value_day,amount,label,counterparty").order("day", { ascending: false }).order("tx_id").range(i * 1000, i * 1000 + 999);
     if (error) throw new Error("db_" + error.message);
     for (const t of data || []) {
       const k = canon[t.uid] || t.uid, id = k + "|" + t.tx_id; if (seen.has(id)) continue; seen.add(id);
       const l = String(t.label || "").replace(/\s+/g, " ").trim(), a = Number(t.amount), c = classify(l, a, bankOf[k] || "Banque"), f = fix[c.key];
-      tx.push({ k, d: t.day, a, l, key: c.key, p: (f && f.name) || c.name, g: (f && f.cat) || c.cat, fl: c.fl, e: f ? 1 : 0 });
+      tx.push({ k, id: t.tx_id, d: t.day, v: t.value_day || null, a, l, key: c.key, p: (f && f.name) || c.name, g: (f && f.cat) || c.cat, fl: c.fl, e: f ? 1 : 0, n: note[(accKey[k] || k) + "|" + t.tx_id] || "" });
     }
     if (!data || data.length < 1000) break;
   }
@@ -270,16 +274,25 @@ export async function bankTxList() {
     if (best) { best.pr = r.i; r.pr = best.i; best.fl = "rej"; }
   }
   // Virement entre deux comptes reliés : même montant, sens opposé, comptes différents, 5 jours d'écart au plus.
+  // « Entre vos comptes » seulement si les deux comptes sont à la même société. Entre deux sociétés (ex. le loyer
+  // payé par l'hôtel à la SCI), c'est une vraie charge d'un côté et une vraie recette de l'autre : on nomme
+  // simplement la société d'en face.
   const vir = (t: any) => /VIR/.test(t.l.toUpperCase()) && !/APPORT/.test(t.l.toUpperCase());
   for (const o of asc) {
     if (o.pr != null || o.a >= 0 || !vir(o)) continue;
-    const c = asc.find((x) => x.pr == null && x.k !== o.k && x.a > 0 && Math.abs(x.a + o.a) < 0.005 && vir(x) && x.d >= o.d && dayDiff(x.d, o.d) <= 5);
-    if (c) { o.pr = c.i; c.pr = o.i; o.fl = c.fl = "int"; if (!o.e) o.g = "Entre vos comptes"; if (!c.e) c.g = "Entre vos comptes"; }
+    const c = asc.find((x) => x.pr == null && !x.x && x.k !== o.k && x.a > 0 && Math.abs(x.a + o.a) < 0.005 && vir(x) && x.d >= o.d && dayDiff(x.d, o.d) <= 5);
+    if (!c) continue;
+    if (soc[o.k] && soc[o.k] === soc[c.k]) { o.pr = c.i; c.pr = o.i; o.fl = c.fl = "int"; if (!o.e) o.g = "Entre vos comptes"; if (!c.e) c.g = "Entre vos comptes"; continue; }
+    c.x = o.x = 1;
+    const loyer = /LOYER/.test((o.l + " " + c.l).toUpperCase());
+    if (!o.e) { if (soc[c.k]) o.p = soc[c.k]; if (loyer) o.g = "Loyers et charges"; }
+    if (!c.e) { if (soc[o.k]) c.p = soc[o.k]; if (loyer) c.g = "Loyers encaissés"; }
   }
+  tx.forEach((t) => { delete t.x; });
   const used = new Set(tx.map((t) => t.k));
   const accounts = Object.values(main).filter((a: any) => a.active || used.has(a.uid))
     .sort((x: any, y: any) => (x.sort || 0) - (y.sort || 0) || String(x.label || "").localeCompare(String(y.label || "")))
-    .map((a: any) => ({ uid: a.uid, label: a.label || null, bank_l: BANKS[a.bank]?.label || a.bank, last4: a.last4, active: !!a.active }));
+    .map((a: any) => ({ uid: a.uid, label: a.label || null, bank_l: BANKS[a.bank]?.label || a.bank, bank_n: BANKS[a.bank]?.aspsp?.replace(" Professionnels", "") || a.bank, last4: a.last4, soc: a.societe || null, active: !!a.active }));
   return { accounts, tx, cats: BANK_CATS };
 }
 // Correction à la main : le nom et la catégorie valent pour toutes les opérations du même prestataire. Tout vide = retour à l'automatique.
@@ -288,6 +301,16 @@ export async function bankNameSet(key: string, name: string, cat: string, by: st
   name = String(name || "").trim().slice(0, 60); cat = BANK_CATS.includes(cat) ? cat : "";
   if (!name && !cat) { await db.from("bank_names").delete().eq("key", key); return; }
   const { error } = await db.from("bank_names").upsert({ key, name: name || null, cat: cat || null, updated_by: by, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (error) throw new Error("db_" + error.message);
+}
+
+// Note libre sur un mouvement (ex. le bénéficiaire d'un chèque). Vide = on efface.
+export async function bankNoteSet(uid: string, txId: string, text: string, by: string) {
+  const { data: a } = await db.from("bank_accounts").select("uid,iban_hash").eq("uid", String(uid || "")).maybeSingle();
+  if (!a || !txId) throw new Error("bad");
+  const acc_key = a.iban_hash || a.uid, tx_id = String(txId).slice(0, 130); text = String(text || "").trim().slice(0, 300);
+  if (!text) { await db.from("bank_notes").delete().eq("acc_key", acc_key).eq("tx_id", tx_id); return; }
+  const { error } = await db.from("bank_notes").upsert({ acc_key, tx_id, note: text, updated_by: by, updated_at: new Date().toISOString() }, { onConflict: "acc_key,tx_id" });
   if (error) throw new Error("db_" + error.message);
 }
 

@@ -1463,7 +1463,7 @@ function btxPrep(d) {
   const ml = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
   d.tx.forEach((t) => {
     const abs = Math.abs(t.a), acc = (d.accounts || []).find((x) => x.uid === t.k);
-    t.h = normT([t.p, t.g, t.l, acc ? `${acc.label || ''} ${acc.bank_l} ${acc.last4}` : '', fdate(t.d), ml(t.d), abs.toFixed(2), abs.toFixed(2).replace('.', ','), Number.isInteger(abs) ? String(abs) : '',
+    t.h = normT([t.p, t.g, t.n, t.l, acc ? `${acc.label || ''} ${acc.bank_l} ${acc.last4}` : '', fdate(t.d), ml(t.d), abs.toFixed(2), abs.toFixed(2).replace('.', ','), Number.isInteger(abs) ? String(abs) : '',
       t.fl === 'rej' || t.fl === 'ret' ? 'rejet rejete' : '', t.fl === 'rep' ? 'representation' : ''].join(' '));
   });
   return d;
@@ -1506,7 +1506,7 @@ function btxResHtml() {
       ${nRej ? `<p class="muted">⚠️ ${nRej} prélèvement${nRej > 1 ? 's' : ''} rejeté${nRej > 1 ? 's' : ''} par la banque (${eur(sRej)}), non compté${nRej > 1 ? 's' : ''} : ils sont revenus sur le compte.</p>` : ''}
       ${nInt ? `<p class="muted">↔️ ${nInt} virement${nInt > 1 ? 's' : ''} entre vos comptes (${eur(sInt)}), non compté${nInt > 1 ? 's' : ''}.</p>` : ''}
       ${narrowed && mk.length > 1 ? `<div class="list" style="margin-top:6px">${mk.map((k) => `<div class="row between"><span class="muted">${esc(new Date(k + '-15').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }))}</span><span>${months[k][0] ? '+' + eur(months[k][0]) : ''}${months[k][0] && months[k][1] ? ' · ' : ''}${months[k][1] ? eur(months[k][1]) : ''}</span></div>`).join('')}</div>` : ''}</div>
-    ${rows.length ? `<div class="list" style="margin-top:8px">${shown.map((t) => { const f = BTX_FL[t.fl]; return `<button class="li" data-a="btxEdit" data-i="${t.i}" style="align-items:flex-start;text-align:left;font:inherit;color:inherit;width:100%"><span class="t"><b>${esc(t.p || '(sans nom)')}</b>${f ? ` <span class="pill ${f[1]}">${f[0]}</span>` : ''}<br><span class="muted">${fdate(t.d)} · ${esc(btxAccName(t.k))} · ${esc(t.g)}</span><br><span class="muted" style="font-size:12px;overflow-wrap:anywhere">${esc(t.l.length > 110 ? t.l.slice(0, 110) + '…' : t.l)}</span></span>
+    ${rows.length ? `<div class="list" style="margin-top:8px">${shown.map((t) => { const f = BTX_FL[t.fl]; return `<button class="li" data-a="btxEdit" data-i="${t.i}" style="align-items:flex-start;text-align:left;font:inherit;color:inherit;width:100%"><span class="t"><b>${esc(t.p || '(sans nom)')}</b>${f ? ` <span class="pill ${f[1]}">${f[0]}</span>` : ''}<br><span class="muted">${fdate(t.d)} · ${esc(btxAccName(t.k))} · ${esc(t.g)}</span>${t.n ? `<br><span style="font-size:13px">📝 ${esc(t.n)}</span>` : ''}<br><span class="muted" style="font-size:12px;overflow-wrap:anywhere">${esc(t.l.length > 110 ? t.l.slice(0, 110) + '…' : t.l)}</span></span>
       <b style="white-space:nowrap;color:${t.a < 0 ? 'inherit' : '#2E9E5B'}${pair(t) ? ';opacity:.55' : ''}">${t.a > 0 ? '+' : ''}${eur(t.a)}</b></button>`; }).join('')}</div>
       ${rows.length > shown.length ? `<button class="btn soft" data-a="btxMore">Afficher la suite (${rows.length - shown.length})</button>` : ''}`
       : '<p class="muted">Aucune opération ne correspond.</p>'}`;
@@ -1535,7 +1535,77 @@ function bankTxSheet() {
     ${B.q.trim() || B.p || B.g || B.acc || B.sens ? `<button class="btn small" data-a="btxReset">Effacer les filtres</button>` : ''}
     <div id="btxRes">${btxResHtml()}</div>
     <p class="muted">${first ? `Historique conservé depuis le ${fdate(first)}. ` : ''}Nouveaux mouvements ajoutés chaque matin. Les opérations encore en attente à la banque n’apparaissent pas. Touchez une ligne pour corriger le nom ou la catégorie.</p>
+    <div class="card"><h3>Pour la comptable</h3>
+      <button class="btn" data-a="btxExport">📤 Fichier Excel : ${esc(btxExportLabel())}</button>
+      <p class="muted">Tous les mouvements de la période et du compte choisis en haut, un onglet par société. La recherche et les filtres par catégorie ou prestataire ne retirent rien du fichier.</p></div>
     <button class="btn small" data-a="bankOpen">← Soldes des comptes</button>`);
+}
+/* Export Excel pour la comptable, fabriqué dans le téléphone (aucune donnée ne part ailleurs) : une synthèse et un onglet par société. */
+function btxExportRows() { const B = S.btx, [d0, d1] = btxRange(B.per); return B.tx.filter((t) => (!B.acc || t.k === B.acc) && t.d >= d0 && t.d <= d1).sort((x, y) => x.d < y.d ? -1 : x.d > y.d ? 1 : y.i - x.i); }
+function btxExportLabel() {
+  const B = S.btx, per = (BTX_PER.find((x) => x[0] === B.per) || [0, ''])[1].toLowerCase();
+  return `${B.acc ? btxAccName(B.acc) : 'tous les comptes'}, ${B.per === 'all' ? 'tout l’historique' : per}`;
+}
+const XL_CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xEDB88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+function xlZip(files) {
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  const u16 = (n) => [n & 255, (n >> 8) & 255], u32 = (n) => [n & 255, (n >> 8) & 255, (n >> 16) & 255, (n >>> 24) & 255];
+  files.forEach(([name, text]) => {
+    const nm = enc.encode(name), data = enc.encode(text); let c = 0xFFFFFFFF; for (let i = 0; i < data.length; i++) c = XL_CRC[(c ^ data[i]) & 255] ^ (c >>> 8); c = (c ^ 0xFFFFFFFF) >>> 0;
+    const head = [...u16(20), ...u16(0x0800), ...u16(0), ...u16(0), ...u16(0x21), ...u32(c), ...u32(data.length), ...u32(data.length), ...u16(nm.length), ...u16(0)];
+    parts.push(new Uint8Array([0x50, 0x4B, 3, 4, ...head]), nm, data);
+    central.push(new Uint8Array([0x50, 0x4B, 1, 2, ...u16(20), ...head, ...u16(0), ...u16(0), ...u16(0), ...u32(0), ...u32(off)]), nm);
+    off += 30 + nm.length + data.length;
+  });
+  const cs = central.reduce((n, p) => n + p.length, 0);
+  return new Blob([...parts, ...central, new Uint8Array([0x50, 0x4B, 5, 6, 0, 0, 0, 0, ...u16(files.length), ...u16(files.length), ...u32(cs), ...u32(off), 0, 0])], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+}
+function btxXlsx(rows) {
+  const B = S.btx, x = (v) => String(v == null ? '' : v).replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const col = (n) => { let r = ''; n++; while (n) { r = String.fromCharCode(65 + (n - 1) % 26) + r; n = Math.floor((n - 1) / 26); } return r; };
+  const serial = (iso) => Math.round((Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) - Date.UTC(1899, 11, 30)) / 864e5);
+  const ml = (iso) => new Date(iso.slice(0, 7) + '-15T12:00:00').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  // cellule : [valeur, style, formule] ; styles : 0 normal, 1 gras, 2 en-tête, 3 date, 4 montant, 5 montant gras, 6 titre, 7 texte renvoyé à la ligne
+  const cell = (c, r, v) => { if (v == null || v[0] === '' || v[0] == null) return ''; const ref = col(c) + r, st = v[1] ? ` s="${v[1]}"` : '';
+    if (typeof v[0] === 'number') return `<c r="${ref}"${st}>${v[2] ? `<f>${x(v[2])}</f>` : ''}<v>${v[0]}</v></c>`;
+    return `<c r="${ref}"${st} t="inlineStr"><is><t xml:space="preserve">${x(v[0])}</t></is></c>`; };
+  const sheet = (lines, widths, freeze) => `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">${freeze ? '<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>' : ''}<cols>${widths.map((w, i) => `<col min="${i + 1}" max="${i + 1}" width="${w}" customWidth="1"/>`).join('')}</cols><sheetData>${lines.map((l, i) => l ? `<row r="${i + 1}">${l.map((v, c) => cell(c, i + 1, v)).join('')}</row>` : '').join('')}</sheetData></worksheet>`;
+  const accOf = (k) => B.accounts.find((a) => a.uid === k) || { label: 'Compte', bank_l: '', last4: '' };
+  const socOf = (k) => { const a = accOf(k); return a.soc || a.label || `${a.bank_l} ${a.last4}`; };
+  const socs = []; rows.forEach((t) => { const s = socOf(t.k); if (!socs.includes(s)) socs.push(s); });
+  const order = B.accounts.map((a) => a.soc || a.label || `${a.bank_l} ${a.last4}`); socs.sort((p, q) => order.indexOf(p) - order.indexOf(q));
+  const used = {}, tab = (s) => { let n = s.replace(/[\[\]:*?\/\\]/g, ' ').slice(0, 28).trim() || 'Compte'; while (used[n]) n += ' 2'; used[n] = 1; return n; };
+  const sheets = [], syn = [[['Mouvements bancaires', 6]], null, ['Société', 'Banque', 'Compte', 'Mois', 'Nombre d’opérations', 'Total débits', 'Total crédits', 'Variation nette'].map((h) => [h, 2])];
+  socs.forEach((s) => {
+    const name = tab(s), ai = (k) => B.accounts.findIndex((a) => a.uid === k), mine = rows.filter((t) => socOf(t.k) === s).sort((p, r) => ai(p.k) - ai(r.k)), q = `'${name.replace(/'/g, "''")}'!`, last = mine.length + 1;
+    const lines = [['Banque', 'Compte', 'Mois', 'Date opération', 'Date de valeur', 'Libellé', 'Débit', 'Crédit', 'Prestataire', 'Catégorie', 'Note'].map((h) => [h, 2])];
+    const groups = {};
+    mine.forEach((t) => { const a = accOf(t.k), m = ml(t.d);
+      lines.push([[a.bank_n || a.bank_l], [a.last4], [m], [serial(t.d), 3], t.v ? [serial(t.v), 3] : null, [t.l], t.a < 0 ? [Math.round(-t.a * 100) / 100, 4] : null, t.a > 0 ? [Math.round(t.a * 100) / 100, 4] : null, [t.p], [t.g], t.n ? [t.n] : null]);
+      const g = groups[t.k + '|' + t.d.slice(0, 7)] = groups[t.k + '|' + t.d.slice(0, 7)] || { a, m, n: 0, d: 0, c: 0 }; g.n++; if (t.a < 0) g.d -= t.a; else g.c += t.a; });
+    Object.keys(groups).sort((p, r) => B.accounts.findIndex((a) => a.uid === p.split('|')[0]) - B.accounts.findIndex((a) => a.uid === r.split('|')[0]) || (p < r ? -1 : 1)).forEach((k) => { const g = groups[k], r = syn.length + 1, cond = `${q}$B$2:$B$${last},C${r},${q}$C$2:$C$${last},D${r}`, r2 = (n) => Math.round(n * 100) / 100;
+      syn.push([[s], [g.a.bank_n || g.a.bank_l], [g.a.last4], [g.m], [g.n, 0, `COUNTIFS(${cond})`], [r2(g.d), 4, `SUMIFS(${q}$G$2:$G$${last},${cond})`], [r2(g.c), 4, `SUMIFS(${q}$H$2:$H$${last},${cond})`], [r2(g.c - g.d), 4, `G${r}-F${r}`]]); });
+    sheets.push([name, sheet(lines, [18, 9, 16, 14, 14, 90, 13, 13, 30, 26, 40], true)]);
+  });
+  const r = syn.length + 1, tot = (c) => syn.slice(3).reduce((n, l) => n + l[c][0], 0), r2 = (n) => Math.round(n * 100) / 100;
+  if (r > 4) syn.push([null, null, null, ['Total', 1], [tot(4), 1, `SUM(E4:E${r - 1})`], [r2(tot(5)), 5, `SUM(F4:F${r - 1})`], [r2(tot(6)), 5, `SUM(G4:G${r - 1})`], [r2(tot(7)), 5, `SUM(H4:H${r - 1})`]]);
+  const days = rows.map((t) => t.d).sort();
+  syn[0][0][0] = `Mouvements bancaires du ${fdate(days[0])} au ${fdate(days[days.length - 1])}`;
+  syn.push(null, [['À lire', 1]], [[`Source : mouvements lus directement auprès des banques par l’accès en lecture seule des sociétés (Enable Banking, prestataire agréé DSP2). Fichier produit le ${fdate(dayStr(Date.now()))}.`]],
+    [['Ce fichier n’est pas un relevé officiel de la banque : il reprend les opérations comptabilisées, sans les soldes de début et de fin de mois.']],
+    [['Les libellés sont ceux transmis par la banque. Les colonnes Prestataire, Catégorie et Note sont ajoutées par la société, à titre indicatif.']],
+    [['Un onglet par société, filtrable par compte et par mois. Le compte est désigné par ses 4 derniers chiffres.']]);
+  const all = [['Synthèse', sheet(syn, [24, 20, 9, 18, 13, 15, 15, 15], false)], ...sheets];
+  const font = (b, c, sz) => `<font>${b ? '<b/>' : ''}<sz val="${sz || 10}"/>${c ? `<color rgb="${c}"/>` : ''}<name val="Arial"/></font>`;
+  const xf = (f, fill, num, wrap) => `<xf numFmtId="${num || 0}" fontId="${f}" fillId="${fill || 0}" borderId="0" xfId="0" applyFont="1"${fill ? ' applyFill="1"' : ''}${num ? ' applyNumberFormat="1"' : ''}${wrap ? ' applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>' : '/>'}`;
+  const styles = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><numFmts count="2"><numFmt numFmtId="164" formatCode="dd/mm/yyyy"/><numFmt numFmtId="165" formatCode="#,##0.00;[Red]-#,##0.00"/></numFmts><fonts count="4">${font(0)}${font(1)}${font(1, 'FFFFFFFF')}${font(1, '', 13)}</fonts><fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF1F3864"/><bgColor indexed="64"/></patternFill></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="7">${xf(0)}${xf(1)}${xf(2, 2, 0, 1)}${xf(0, 0, 164)}${xf(0, 0, 165)}${xf(1, 0, 165)}${xf(3)}</cellXfs></styleSheet>`;
+  const H = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>';
+  return xlZip([
+    ['[Content_Types].xml', `${H}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${all.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`],
+    ['_rels/.rels', `${H}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`],
+    ['xl/workbook.xml', `${H}<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${all.map((a, i) => `<sheet name="${x(a[0])}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets><calcPr fullCalcOnLoad="1"/></workbook>`],
+    ['xl/_rels/workbook.xml.rels', `${H}<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${all.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${all.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>`],
+    ['xl/styles.xml', styles], ...all.map((a, i) => [`xl/worksheets/sheet${i + 1}.xml`, a[1]])]);
 }
 function btxEditSheet(i) {
   const B = S.btx, t = B && B.tx && B.tx.find((x) => x.i === Number(i)); if (!t) return;
@@ -1546,7 +1616,8 @@ function btxEditSheet(i) {
       <p style="overflow-wrap:anywhere;font-size:13px">${esc(t.l)}</p></div>
     <div class="card"><label>Nom du prestataire<input id="btx-n" value="${esc(t.p)}" maxlength="60"></label>
       <label>Catégorie<select id="btx-g">${(B.cats || []).map(o).join('')}</select></label>
-      <p class="muted">${same > 1 ? `Vaudra pour les ${same} opérations de ce prestataire, et pour les suivantes.` : 'Vaudra pour cette opération.'}</p>
+      <p class="muted">${same > 1 ? `Le nom et la catégorie vaudront pour les ${same} opérations de ce prestataire, et pour les suivantes.` : 'Le nom et la catégorie vaudront pour cette opération.'}</p>
+      <label>Note sur cette opération<textarea id="btx-note" rows="2" maxlength="300" placeholder="Ex. : chèque à l’électricien, acompte chantier escalier">${esc(t.n || '')}</textarea></label>
       <div class="row"><button class="btn" data-a="btxSave" data-i="${t.i}">Enregistrer</button>${t.e ? `<button class="btn soft" data-a="btxAuto" data-i="${t.i}">Revenir à l’automatique</button>` : ''}</div></div>
     <button class="btn soft" data-a="btxOnly" data-i="${t.i}">Voir toutes les opérations de « ${esc(t.p)} »</button>`);
 }
@@ -2551,13 +2622,22 @@ const A = {
   btxSet(d) { if (!S.btx) return; S.btx[d.k] = d.v; S.btx.n = 100; bankTxSheet(); },
   btxReset() { if (!S.btx) return; Object.assign(S.btx, { q: '', acc: '', sens: '', p: '', g: '', n: 100 }); bankTxSheet(); },
   btxEdit(d) { btxEditSheet(d.i); },
+  async btxExport() {
+    const rows = btxExportRows(); if (!rows.length) { toast('Aucun mouvement sur cette période.'); return; }
+    const days = rows.map((t) => t.d).sort(), m0 = days[0].slice(0, 7), m1 = days[days.length - 1].slice(0, 7);
+    const name = `Mouvements bancaires ${m0}${m1 !== m0 ? ' a ' + m1 : ''}.xlsx`, blob = btxXlsx(rows);
+    try { const f = new File([blob], name, { type: blob.type }); if (navigator.canShare && navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: name }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    const u = URL.createObjectURL(blob), a = document.createElement('a'); a.href = u; a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(u), 30000);
+    toast(`Fichier prêt : ${rows.length} mouvements`);
+  },
   btxBack() { bankTxSheet(); },
   btxOnly(d) { const t = S.btx.tx.find((x) => x.i === Number(d.i)); if (!t) return; Object.assign(S.btx, { q: '', g: '', sens: '', p: t.p, per: 'all', n: 100 }); bankTxSheet(); },
   async btxSave(d) {
     const t = S.btx.tx.find((x) => x.i === Number(d.i)); if (!t) return;
     const name = ($('btx-n').value || '').trim(), cat = $('btx-g').value; if (!name) { toast('Donnez un nom au prestataire.'); return; }
     const wasP = S.btx.p === t.p;
-    if (await act(() => api('bank_name_set', { key: t.key, name, cat }), 'Enregistré')) { if (wasP) S.btx.p = name; await btxLoad(); bankTxSheet(); }
+    const note = ($('btx-note').value || '').trim();
+    if (await act(() => api('bank_name_set', { key: t.key, name, cat, uid: t.k, id: t.id, note }), 'Enregistré')) { if (wasP) S.btx.p = name; await btxLoad(); bankTxSheet(); }
   },
   async btxAuto(d) {
     const t = S.btx.tx.find((x) => x.i === Number(d.i)); if (!t) return;
