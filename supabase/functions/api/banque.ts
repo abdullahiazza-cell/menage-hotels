@@ -184,26 +184,111 @@ export async function bankTxSync(opt: { from?: string } = {}) {
 
 // 3 ter) Recherche dans les mouvements : tout l'historique enregistré, rattaché au compte actuel
 // (un compte relié à nouveau change d'identifiant chez Enable Banking ; on le retrouve par son IBAN haché).
+// Chaque mouvement reçoit un prestataire lisible, une catégorie, et un repère pour les prélèvements rejetés
+// et les virements entre comptes reliés.
+export const BANK_CATS = ["Encaissements Département", "Encaissements clients", "Apports d'associé", "Charges sociales", "Impôts et taxes",
+  "Loyers et charges", "Énergie", "Télécom et internet", "Assurances", "Alimentation et fournitures", "Véhicule et déplacements",
+  "Abonnements et logiciels", "Achats divers", "Emprunts", "Frais bancaires", "Chèques émis", "Entre vos comptes", "À classer"];
+// Nom brut (majuscules) -> [nom propre, catégorie]. La première règle qui correspond gagne.
+const KNOWN: [RegExp, string, string][] = [
+  [/URSSAF/, "Urssaf", "Charges sociales"], [/MALAKOFF/, "Malakoff Humanis (retraite)", "Charges sociales"], [/HUMANIS PREVOYANCE/, "Humanis Prévoyance", "Charges sociales"],
+  [/DGFIP|TRESOR PUBLIC|SERVICE DES IMPOTS/, "Impôts (DGFiP)", "Impôts et taxes"],
+  [/DEP LOIRET/, "Département du Loiret", "Encaissements Département"],
+  [/DEPANNAGE ENGIE/, "Engie Dépannage", "Énergie"], [/TOTALENERGIES/, "TotalEnergies", "Énergie"], [/^EDF\b/, "EDF", "Énergie"],
+  [/ORANGE LEASE/, "Orange Lease", "Télécom et internet"], [/^ORANGE\b/, "Orange", "Télécom et internet"], [/BOUYGUES/, "Bouygues Telecom", "Télécom et internet"],
+  [/^FREE\b/, "Free", "Télécom et internet"], [/^SFR\b/, "SFR", "Télécom et internet"],
+  [/FONCIA/, "Foncia", "Loyers et charges"], [/DURAND MONTOUCHE/, "Durand Montouche", "Loyers et charges"], [/^SDC /, "Syndic de copropriété", "Loyers et charges"],
+  [/^AXA\b/, "AXA", "Assurances"],
+  [/METRO FRANCE/, "Metro", "Alimentation et fournitures"], [/^LIDL/, "Lidl", "Alimentation et fournitures"], [/^AUCHAN/, "Auchan", "Alimentation et fournitures"],
+  [/^CARREFOUR/, "Carrefour", "Alimentation et fournitures"], [/^LECLERC/, "Leclerc", "Alimentation et fournitures"], [/^ALDI/, "Aldi", "Alimentation et fournitures"],
+  [/^INTERMARCHE/, "Intermarché", "Alimentation et fournitures"], [/O MARKET FRAIS/, "O Market Frais", "Alimentation et fournitures"],
+  [/ATLAS BUTCHERS/, "L'Atlas Butchers", "Alimentation et fournitures"], [/ALIM C'?PRO/, "Alim C'Pro", "Alimentation et fournitures"],
+  [/BOUCHERIE|BOULANGERIE/, "", "Alimentation et fournitures"],
+  [/BNPP SERVICE MONETIQUE/, "BNP Paribas (location TPE)", "Frais bancaires"],
+  [/AUTOROUTES DU SUD/, "ASF (autoroutes)", "Véhicule et déplacements"], [/^SPEEDY/, "Speedy", "Véhicule et déplacements"],
+  [/CENTRALAPP/, "CentralApp", "Abonnements et logiciels"], [/OPENAI/, "OpenAI (ChatGPT)", "Abonnements et logiciels"], [/AMAZON PRIME/, "Amazon Prime", "Abonnements et logiciels"],
+  [/^AMAZON/, "Amazon", "Achats divers"], [/^FNAC/, "Fnac", "Achats divers"], [/LEROY MERLIN/, "Leroy Merlin", "Achats divers"], [/^ACTION \d/, "Action", "Achats divers"],
+];
+const titre = (s: string) => s.toLowerCase().replace(/(^|[\s\-'.\/])([a-zà-ÿ])/g, (_m, a, b) => a + b.toUpperCase());
+// Du libellé bancaire au prestataire : { key (nom brut, sert de clé aux corrections), name, cat, fl }.
+function classify(label: string, amount: number, bankL: string) {
+  const L = label.toUpperCase(); let raw = "", name = "", cat = "", fl = "", m: RegExpMatchArray | null;
+  if ((m = L.match(/^PRLV SEPA RETOURNE (.+?) MDT\//))) { raw = m[1]; fl = "ret"; }
+  else if ((m = L.match(/^PRLV SEPA (?:B2B )?(.+?) ECH\//))) { raw = m[1]; if (L.includes("+REPRESENTATION+")) fl = "rep"; }
+  else if ((m = L.match(/^VIR SEPA (?:INST )?RECU \/FRM (.+?) \/EID/))) raw = m[1];
+  else if ((m = L.match(/^VIR SEPA (?:INST )?RECU \/REFBEN \/ORIG (.+?) \/MOTIF/))) raw = m[1];
+  else if ((m = L.match(/^VIREMENT SEPA EMIS .*\/BEN (.+?) \/REFDO/))) raw = m[1];
+  else if ((m = L.match(/^VIREMENT FAVEUR TIERS VR\.PERMANENT (.+)$/))) raw = m[1];
+  else if ((m = L.match(/^PRELEVEMENT EUROPEEN \d+ DE: (.+?) ID:/))) raw = m[1].replace(/ FR ANCE/, " FRANCE");
+  else if ((m = L.match(/^VIR RECU \w+ DE: (.+?) MOTIF:/))) raw = m[1];
+  else if ((m = L.match(/VIR PERM POUR: (.+?) REF:/))) { raw = m[1]; if (/MOTIF: LOYER/.test(L)) cat = "Loyers et charges"; }
+  else if ((m = L.match(/^CARTE X\d+ \d\d\/\d\d (.+?)$/))) raw = m[1].replace(/ COMMERCE ELECTRONIQUE$/, "").replace(/ \d+,\d\d [A-Z]{3}\b.*$/, "");
+  else if ((m = L.match(/^CHEQUE (\d+)/))) { raw = "CHEQUE " + m[1]; name = "Chèque n° " + m[1]; cat = "Chèques émis"; }
+  else if (/^(COMMISSIONS FACTURE|INTERETS ET COMMISSIONS|FRAIS |COTIS)/.test(L)) { raw = "FRAIS " + bankL.toUpperCase(); name = bankL + " (frais et commissions)"; cat = "Frais bancaires"; }
+  else if (/^ECHEANCE PRET/.test(L)) { raw = "ECHEANCE PRET"; name = "Échéance de prêt"; cat = "Emprunts"; }
+  else if (/^REM\. CARTE/.test(L)) { raw = "REMISE CARTE"; name = "Encaissements par carte"; cat = "Encaissements clients"; }
+  else if (/^REMISE CHEQUES/.test(L)) { raw = "REMISE CHEQUES"; name = "Remise de chèques"; cat = "Encaissements clients"; }
+  else if (/SAISIE ADMINISTRATIVE/.test(L)) { raw = "SATD"; name = "Saisie administrative (SATD)"; cat = "Impôts et taxes"; }
+  else raw = L.slice(0, 40);
+  raw = raw.replace(/\s+/g, " ").trim();
+  if (!name) {
+    const k = KNOWN.find((r) => r[0].test(raw));
+    if (k) { name = k[1] || titre(raw); cat = cat || k[2]; } else name = titre(raw);
+  }
+  if (/APPORT/.test(L) && amount > 0) cat = "Apports d'associé";
+  return { key: raw.slice(0, 80), name, cat: cat || "À classer", fl };
+}
+const dayDiff = (a: string, b: string) => Math.round((Date.parse(a) - Date.parse(b)) / 864e5);
 export async function bankTxList() {
-  const { data: accs } = await db.from("bank_accounts").select("uid,iban_hash,active,bank,last4,label,sort,created_at").order("created_at", { ascending: false });
+  const [{ data: accs }, { data: names }] = await Promise.all([
+    db.from("bank_accounts").select("uid,iban_hash,active,bank,last4,label,sort,created_at").order("created_at", { ascending: false }),
+    db.from("bank_names").select("key,name,cat"),
+  ]);
   const main: Record<string, any> = {}, canon: Record<string, string> = {};
   for (const a of accs || []) { const k = a.iban_hash || a.uid; if (!main[k] || (a.active && !main[k].active)) main[k] = a; }
   for (const a of accs || []) canon[a.uid] = main[a.iban_hash || a.uid].uid;
+  const bankOf: Record<string, string> = {}; Object.values(main).forEach((a: any) => bankOf[a.uid] = BANKS[a.bank]?.label || a.bank);
+  const fix: Record<string, any> = {}; (names || []).forEach((n: any) => fix[n.key] = n);
   const seen = new Set<string>(), tx: any[] = [];
   for (let i = 0; i < 30; i++) {
     const { data, error } = await db.from("bank_tx").select("uid,tx_id,day,amount,label,counterparty").order("day", { ascending: false }).order("tx_id").range(i * 1000, i * 1000 + 999);
     if (error) throw new Error("db_" + error.message);
     for (const t of data || []) {
       const k = canon[t.uid] || t.uid, id = k + "|" + t.tx_id; if (seen.has(id)) continue; seen.add(id);
-      tx.push({ k, d: t.day, a: Number(t.amount), l: String(t.label || "").replace(/\s+/g, " ").trim(), c: t.counterparty || "" });
+      const l = String(t.label || "").replace(/\s+/g, " ").trim(), a = Number(t.amount), c = classify(l, a, bankOf[k] || "Banque"), f = fix[c.key];
+      tx.push({ k, d: t.day, a, l, key: c.key, p: (f && f.name) || c.name, g: (f && f.cat) || c.cat, fl: c.fl, e: f ? 1 : 0 });
     }
     if (!data || data.length < 1000) break;
+  }
+  tx.forEach((t, i) => t.i = i);
+  // Prélèvement rejeté : le retour (crédit) est rapproché du prélèvement d'origine, même compte, même émetteur, même montant, 7 jours avant au plus.
+  const asc = [...tx].reverse();
+  for (const r of asc) {
+    if (r.fl !== "ret") continue;
+    let best: any = null;
+    for (const o of asc) if (o.pr == null && o.k === r.k && o.a < 0 && Math.abs(o.a + r.a) < 0.005 && o.key === r.key && o.d <= r.d && dayDiff(r.d, o.d) <= 7) best = o;
+    if (best) { best.pr = r.i; r.pr = best.i; best.fl = "rej"; }
+  }
+  // Virement entre deux comptes reliés : même montant, sens opposé, comptes différents, 5 jours d'écart au plus.
+  const vir = (t: any) => /VIR/.test(t.l.toUpperCase()) && !/APPORT/.test(t.l.toUpperCase());
+  for (const o of asc) {
+    if (o.pr != null || o.a >= 0 || !vir(o)) continue;
+    const c = asc.find((x) => x.pr == null && x.k !== o.k && x.a > 0 && Math.abs(x.a + o.a) < 0.005 && vir(x) && x.d >= o.d && dayDiff(x.d, o.d) <= 5);
+    if (c) { o.pr = c.i; c.pr = o.i; o.fl = c.fl = "int"; if (!o.e) o.g = "Entre vos comptes"; if (!c.e) c.g = "Entre vos comptes"; }
   }
   const used = new Set(tx.map((t) => t.k));
   const accounts = Object.values(main).filter((a: any) => a.active || used.has(a.uid))
     .sort((x: any, y: any) => (x.sort || 0) - (y.sort || 0) || String(x.label || "").localeCompare(String(y.label || "")))
     .map((a: any) => ({ uid: a.uid, label: a.label || null, bank_l: BANKS[a.bank]?.label || a.bank, last4: a.last4, active: !!a.active }));
-  return { accounts, tx };
+  return { accounts, tx, cats: BANK_CATS };
+}
+// Correction à la main : le nom et la catégorie valent pour toutes les opérations du même prestataire. Tout vide = retour à l'automatique.
+export async function bankNameSet(key: string, name: string, cat: string, by: string) {
+  key = String(key || "").slice(0, 80); if (!key) throw new Error("bad");
+  name = String(name || "").trim().slice(0, 60); cat = BANK_CATS.includes(cat) ? cat : "";
+  if (!name && !cat) { await db.from("bank_names").delete().eq("key", key); return; }
+  const { error } = await db.from("bank_names").upsert({ key, name: name || null, cat: cat || null, updated_by: by, updated_at: new Date().toISOString() }, { onConflict: "key" });
+  if (error) throw new Error("db_" + error.message);
 }
 
 // 4) Ce que voit l'appli : nom, banque, 4 derniers chiffres, solde, écart avec la veille.

@@ -1463,7 +1463,8 @@ function btxPrep(d) {
   const ml = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
   d.tx.forEach((t) => {
     const abs = Math.abs(t.a), acc = (d.accounts || []).find((x) => x.uid === t.k);
-    t.h = normT([t.l, t.c, acc ? `${acc.label || ''} ${acc.bank_l} ${acc.last4}` : '', fdate(t.d), ml(t.d), abs.toFixed(2), abs.toFixed(2).replace('.', ','), Number.isInteger(abs) ? String(abs) : ''].join(' '));
+    t.h = normT([t.p, t.g, t.l, acc ? `${acc.label || ''} ${acc.bank_l} ${acc.last4}` : '', fdate(t.d), ml(t.d), abs.toFixed(2), abs.toFixed(2).replace('.', ','), Number.isInteger(abs) ? String(abs) : '',
+      t.fl === 'rej' || t.fl === 'ret' ? 'rejet rejete' : '', t.fl === 'rep' ? 'representation' : ''].join(' '));
   });
   return d;
 }
@@ -1474,20 +1475,51 @@ function btxRange(per) {
   if (per === 'm1') return [iso(new Date(now.getFullYear(), now.getMonth() - 1, 1)), iso(new Date(now.getFullYear(), now.getMonth(), 0))];
   return ['0000', '9999'];
 }
-function btxFilter() {
-  const B = S.btx, [d0, d1] = btxRange(B.per), words = normT(B.q).replace(/[€]/g, ' ').split(/\s+/).filter(Boolean);
-  return B.tx.filter((t) => (!B.acc || t.k === B.acc) && t.d >= d0 && t.d <= d1 && (!B.sens || (B.sens === 'in' ? t.a > 0 : t.a < 0)) && words.every((w) => t.h.includes(w)));
+async function btxLoad() {
+  try { const d = btxPrep(await api('bank_tx')); Object.assign(S.btx, { tx: d.tx, accounts: d.accounts, cats: d.cats || [] }); if (S.btx.acc && !d.accounts.some((x) => x.uid === S.btx.acc)) S.btx.acc = ''; return true; }
+  catch (e) { toast(ERR[e.message] || 'Lecture impossible, réessaie.'); return false; }
 }
+const BTX_REJ = '__rej', BTX_INT = '__int';
+// part : le filtre qu'on ignore, pour remplir les listes « prestataire » et « catégorie » avec ce qui reste possible.
+function btxFilter(skip) {
+  const B = S.btx, [d0, d1] = btxRange(B.per), words = normT(B.q).replace(/[€]/g, ' ').split(/\s+/).filter(Boolean);
+  const gOk = (t) => !B.g || (B.g === BTX_REJ ? (t.fl === 'rej' || t.fl === 'ret') : B.g === BTX_INT ? t.fl === 'int' : t.g === B.g);
+  return B.tx.filter((t) => (!B.acc || t.k === B.acc) && t.d >= d0 && t.d <= d1 && (!B.sens || (B.sens === 'in' ? t.a > 0 : t.a < 0))
+    && (skip === 'g' || gOk(t)) && (skip === 'p' || !B.p || t.p === B.p) && words.every((w) => t.h.includes(w)));
+}
+const BTX_FL = { rej: ['Rejeté', 'p-red'], ret: ['Retour du rejet', 'p-red'], rep: ['2ᵉ présentation', 'p-amber'], int: ['Entre vos comptes', 'p-slate'] };
 function btxResHtml() {
-  const B = S.btx, rows = btxFilter();
-  let cr = 0, db = 0; rows.forEach((t) => { if (t.a > 0) cr += t.a; else db += t.a; });
-  const shown = rows.slice(0, B.n);
+  const B = S.btx, rows = btxFilter(), inRes = new Set(rows.map((t) => t.i));
+  // Un prélèvement rejeté et son retour, ou les deux côtés d'un virement entre vos comptes, s'annulent :
+  // quand les deux lignes sont affichées, on ne les compte ni en entrées ni en sorties.
+  const pair = (t) => t.pr != null && inRes.has(t.pr);
+  let cr = 0, db = 0, nRej = 0, sRej = 0, nInt = 0, sInt = 0; const months = {};
+  rows.forEach((t) => {
+    if (pair(t)) { if (t.a > 0) { if (t.fl === 'int') { nInt++; sInt += t.a; } else { nRej++; sRej += t.a; } } return; }
+    if (t.a > 0) cr += t.a; else db += t.a;
+    const m = months[t.d.slice(0, 7)] = months[t.d.slice(0, 7)] || [0, 0]; m[t.a > 0 ? 0 : 1] += t.a;
+  });
+  const shown = rows.slice(0, B.n), mk = Object.keys(months).sort().reverse();
+  const narrowed = B.q.trim() || B.p || B.g;
   return `<div class="card"><div class="row between"><b>${rows.length} opération${rows.length > 1 ? 's' : ''}</b><b style="color:${cr + db < 0 ? '#E5484D' : '#2E9E5B'}">${cr + db > 0 ? '+' : ''}${eur(cr + db)}</b></div>
-      <p class="muted">Entrées ${eur(cr)} · Sorties ${eur(Math.abs(db))}</p></div>
-    ${rows.length ? `<div class="list" style="margin-top:8px">${shown.map((t) => `<div class="li" style="align-items:flex-start"><span class="t"><span style="overflow-wrap:anywhere">${esc(t.l || '(sans libellé)')}</span><br><span class="muted">${fdate(t.d)} · ${esc(btxAccName(t.k))}</span></span>
-      <b style="white-space:nowrap;color:${t.a < 0 ? 'inherit' : '#2E9E5B'}">${t.a > 0 ? '+' : ''}${eur(t.a)}</b></div>`).join('')}</div>
+      <p class="muted">Entrées ${eur(cr)} · Sorties ${eur(Math.abs(db))}</p>
+      ${nRej ? `<p class="muted">⚠️ ${nRej} prélèvement${nRej > 1 ? 's' : ''} rejeté${nRej > 1 ? 's' : ''} par la banque (${eur(sRej)}), non compté${nRej > 1 ? 's' : ''} : ils sont revenus sur le compte.</p>` : ''}
+      ${nInt ? `<p class="muted">↔️ ${nInt} virement${nInt > 1 ? 's' : ''} entre vos comptes (${eur(sInt)}), non compté${nInt > 1 ? 's' : ''}.</p>` : ''}
+      ${narrowed && mk.length > 1 ? `<div class="list" style="margin-top:6px">${mk.map((k) => `<div class="row between"><span class="muted">${esc(new Date(k + '-15').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }))}</span><span>${months[k][0] ? '+' + eur(months[k][0]) : ''}${months[k][0] && months[k][1] ? ' · ' : ''}${months[k][1] ? eur(months[k][1]) : ''}</span></div>`).join('')}</div>` : ''}</div>
+    ${rows.length ? `<div class="list" style="margin-top:8px">${shown.map((t) => { const f = BTX_FL[t.fl]; return `<button class="li" data-a="btxEdit" data-i="${t.i}" style="align-items:flex-start;text-align:left;font:inherit;color:inherit;width:100%"><span class="t"><b>${esc(t.p || '(sans nom)')}</b>${f ? ` <span class="pill ${f[1]}">${f[0]}</span>` : ''}<br><span class="muted">${fdate(t.d)} · ${esc(btxAccName(t.k))} · ${esc(t.g)}</span><br><span class="muted" style="font-size:12px;overflow-wrap:anywhere">${esc(t.l.length > 110 ? t.l.slice(0, 110) + '…' : t.l)}</span></span>
+      <b style="white-space:nowrap;color:${t.a < 0 ? 'inherit' : '#2E9E5B'}${pair(t) ? ';opacity:.55' : ''}">${t.a > 0 ? '+' : ''}${eur(t.a)}</b></button>`; }).join('')}</div>
       ${rows.length > shown.length ? `<button class="btn soft" data-a="btxMore">Afficher la suite (${rows.length - shown.length})</button>` : ''}`
       : '<p class="muted">Aucune opération ne correspond.</p>'}`;
+}
+function btxSelects() {
+  const B = S.btx, cnt = (rows, f) => { const o = {}; rows.forEach((t) => { const k = f(t); o[k] = (o[k] || 0) + 1; }); return o; };
+  const cg = cnt(btxFilter('g'), (t) => t.g), cp = cnt(btxFilter('p'), (t) => t.p), gr = btxFilter('g');
+  const nRej = gr.filter((t) => t.fl === 'rej' || t.fl === 'ret').length, nInt = gr.filter((t) => t.fl === 'int').length;
+  const o = (v, l, sel) => `<option value="${esc(v)}"${v === sel ? ' selected' : ''}>${esc(l)}</option>`;
+  const gs = (B.cats || []).filter((c) => cg[c] || c === B.g);
+  const ps = Object.keys(cp).sort((x, y) => x.localeCompare(y, 'fr')); if (B.p && !cp[B.p]) ps.unshift(B.p);
+  return `<div class="two" style="margin:6px 0 10px"><select data-change="btxG" aria-label="Catégorie">${o('', 'Toutes les catégories', B.g)}${gs.map((c) => o(c, `${c} (${cg[c] || 0})`, B.g)).join('')}${nRej || B.g === BTX_REJ ? o(BTX_REJ, `⚠️ Prélèvements rejetés (${nRej})`, B.g) : ''}${nInt || B.g === BTX_INT ? o(BTX_INT, `↔️ Entre vos comptes (${nInt})`, B.g) : ''}</select>
+    <select data-change="btxP" aria-label="Prestataire">${o('', 'Tous les prestataires', B.p)}${ps.map((n) => o(n, `${n} (${cp[n] || 0})`, B.p)).join('')}</select></div>`;
 }
 function bankTxSheet() {
   const B = S.btx;
@@ -1498,10 +1530,25 @@ function bankTxSheet() {
     <input id="btxQ" type="search" placeholder="Chercher : Urssaf, 3600, chèque 4720, Metro octobre…" value="${esc(B.q)}" data-input="btxQ" style="width:100%">
     <div class="chips btx-f" style="margin:10px 0 6px">${chip('acc', '', 'Tous les comptes')}${B.accounts.map((a) => chip('acc', a.uid, a.label || `${a.bank_l} ••${a.last4}`)).join('')}</div>
     <div class="chips btx-f" style="margin:6px 0">${BTX_PER.map(([v, l]) => chip('per', v, l)).join('')}</div>
-    <div class="chips btx-f" style="margin:6px 0 10px">${chip('sens', '', 'Entrées et sorties')}${chip('sens', 'in', 'Entrées')}${chip('sens', 'out', 'Sorties')}</div>
+    <div class="chips btx-f" style="margin:6px 0">${chip('sens', '', 'Entrées et sorties')}${chip('sens', 'in', 'Entrées')}${chip('sens', 'out', 'Sorties')}</div>
+    ${btxSelects()}
+    ${B.q.trim() || B.p || B.g || B.acc || B.sens ? `<button class="btn small" data-a="btxReset">Effacer les filtres</button>` : ''}
     <div id="btxRes">${btxResHtml()}</div>
-    <p class="muted">${first ? `Historique conservé depuis le ${fdate(first)}. ` : ''}Nouveaux mouvements ajoutés chaque matin. Les opérations encore en attente à la banque n’apparaissent pas.</p>
+    <p class="muted">${first ? `Historique conservé depuis le ${fdate(first)}. ` : ''}Nouveaux mouvements ajoutés chaque matin. Les opérations encore en attente à la banque n’apparaissent pas. Touchez une ligne pour corriger le nom ou la catégorie.</p>
     <button class="btn small" data-a="bankOpen">← Soldes des comptes</button>`);
+}
+function btxEditSheet(i) {
+  const B = S.btx, t = B && B.tx && B.tx.find((x) => x.i === Number(i)); if (!t) return;
+  const same = B.tx.filter((x) => x.key === t.key).length, o = (c) => `<option${c === t.g ? ' selected' : ''}>${esc(c)}</option>`;
+  openSheet('banqueTxEdit', `<div class="row between"><h2>Opération</h2><button class="btn small" data-a="btxBack">← Retour</button></div>
+    <div class="card"><div class="row between"><b>${fdate(t.d)}</b><b style="color:${t.a < 0 ? 'inherit' : '#2E9E5B'}">${t.a > 0 ? '+' : ''}${eur(t.a)}</b></div>
+      <p class="muted">${esc(btxAccName(t.k))}${BTX_FL[t.fl] ? ' · ' + BTX_FL[t.fl][0] : ''}</p>
+      <p style="overflow-wrap:anywhere;font-size:13px">${esc(t.l)}</p></div>
+    <div class="card"><label>Nom du prestataire<input id="btx-n" value="${esc(t.p)}" maxlength="60"></label>
+      <label>Catégorie<select id="btx-g">${(B.cats || []).map(o).join('')}</select></label>
+      <p class="muted">${same > 1 ? `Vaudra pour les ${same} opérations de ce prestataire, et pour les suivantes.` : 'Vaudra pour cette opération.'}</p>
+      <div class="row"><button class="btn" data-a="btxSave" data-i="${t.i}">Enregistrer</button>${t.e ? `<button class="btn soft" data-a="btxAuto" data-i="${t.i}">Revenir à l’automatique</button>` : ''}</div></div>
+    <button class="btn soft" data-a="btxOnly" data-i="${t.i}">Voir toutes les opérations de « ${esc(t.p)} »</button>`);
 }
 /* ----- factures Chorus Pro : dépôt validé par le propriétaire, suivi, virements ----- */
 const CH_ST = {
@@ -2497,12 +2544,25 @@ const A = {
   ptOpen(d) { pointSheet(d.k); },
   bankOpen() { bankSheet(); },
   async bankTx() {
-    const keep = S.btx || {}; S.btx = { q: keep.q || '', acc: keep.acc || '', per: keep.per || '90', sens: keep.sens || '', n: 100, tx: keep.tx, accounts: keep.accounts };
+    const keep = S.btx || {}; S.btx = { q: keep.q || '', acc: keep.acc || '', per: keep.per || '90', sens: keep.sens || '', p: keep.p || '', g: keep.g || '', n: 100, tx: keep.tx, accounts: keep.accounts, cats: keep.cats };
     bankTxSheet();
-    try { const d = btxPrep(await api('bank_tx')); S.btx.tx = d.tx; S.btx.accounts = d.accounts; if (S.btx.acc && !d.accounts.some((a) => a.uid === S.btx.acc)) S.btx.acc = ''; if (S.sheet === 'banqueTx') bankTxSheet(); }
-    catch (e) { toast(ERR[e.message] || 'Lecture impossible, réessaie.'); }
+    if (await btxLoad() && S.sheet === 'banqueTx') bankTxSheet();
   },
   btxSet(d) { if (!S.btx) return; S.btx[d.k] = d.v; S.btx.n = 100; bankTxSheet(); },
+  btxReset() { if (!S.btx) return; Object.assign(S.btx, { q: '', acc: '', sens: '', p: '', g: '', n: 100 }); bankTxSheet(); },
+  btxEdit(d) { btxEditSheet(d.i); },
+  btxBack() { bankTxSheet(); },
+  btxOnly(d) { const t = S.btx.tx.find((x) => x.i === Number(d.i)); if (!t) return; Object.assign(S.btx, { q: '', g: '', sens: '', p: t.p, per: 'all', n: 100 }); bankTxSheet(); },
+  async btxSave(d) {
+    const t = S.btx.tx.find((x) => x.i === Number(d.i)); if (!t) return;
+    const name = ($('btx-n').value || '').trim(), cat = $('btx-g').value; if (!name) { toast('Donnez un nom au prestataire.'); return; }
+    const wasP = S.btx.p === t.p;
+    if (await act(() => api('bank_name_set', { key: t.key, name, cat }), 'Enregistré')) { if (wasP) S.btx.p = name; await btxLoad(); bankTxSheet(); }
+  },
+  async btxAuto(d) {
+    const t = S.btx.tx.find((x) => x.i === Number(d.i)); if (!t) return;
+    if (await act(() => api('bank_name_set', { key: t.key, name: '', cat: '' }), 'Retour à l’automatique')) { if (S.btx.p === t.p) S.btx.p = ''; await btxLoad(); bankTxSheet(); }
+  },
   btxMore() { if (!S.btx) return; S.btx.n += 200; const r = $('btxRes'); if (r) r.innerHTML = btxResHtml(); },
   facOpen() { S.facArm = null; facturesSheet(); },
   crList() { S.crArm = null; courrierSheet(); },
@@ -2861,6 +2921,8 @@ const A = {
   close() { closeSheet(); },
 };
 const C = {
+  btxG(el) { if (!S.btx) return; S.btx.g = el.value; S.btx.n = 100; bankTxSheet(); },
+  btxP(el) { if (!S.btx) return; S.btx.p = el.value; S.btx.n = 100; bankTxSheet(); },
   sdHotel(el) { const f = S.sd; if (!f) return; f.hotel = el.value; if (f.check) { const n = el.value + '-' + f.check.split('-').slice(1).join('-'); f.check = secChecks().some((x) => x.id === n) ? n : ''; } sdRedraw(); },
   sdCheck(el) { if (!S.sd) return; S.sd.check = el.value; S.sd.guess = false; sdRedraw(); },
   assignTo(el) { S.assignTo = el.value; },
