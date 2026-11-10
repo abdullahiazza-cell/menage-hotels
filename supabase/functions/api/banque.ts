@@ -182,6 +182,30 @@ export async function bankTxSync(opt: { from?: string } = {}) {
   return n;
 }
 
+// 3 ter) Recherche dans les mouvements : tout l'historique enregistré, rattaché au compte actuel
+// (un compte relié à nouveau change d'identifiant chez Enable Banking ; on le retrouve par son IBAN haché).
+export async function bankTxList() {
+  const { data: accs } = await db.from("bank_accounts").select("uid,iban_hash,active,bank,last4,label,sort,created_at").order("created_at", { ascending: false });
+  const main: Record<string, any> = {}, canon: Record<string, string> = {};
+  for (const a of accs || []) { const k = a.iban_hash || a.uid; if (!main[k] || (a.active && !main[k].active)) main[k] = a; }
+  for (const a of accs || []) canon[a.uid] = main[a.iban_hash || a.uid].uid;
+  const seen = new Set<string>(), tx: any[] = [];
+  for (let i = 0; i < 30; i++) {
+    const { data, error } = await db.from("bank_tx").select("uid,tx_id,day,amount,label,counterparty").order("day", { ascending: false }).order("tx_id").range(i * 1000, i * 1000 + 999);
+    if (error) throw new Error("db_" + error.message);
+    for (const t of data || []) {
+      const k = canon[t.uid] || t.uid, id = k + "|" + t.tx_id; if (seen.has(id)) continue; seen.add(id);
+      tx.push({ k, d: t.day, a: Number(t.amount), l: String(t.label || "").replace(/\s+/g, " ").trim(), c: t.counterparty || "" });
+    }
+    if (!data || data.length < 1000) break;
+  }
+  const used = new Set(tx.map((t) => t.k));
+  const accounts = Object.values(main).filter((a: any) => a.active || used.has(a.uid))
+    .sort((x: any, y: any) => (x.sort || 0) - (y.sort || 0) || String(x.label || "").localeCompare(String(y.label || "")))
+    .map((a: any) => ({ uid: a.uid, label: a.label || null, bank_l: BANKS[a.bank]?.label || a.bank, last4: a.last4, active: !!a.active }));
+  return { accounts, tx };
+}
+
 // 4) Ce que voit l'appli : nom, banque, 4 derniers chiffres, solde, écart avec la veille.
 export async function bankState(owner: boolean) {
   const { data: accs } = await db.from("bank_accounts").select("uid,bank,last4,label,currency,balance,balance_type,ref_date,fetched_at,valid_until,error,sort").eq("active", true).order("sort").order("bank").order("last4");

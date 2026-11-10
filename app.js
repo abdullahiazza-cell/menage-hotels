@@ -1447,13 +1447,61 @@ function bankSheet() {
   openSheet('banque', `${sheetHead('🏦 Soldes des comptes')}
     <div class="card">${accs.length ? `<div class="row between"><span class="muted">Total</span><h2>${Object.entries(tot).map(([c, v]) => eur(v, c)).join(' · ') || '—'}</h2></div>
       <div class="list">${accs.map(row).join('')}</div>
-      <p class="muted">${last ? 'Mis à jour ' + when(last) + '.' : 'Pas encore de lecture.'} Mise à jour automatique à 7 h, 12 h et 17 h. Lecture seule : aucun virement possible.</p>`
+      <p class="muted">${last ? 'Mis à jour ' + when(last) + '.' : 'Pas encore de lecture.'} Mise à jour automatique à 7 h, 12 h et 17 h. Lecture seule : aucun virement possible.</p>
+      <button class="btn" data-a="bankTx">🔎 Chercher dans les mouvements</button>`
       : '<p class="muted">Aucun compte relié pour l’instant.</p>'}</div>
     ${own ? `<div class="card"><h3>Gérer</h3>
       <button class="btn" data-a="bankRefresh">🔄 Actualiser maintenant (1 fois par jour)</button>
       <p class="muted">Relier ou renouveler l’accord (tous les 6 mois environ). Vous vous connectez sur la page de votre banque, Ma Réception ne voit jamais vos codes.</p>
       <div class="row">${(S.banque.banks || []).map((b) => `<button class="btn small soft" data-a="bankLink" data-k="${b.k}">${esc(b.l)}</button>`).join('')}</div>
       <p class="muted">Qui voit les soldes : réglez-le dans Équipe, personne par personne.</p></div>` : ''}`);
+}
+/* ----- banque : recherche dans tous les mouvements enregistrés (même autorisation que les soldes) ----- */
+const BTX_PER = [['30', '30 jours'], ['90', '90 jours'], ['m0', 'Ce mois'], ['m1', 'Mois dernier'], ['all', 'Tout']];
+const btxAccName = (k) => { const a = ((S.btx && S.btx.accounts) || []).find((x) => x.uid === k); return a ? (a.label || `${a.bank_l} ••${a.last4}`) : 'Compte'; };
+function btxPrep(d) {
+  const ml = (iso) => new Date(iso + 'T12:00:00').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  d.tx.forEach((t) => {
+    const abs = Math.abs(t.a), acc = (d.accounts || []).find((x) => x.uid === t.k);
+    t.h = normT([t.l, t.c, acc ? `${acc.label || ''} ${acc.bank_l} ${acc.last4}` : '', fdate(t.d), ml(t.d), abs.toFixed(2), abs.toFixed(2).replace('.', ','), Number.isInteger(abs) ? String(abs) : ''].join(' '));
+  });
+  return d;
+}
+function btxRange(per) {
+  const now = new Date(), iso = (x) => `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  if (per === '30' || per === '90') return [iso(new Date(Date.now() - Number(per) * 864e5)), '9999'];
+  if (per === 'm0') return [iso(new Date(now.getFullYear(), now.getMonth(), 1)), '9999'];
+  if (per === 'm1') return [iso(new Date(now.getFullYear(), now.getMonth() - 1, 1)), iso(new Date(now.getFullYear(), now.getMonth(), 0))];
+  return ['0000', '9999'];
+}
+function btxFilter() {
+  const B = S.btx, [d0, d1] = btxRange(B.per), words = normT(B.q).replace(/[€]/g, ' ').split(/\s+/).filter(Boolean);
+  return B.tx.filter((t) => (!B.acc || t.k === B.acc) && t.d >= d0 && t.d <= d1 && (!B.sens || (B.sens === 'in' ? t.a > 0 : t.a < 0)) && words.every((w) => t.h.includes(w)));
+}
+function btxResHtml() {
+  const B = S.btx, rows = btxFilter();
+  let cr = 0, db = 0; rows.forEach((t) => { if (t.a > 0) cr += t.a; else db += t.a; });
+  const shown = rows.slice(0, B.n);
+  return `<div class="card"><div class="row between"><b>${rows.length} opération${rows.length > 1 ? 's' : ''}</b><b style="color:${cr + db < 0 ? '#E5484D' : '#2E9E5B'}">${cr + db > 0 ? '+' : ''}${eur(cr + db)}</b></div>
+      <p class="muted">Entrées ${eur(cr)} · Sorties ${eur(Math.abs(db))}</p></div>
+    ${rows.length ? `<div class="list" style="margin-top:8px">${shown.map((t) => `<div class="li" style="align-items:flex-start"><span class="t"><span style="overflow-wrap:anywhere">${esc(t.l || '(sans libellé)')}</span><br><span class="muted">${fdate(t.d)} · ${esc(btxAccName(t.k))}</span></span>
+      <b style="white-space:nowrap;color:${t.a < 0 ? 'inherit' : '#2E9E5B'}">${t.a > 0 ? '+' : ''}${eur(t.a)}</b></div>`).join('')}</div>
+      ${rows.length > shown.length ? `<button class="btn soft" data-a="btxMore">Afficher la suite (${rows.length - shown.length})</button>` : ''}`
+      : '<p class="muted">Aucune opération ne correspond.</p>'}`;
+}
+function bankTxSheet() {
+  const B = S.btx;
+  if (!B || !B.tx) { openSheet('banqueTx', `${sheetHead('🔎 Mouvements bancaires')}<p class="muted">Chargement…</p>`); return; }
+  const chip = (k, v, l) => `<button class="chip${B[k] === v ? ' on' : ''}" data-a="btxSet" data-k="${k}" data-v="${esc(v)}">${esc(l)}</button>`;
+  const first = B.tx.length ? B.tx[B.tx.length - 1].d : null;
+  openSheet('banqueTx', `${sheetHead('🔎 Mouvements bancaires')}
+    <input id="btxQ" type="search" placeholder="Chercher : Urssaf, 3600, chèque 4720, Metro octobre…" value="${esc(B.q)}" data-input="btxQ" style="width:100%">
+    <div class="chips btx-f" style="margin:10px 0 6px">${chip('acc', '', 'Tous les comptes')}${B.accounts.map((a) => chip('acc', a.uid, a.label || `${a.bank_l} ••${a.last4}`)).join('')}</div>
+    <div class="chips btx-f" style="margin:6px 0">${BTX_PER.map(([v, l]) => chip('per', v, l)).join('')}</div>
+    <div class="chips btx-f" style="margin:6px 0 10px">${chip('sens', '', 'Entrées et sorties')}${chip('sens', 'in', 'Entrées')}${chip('sens', 'out', 'Sorties')}</div>
+    <div id="btxRes">${btxResHtml()}</div>
+    <p class="muted">${first ? `Historique conservé depuis le ${fdate(first)}. ` : ''}Nouveaux mouvements ajoutés chaque matin. Les opérations encore en attente à la banque n’apparaissent pas.</p>
+    <button class="btn small" data-a="bankOpen">← Soldes des comptes</button>`);
 }
 /* ----- factures Chorus Pro : dépôt validé par le propriétaire, suivi, virements ----- */
 const CH_ST = {
@@ -2448,6 +2496,14 @@ const A = {
   ptVoice(d) { S.ptVoice = d.k; LS.set('mh-ptv', d.k); pointSheet(S.ptKind); },
   ptOpen(d) { pointSheet(d.k); },
   bankOpen() { bankSheet(); },
+  async bankTx() {
+    const keep = S.btx || {}; S.btx = { q: keep.q || '', acc: keep.acc || '', per: keep.per || '90', sens: keep.sens || '', n: 100, tx: keep.tx, accounts: keep.accounts };
+    bankTxSheet();
+    try { const d = btxPrep(await api('bank_tx')); S.btx.tx = d.tx; S.btx.accounts = d.accounts; if (S.btx.acc && !d.accounts.some((a) => a.uid === S.btx.acc)) S.btx.acc = ''; if (S.sheet === 'banqueTx') bankTxSheet(); }
+    catch (e) { toast(ERR[e.message] || 'Lecture impossible, réessaie.'); }
+  },
+  btxSet(d) { if (!S.btx) return; S.btx[d.k] = d.v; S.btx.n = 100; bankTxSheet(); },
+  btxMore() { if (!S.btx) return; S.btx.n += 200; const r = $('btxRes'); if (r) r.innerHTML = btxResHtml(); },
   facOpen() { S.facArm = null; facturesSheet(); },
   crList() { S.crArm = null; courrierSheet(); },
   crAll() { S.crAll = true; courrierSheet(); },
@@ -2819,6 +2875,7 @@ const C = {
   mvFond(el) { const i = +el.dataset.i; if (el.value) S.proposal.fond[i].uid = el.value; else S.proposal.fond.splice(i, 1); render(); },
 };
 const I = {
+  btxQ(el) { if (!S.btx) return; S.btx.q = el.value; S.btx.n = 100; const r = $('btxRes'); if (r) r.innerHTML = btxResHtml(); },
   crTxt(t) { S.crDraft[t.dataset.id] = t.value; },
   crAsk(t) { S.crAsk[t.dataset.id] = t.value; },
   crHq(t) { if (S.crHist) S.crHist.q = t.value; },

@@ -1,6 +1,6 @@
 // API unique de l'appli ménage : toute la lecture/écriture passe ici (clé service), les tables sont fermées au public.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
-import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring, bankTxSync } from "./banque.ts";
+import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring, bankTxSync, bankTxList } from "./banque.ts";
 import { chorusSync, chorusDeposer, chorusState, rapprocher, paiementDecide, STRUCT } from "./chorus.ts";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
 import { CE, courrierIn, courrierState, courrierSet, courrierQueue, courrierDoc, courrierSent, courrierAValider, courrierChorusPdf, courrierHist } from "./courrier.ts";
@@ -1513,6 +1513,10 @@ async function handle(req: Request) {
         await sb.from("chorus_depots").update({ statut: "erreur", erreur: msg }).eq("id", d.id);
         throw new E("chorus_depot_fail");
       }
+    }
+    case "bank_tx": {
+      if (!canBank(me)) throw new E("forbidden", 403);
+      return await bankTxList();
     }
     case "bank_refresh": {
       if (me.role !== "owner") throw new E("owner_only", 403);
