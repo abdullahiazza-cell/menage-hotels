@@ -1838,8 +1838,8 @@ function pointSheet(kind, auto) {
   const kinds = `<div class="segc" role="group" aria-label="Quel point"><button data-a="ptKind" data-k="jour" aria-pressed="${kind === 'jour'}">Point du jour</button><button data-a="ptKind" data-k="semaine" aria-pressed="${kind === 'semaine'}">Point de la semaine</button></div>`;
   openSheet('pt:' + kind, `${sheetHead('🎧 Le point')}${kinds}
     ${!p ? `<div class="card"><p class="muted">${kind === 'jour' ? 'Le premier point du matin sera prêt demain vers 7 h.' : 'Le premier point de la semaine sera prêt lundi matin.'}</p></div>` : `
-    <p class="muted">${esc(ptWhen(p))}${ptDur(p, lang, ptCurVoice(p, lang))}</p>
-    ${ptSegs(lang)}<div class="card">${ptPlayer(p, lang)}</div>
+    <p class="muted">${esc(ptWhen(p))}${lang === 'ar' ? ptDur(p, lang, ptCurVoice(p, lang)) : ''}</p>
+    ${ptSegs(lang)}${lang === 'ar' ? `<div class="card">${ptPlayer(p, lang)}</div>` : ''}
     <div class="card pt-full ${lang === 'ar' ? 'rtl' : ''}">${ptText(p, lang).map((l) => `<p>${esc(l)}</p>`).join('')}</div>
     <p class="muted sm">Préparé automatiquement à partir de l’appli : réparations, registre, sécurité, tâches.</p>`}
     ${S.me.role === 'owner' ? `<div class="row">${p ? `<button class="btn soft" data-a="ptSendOpen" data-k="${kind}">📤 Envoyer ce point maintenant</button>` : ''}<button class="btn ghost" data-a="ptSettings">Régler les envois</button></div>` : ''}`);
@@ -1900,8 +1900,8 @@ function pointSubSheet(id) {
       <label>Heure<select id="ps-jour-h">${hours(x.jour_h)}</select></label>
       <label class="check big"><input type="checkbox" id="ps-sem" ${x.semaine ? 'checked' : ''}> <span><b>Point de la semaine</b><br><span class="muted sm">Le résumé de la semaine, prêt le dimanche, environ 2 minutes</span></span></label>
       <div class="two"><label>Jour<select id="ps-sem-d">${[0, 1, 2, 3, 4, 5, 6].map((d) => opt(d, x.semaine_dow, DOWS[d][0].toUpperCase() + DOWS[d].slice(1))).join('')}</select></label><label>Heure<select id="ps-sem-h">${hours(x.semaine_h)}</select></label></div>
-      <div class="two"><label>Langue de l’audio<select id="ps-lang">${opt('ar', x.lang, 'Darija')}${opt('fr', x.lang, 'Français')}</select></label><label>Voix<select id="ps-voice">${VOICES.map(([k, l]) => opt(k, x.voice, l)).join('')}</select></label></div>
-      <p class="muted sm">Le texte reste toujours disponible dans les deux langues sur l’accueil.</p>
+      <input type="hidden" id="ps-lang" value="ar"><label>Voix (darija)<select id="ps-voice">${VOICES.map(([k, l]) => opt(k, x.voice, l)).join('')}</select></label>
+      <p class="muted sm">Le point est lu à voix haute en darija. Le texte reste toujours disponible dans les deux langues sur l’accueil.</p>
       <button class="btn pri" data-a="ptSubSave" data-id="${id}">Enregistrer</button></div>`);
 }
 
