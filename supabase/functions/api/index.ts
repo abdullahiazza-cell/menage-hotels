@@ -1091,9 +1091,11 @@ async function handle(req: Request) {
     if (body.kind === "chorus_sync") return await chorusCron();
     if (body.kind === "courrier_push") return await courrierPush();
     if (body.kind === "courrier_chorus_pdf") return await cw(courrierChorusPdf(body));
+    // Relecture des mouvements bancaires à la demande (export pour la comptabilité).
+    if (body.kind === "bank_tx_sync") return { tx: await bankTxSync({ from: body.from ? String(body.from) : undefined }) };
     if (body.kind === "bank_sync") {
       const n = await bankSync();
-      // Mouvements (crédits) une fois par jour, le matin, puis rapprochement avec les factures Chorus.
+      // Mouvements (crédits et débits) une fois par jour, le matin, puis rapprochement avec les factures Chorus.
       if (parisHour() < 10) { const t = await bankTxSync().catch(() => 0); const p = await rapprocher().catch(() => 0); if (p) await chorusPushPay(p); if (!t) console.log("bank_tx: rien"); }
       // Prévenir le propriétaire 10 jours avant la fin de l'accord bancaire (une fois par jour, le matin).
       if (parisHour() < 10) {

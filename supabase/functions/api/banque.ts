@@ -129,32 +129,56 @@ export async function bankSync(opt: { only?: string; manual?: boolean } = {}) {
   return n;
 }
 
-// 3 bis) Mouvements des 90 derniers jours (crédits seulement), une fois par jour avec la lecture du matin,
-// pour rapprocher les virements du Département des factures Chorus.
-export async function bankTxSync() {
-  const { data: accs } = await db.from("bank_accounts").select("uid,valid_until").eq("active", true);
-  const from = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
-  let n = 0;
+// 3 bis) Mouvements des 90 derniers jours (crédits ET débits, montant signé), une fois par jour avec la lecture
+// du matin : rapprochement des virements du Département avec les factures Chorus (crédits) et export des
+// mouvements pour la comptabilité. `from` (AAAA-MM-JJ) permet de demander plus loin ; si la banque refuse,
+// on retombe sur 90 jours.
+export async function bankTxSync(opt: { from?: string } = {}) {
+  const { data: accs } = await db.from("bank_accounts").select("uid,last4,valid_until").eq("active", true);
+  const from90 = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
+  const want = opt.from && /^\d{4}-\d{2}-\d{2}$/.test(opt.from) && opt.from < from90 ? opt.from : from90;
+  let n = 0; const detail: any[] = [];
   for (const a of accs || []) {
     if (a.valid_until && new Date(a.valid_until) < new Date()) continue;
-    try {
-      let key: string | null = null; const rows: any[] = [];
-      for (let i = 0; i < 10; i++) {
+    const read = async (from: string) => {
+      let key: string | null = null; const rows: any[] = []; const seen: Record<string, number> = {}; let raw = 0, pending = 0;
+      for (let i = 0; i < 20; i++) {
         const r = await eb(`/accounts/${a.uid}/transactions?date_from=${from}${key ? `&continuation_key=${encodeURIComponent(key)}` : ""}`);
         for (const t of r.transactions || []) {
-          if (t.credit_debit_indicator !== "CRDT" || (t.status && t.status !== "BOOK")) continue;
-          const amount = Number(t.transaction_amount?.amount);
+          raw++;
+          if (t.status && t.status !== "BOOK") { pending++; continue; }
+          const debit = t.credit_debit_indicator === "DBIT";
+          if (!debit && t.credit_debit_indicator !== "CRDT") continue;
+          const abs = Math.abs(Number(t.transaction_amount?.amount));
+          const amount = debit ? -abs : abs;
           const label = [...(t.remittance_information || []), t.note].filter(Boolean).join(" ").slice(0, 400);
           const day = t.booking_date || t.value_date || t.transaction_date || null;
-          const tx_id = t.entry_reference || t.transaction_id || await sha(`${day}|${amount}|${label}`);
-          rows.push({ uid: a.uid, tx_id: String(tx_id).slice(0, 120), day, amount, currency: t.transaction_amount?.currency || "EUR", label, counterparty: t.debtor?.name || null });
+          // Identifiant : celui de la banque, sinon une empreinte (inchangée pour les crédits déjà enregistrés).
+          let tx_id = String(t.entry_reference || t.transaction_id || await sha(`${day}|${amount}|${label}`)).slice(0, 110);
+          // Deux mouvements identiques le même jour : on garde les deux.
+          seen[tx_id] = (seen[tx_id] || 0) + 1; if (seen[tx_id] > 1) tx_id = `${tx_id}#${seen[tx_id]}`;
+          rows.push({ uid: a.uid, tx_id, day, value_day: t.value_date || null, amount, currency: t.transaction_amount?.currency || "EUR", label, counterparty: (debit ? t.creditor?.name : t.debtor?.name) || null });
         }
         key = r.continuation_key || null; if (!key) break;
       }
-      if (rows.length) await db.from("bank_tx").upsert(rows, { onConflict: "uid,tx_id" });
-      n += rows.length;
-    } catch (e) { console.error("bank_tx", a.uid, (e as any).message, (e as any).detail); }
+      return { rows, raw, pending, more: !!key };
+    };
+    try {
+      let from = want, res: any;
+      try { res = await read(from); }
+      catch (e) { if (from === from90) throw e; console.error("bank_tx from", a.uid, from, (e as any).message, (e as any).detail); from = from90; res = await read(from); }
+      for (let i = 0; i < res.rows.length; i += 500) {
+        const { error } = await db.from("bank_tx").upsert(res.rows.slice(i, i + 500), { onConflict: "uid,tx_id" });
+        if (error) throw new Error("db_" + error.message);
+      }
+      n += res.rows.length;
+      detail.push({ last4: a.last4, from, lus: res.raw, gardes: res.rows.length, en_attente: res.pending, incomplet: res.more });
+    } catch (e) {
+      console.error("bank_tx", a.uid, (e as any).message, (e as any).detail);
+      detail.push({ last4: a.last4, erreur: String((e as any).message || e).slice(0, 80), detail: String((e as any).detail || "").slice(0, 160) });
+    }
   }
+  console.log("bank_tx", JSON.stringify(detail));
   return n;
 }
 
