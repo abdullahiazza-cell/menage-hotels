@@ -86,13 +86,13 @@ export async function bankCallback(url: URL) {
       const iban = (acc.account_id && (acc.account_id.iban || acc.account_id.other?.identification)) || acc.iban || "";
       const ih = iban ? await sha(String(iban).replace(/\s/g, "")) : null;
       const last4 = iban ? String(iban).replace(/\s/g, "").slice(-4) : String(uid).slice(-4);
-      let label: string | null = null, sort = 0;
+      let label: string | null = null, sort = 0, societe: string | null = null;
       if (ih) {
         // Même compte relié à nouveau : on garde son nom et on remplace l'ancien accès.
-        const { data: old } = await db.from("bank_accounts").select("uid,label,sort").eq("iban_hash", ih).neq("uid", uid);
-        if (old && old.length) { label = old[0].label; sort = old[0].sort || 0; await db.from("bank_accounts").update({ active: false }).in("uid", old.map((o: any) => o.uid)); }
+        const { data: old } = await db.from("bank_accounts").select("uid,label,sort,societe").eq("iban_hash", ih).neq("uid", uid);
+        if (old && old.length) { label = old[0].label; sort = old[0].sort || 0; societe = old.map((o: any) => o.societe).find(Boolean) || null; await db.from("bank_accounts").update({ active: false }).in("uid", old.map((o: any) => o.uid)); }
       }
-      await db.from("bank_accounts").upsert({ uid, bank: L.bank, iban_hash: ih, last4, currency: acc.currency || "EUR", session_id: s.session_id, valid_until: validUntil, active: true, ...(label ? { label } : {}), sort, error: null }, { onConflict: "uid" });
+      await db.from("bank_accounts").upsert({ uid, bank: L.bank, iban_hash: ih, last4, currency: acc.currency || "EUR", session_id: s.session_id, valid_until: validUntil, active: true, ...(label ? { label } : {}), ...(societe ? { societe } : {}), sort, error: null }, { onConflict: "uid" });
     }
     await bankSync({ only: L.bank }).catch(() => {});
     return go("ok");
