@@ -142,7 +142,7 @@ function parisHour(d = new Date()) { return Number(new Intl.DateTimeFormat("en-G
 const isMgr = (me: any) => me.role === "owner" || me.role === "gerant";
 const isBrico = (me: any) => me.role === "bricoleur";
 // Accès donnés par le propriétaire à l'intendant (« reg_pec » : répartir les PEC reçues ; « reg_full » : tout le registre).
-const RO_OK = ["state", "push_sub", "push_test", "logout", "read_mark", "msg_send", "msg_edit", "msg_delete", "upload_url", "doc_get", "stats"];
+const RO_OK = ["state", "push_sub", "push_test", "logout", "read_mark", "msg_send", "msg_edit", "msg_delete", "upload_url", "doc_get", "stats", "bank_tx"];
 const PERMS = ["reg_pec", "reg_full", "contacts"];
 // Soldes bancaires : le propriétaire, et ceux à qui il donne l'accès « banque ».
 const canBank = (me: any) => me.role === "owner" || (Array.isArray(me.perms) && me.perms.includes("banque"));

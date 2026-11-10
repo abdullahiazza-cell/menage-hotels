@@ -166,7 +166,7 @@ const ERR = {
   deja: 'Cette prise en charge est déjà dans le registre.', too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
 };
 // Comptes en lecture seule : tout est visible, seules ces actions passent (lire, messages, notifications).
-const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'msg_edit', 'msg_delete', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info'];
+const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'msg_edit', 'msg_delete', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info', 'bank_tx'];
 async function api(a, payload = {}) {
   if (S.me && S.me.readonly && !RO_OK.includes(a)) { const err = new Error('readonly'); err.code = 'readonly'; throw err; }
   let r;
@@ -1534,7 +1534,7 @@ function bankTxSheet() {
     ${btxSelects()}
     ${B.q.trim() || B.p || B.g || B.acc || B.sens ? `<button class="btn small" data-a="btxReset">Effacer les filtres</button>` : ''}
     <div id="btxRes">${btxResHtml()}</div>
-    <p class="muted">${first ? `Historique conservé depuis le ${fdate(first)}. ` : ''}Nouveaux mouvements ajoutés chaque matin. Les opérations encore en attente à la banque n’apparaissent pas. Touchez une ligne pour corriger le nom ou la catégorie.</p>
+    <p class="muted">${first ? `Historique conservé depuis le ${fdate(first)}. ` : ''}Nouveaux mouvements ajoutés chaque matin. Les opérations encore en attente à la banque n’apparaissent pas. ${S.me && S.me.readonly ? 'Touchez une ligne pour voir le détail.' : 'Touchez une ligne pour corriger le nom ou la catégorie.'}</p>
     <div class="card"><h3>Pour la comptable</h3>
       <button class="btn" data-a="btxExport">📤 Fichier Excel : ${esc(btxExportLabel())}</button>
       <p class="muted">Tous les mouvements de la période et du compte choisis en haut, un onglet par société. La recherche et les filtres par catégorie ou prestataire ne retirent rien du fichier.</p></div>
@@ -1614,11 +1614,11 @@ function btxEditSheet(i) {
     <div class="card"><div class="row between"><b>${fdate(t.d)}</b><b style="color:${t.a < 0 ? 'inherit' : '#2E9E5B'}">${t.a > 0 ? '+' : ''}${eur(t.a)}</b></div>
       <p class="muted">${esc(btxAccName(t.k))}${BTX_FL[t.fl] ? ' · ' + BTX_FL[t.fl][0] : ''}</p>
       <p style="overflow-wrap:anywhere;font-size:13px">${esc(t.l)}</p></div>
-    <div class="card"><label>Nom du prestataire<input id="btx-n" value="${esc(t.p)}" maxlength="60"></label>
+    ${S.me && S.me.readonly ? `<div class="card"><b>${esc(t.p)}</b><p class="muted">${esc(t.g)}</p>${t.n ? `<p>📝 ${esc(t.n)}</p>` : ''}</div>` : `    <div class="card"><label>Nom du prestataire<input id="btx-n" value="${esc(t.p)}" maxlength="60"></label>
       <label>Catégorie<select id="btx-g">${(B.cats || []).map(o).join('')}</select></label>
       <p class="muted">${same > 1 ? `Le nom et la catégorie vaudront pour les ${same} opérations de ce prestataire, et pour les suivantes.` : 'Le nom et la catégorie vaudront pour cette opération.'}</p>
       <label>Note sur cette opération<textarea id="btx-note" rows="2" maxlength="300" placeholder="Ex. : chèque à l’électricien, acompte chantier escalier">${esc(t.n || '')}</textarea></label>
-      <div class="row"><button class="btn" data-a="btxSave" data-i="${t.i}">Enregistrer</button>${t.e ? `<button class="btn soft" data-a="btxAuto" data-i="${t.i}">Revenir à l’automatique</button>` : ''}</div></div>
+      <div class="row"><button class="btn" data-a="btxSave" data-i="${t.i}">Enregistrer</button>${t.e ? `<button class="btn soft" data-a="btxAuto" data-i="${t.i}">Revenir à l’automatique</button>` : ''}</div></div>`}
     <button class="btn soft" data-a="btxOnly" data-i="${t.i}">Voir toutes les opérations de « ${esc(t.p)} »</button>`);
 }
 /* ----- factures Chorus Pro : dépôt validé par le propriétaire, suivi, virements ----- */
