@@ -230,6 +230,7 @@ function trPlanBar() {
   const P = S.trP, bar = $('tr-plan-bar'), chkEl = $('tr-plan-chk'); if (!P) return;
   const it = P.p.items.find((i) => i.id === P.sel);
   if (bar) bar.innerHTML = it && trCan() ? `<div class="row between"><b>${esc(trItName(it))} <span class="muted sm">${trDim(it).w} × ${trDim(it).d} cm</span></b><span class="row"><button class="btn small soft" data-a="trPlanRot">⟳ Tourner</button><button class="btn small ghost bad-t" data-a="trPlanDel">Enlever</button></span></div>` : (trCan() && P.view === 'plan' ? '<p class="muted sm">Glisse la porte (marron), la fenêtre (bleue) et les meubles à leur place. Touche un meuble pour le tourner ou l’enlever.</p>' : '');
+  if (bar) bar.classList.toggle('on', !!(it && trCan()));
   if (chkEl) {
     const c = trPlanCheck(P.rid, P.p), beds = P.p.items.filter(trIsBed), n = beds.reduce((a, b) => a + (b.t === 'lit_d' ? 2 : 1), 0), s = trSurf({ ...trData(P.rid), plan: P.p });
     const need = n ? TR_SURF3[Math.min(3, n)] : 0, sOk = !n || s.tot >= need * 0.9;
@@ -351,8 +352,8 @@ function trScene(roomId, p) {
   const models = []; // pour le rendu soigné : où poser un vrai modèle 3D à la place des blocs
   p.items.forEach((it) => {
     const dest = it.t === 'tv' ? walls[((it.r || 0) / 90) % 4].boxes : B, mi = models.length;
-    if (it.t !== 'tv') { const m = trDim(it); models.push({ t: it.t, x: (it.x - W / 2) * cm, z: (it.y - D / 2) * cm, r: it.r || 0, w: m.w * cm, d: m.d * cm, h: m.h * cm }); }
-    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp, soft: c === TR_COL.pillow, mi: it.t !== 'tv' ? mi : -1 })); });
+    { const m = trDim(it); models.push({ id: it.id, tv: it.t === 'tv', t: it.t, x: (it.x - W / 2) * cm, z: (it.y - D / 2) * cm, r: it.r || 0, w: m.w * cm, d: m.d * cm, h: m.h * cm }); }
+    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp, soft: c === TR_COL.pillow, mi })); });
   });
   // Une plante verte dans un coin libre (rendu soigné seulement) : jamais devant la porte, la fenêtre ou un meuble.
   const plants = [];
@@ -405,14 +406,17 @@ const TR_DVS = 'attribute vec3 p;attribute vec3 n;uniform mat4 uL;uniform vec3 u
 const TR_DFS = TR_HP + 'void main(){float z=gl_FragCoord.z;vec4 e=fract(vec4(1.0,255.0,65025.0,16581375.0)*z);e-=e.yzww*vec4(1.0/255.0,1.0/255.0,1.0/255.0,0.0);gl_FragColor=e;}';
 // Le rendu soigné (three.js) se charge à la demande ; s'il ne peut pas (vieux téléphone, pas de réseau au premier essai), le dessin simple prend le relais.
 function trGlStart() {
-  const cv = $('tr-gl'), P = S.trP; if (!cv || !P) return;
+  let cv = $('tr-gl'); const P = S.trP; if (!cv || !P) return;
+  if (TR_GL.three || TR_GL.gl) { trGlStop(); const fresh = cv.cloneNode(false); cv.replaceWith(fresh); cv = fresh; } // une toile neuve : l'ancienne a rendu son contexte
   trGlStop();
   if (!P.cam) { const { W, D, H } = trWDH(trData(P.rid)); P.cam = { mode: 'orbit', yaw: 0.65, pitch: 0.58, dist: Math.max(W, D) / 100 * 1.3 + H / 100 * 0.75 + 0.9, ly: 0, lp: -0.1 }; }
   const token = TR_GL.token = {};
   const basic = () => { if (TR_GL.token !== token) return; const old = $('tr-gl'); if (!old) return; const fresh = old.cloneNode(false); old.replaceWith(fresh); trGlStartBasic(); };
   import('./travaux-rendu.js?v=' + APP_V).then((mod) => {
     if (TR_GL.token !== token || !cv.isConnected) return;
-    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false, soir: () => !!P.soir }); TR_GL.three = h; TR_GL.ask = h.ask; TR_GL.snap = h.snap; }
+    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false, soir: () => !!P.soir, edit: trCan(), sel: () => P.sel,
+      onSelect: (id) => { P.sel = id && id !== P.sel ? id : null; trPlanBar(); if (TR_GL.ask) TR_GL.ask(); },
+      onMove: (id, x, y) => { const it = P.p.items.find((i) => i.id === id); if (!it) return; it.x = x; it.y = y; P.sel = id; trPlanSave(); trPlanBar(); } }); TR_GL.three = h; TR_GL.ask = h.ask; TR_GL.snap = h.snap; }
     catch (e) { console.warn('rendu', e); basic(); }
   }).catch((e) => { console.warn('rendu', e); basic(); });
 }
@@ -641,11 +645,11 @@ function trPlanSheet(roomId, keep) {
     <div class="segc" role="group"><button data-a="trPlanView" data-k="plan" aria-pressed="${P.view === 'plan'}">Plan</button><button data-a="trPlanView" data-k="3d" aria-pressed="${P.view === '3d'}">Vue 3D</button></div>
     <div class="tr-stage">${P.view === 'plan'
       ? `<svg id="tr-svg" viewBox="${-pad} ${-pad} ${W + pad * 1.4} ${D + pad * 1.4}" preserveAspectRatio="xMidYMid meet"><g id="tr-plan-g"></g></svg>`
-      : `<div class="tr-3d"><canvas id="tr-gl"></canvas><div id="tr-lab"></div><div class="tr-tools"><button data-a="trFull" aria-label="Plein écran">⤢</button><button data-a="trSnap" aria-label="Enregistrer l’image">📸</button></div></div>`}</div>
+      : `<div class="tr-3d"><canvas id="tr-gl"></canvas><div id="tr-lab"></div><div class="tr-tools"><button data-a="trFull" aria-label="Plein écran">⤢</button><button data-a="trSnap" aria-label="Enregistrer l’image">📸</button></div><div id="tr-plan-bar" class="tr-selbar"></div></div>`}</div>
     ${P.view === '3d' ? `<div class="segc" role="group" aria-label="Point de vue">${[['orbit', 'Vue d’ensemble'], ['porte', 'Depuis la porte'], ['dessus', 'Du dessus']].map(([k, l]) => `<button data-a="trCam" data-k="${k}" aria-pressed="${((P.cam && P.cam.mode) || 'orbit') === k}">${l}</button>`).join('')}</div>
     <div class="segc" role="group" aria-label="Ambiance">${[['', '☀️ Jour'], ['1', '🌙 Soir']].map(([k, l]) => `<button data-a="trAmb" data-k="${k}" aria-pressed="${!!P.soir === !!k}">${l}</button>`).join('')}</div>
-    <p class="muted sm">Un doigt pour tourner (ou regarder autour de soi depuis la porte), deux doigts pour s’approcher. ⤢ pour le plein écran, 📸 pour garder l’image.</p>` : ''}
-    <div id="tr-plan-bar"></div>
+    <p class="muted sm">${can ? 'Touche un meuble pour le tourner ou l’enlever, glisse-le pour le déplacer. ' : ''}Un doigt à côté des meubles pour tourner la vue, deux doigts pour s’approcher. ⤢ plein écran, 📸 garder l’image.</p>` : ''}
+    ${P.view === 'plan' ? '<div id="tr-plan-bar"></div>' : ''}
     <div class="card"><h3>Est-ce que ça tient ?</h3><div id="tr-plan-chk"></div></div>
     <div class="card"><h3>💡 Dispositions proposées</h3><p class="muted">Calculées avec la place de la porte et de la fenêtre. Touche une proposition pour la voir${can ? ' ; elle remplace les meubles du plan' : ''}.</p>
       <div class="group flat">${cfgs.map((c) => `<button class="prow" ${can ? '' : 'disabled'} data-a="trPlanCfg" data-k="${c.k}"><span class="pr-t"><b>${c.l}</b><span class="muted sm">${!c.a.bedsOk ? 'Les lits ne rentrent pas' : (!c.a.surfOk ? `Surface trop petite en 3★ (${trFr(c.a.surf)} m² pour ${trFr(c.a.need)})` : (c.a.miss.length ? 'Pas de place pour : ' + c.a.miss.join(', ').toLowerCase() : 'Tout rentre, avec bureau, armoire et télé'))}</span></span><span class="pill ${c.ok ? (c.a.miss.length ? 'p-amber' : 'p-green') : 'p-red'}">${c.ok ? (c.a.miss.length ? 'Juste' : 'Oui') : 'Non'}</span></button>`).join('')}</div></div>
@@ -679,9 +683,12 @@ Object.assign(A, {
     try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast('Image enregistrée ✓');
   },
-  trPlanAdd(d) { const P = S.trP; if (!P || !trCan()) return; const { W, D } = trWDH(trData(P.rid)); const it = { id: trPid(), t: d.k, r: 0, x: Math.round(W / 2), y: Math.round(D / 2) }; if (d.k === 'tv') Object.assign(it, trAtWall('tv', 0, W / 2, W, D), { id: it.id }); P.p.items.push(it); P.sel = it.id; trPlanSave(); trPlanSheet(P.rid, true); },
-  trPlanRot() { const P = S.trP; if (!P) return; const it = P.p.items.find((i) => i.id === P.sel); if (!it || it.t === 'tv') return; it.r = ((it.r || 0) + 90) % 360; { const { W, D } = trWDH(trData(P.rid)), r = trRect(it), hw = (r.x1 - r.x0) / 2, hh = (r.y1 - r.y0) / 2; it.x = 2 * hw >= W ? W / 2 : Math.min(W - hw, Math.max(hw, it.x)); it.y = 2 * hh >= D ? D / 2 : Math.min(D - hh, Math.max(hh, it.y)); } trPlanSave(); if (P.view === 'plan') trPlanDraw(); else trPlanSheet(P.rid, true); },
-  trPlanDel() { const P = S.trP; if (!P) return; P.p.items = P.p.items.filter((i) => i.id !== P.sel); P.sel = null; trPlanSave(); trPlanSheet(P.rid, true); },
+  trPlanAdd(d) { const P = S.trP; if (!P || !trCan()) return; const { W, D } = trWDH(trData(P.rid)); const it = { id: trPid(), t: d.k, r: 0, x: Math.round(W / 2), y: Math.round(D / 2) };
+    // Une place libre, la plus proche du milieu : deux meubles ajoutés ne se retrouvent pas l'un dans l'autre.
+    if (d.k !== 'tv') { const obs = P.p.items.filter((i) => i.t !== 'tv').map(trRect), m = trDim(it); let best = null; for (let x = m.w / 2; x <= W - m.w / 2; x += 10) for (let y = m.d / 2; y <= D - m.d / 2; y += 10) { const q = { ...it, x, y }; if (!trFree(trRect(q), obs, W, D)) continue; const dd = Math.hypot(x - W / 2, y - D / 2); if (!best || dd < best[0]) best = [dd, x, y]; } if (best) { it.x = Math.round(best[1]); it.y = Math.round(best[2]); } }
+    if (d.k === 'tv') Object.assign(it, trAtWall('tv', 0, W / 2, W, D), { id: it.id }); P.p.items.push(it); P.sel = it.id; trPlanSave(); trPlanSheet(P.rid, true); },
+  trPlanRot() { const P = S.trP; if (!P) return; const it = P.p.items.find((i) => i.id === P.sel); if (!it || it.t === 'tv') return; it.r = ((it.r || 0) + 90) % 360; { const { W, D } = trWDH(trData(P.rid)), r = trRect(it), hw = (r.x1 - r.x0) / 2, hh = (r.y1 - r.y0) / 2; it.x = 2 * hw >= W ? W / 2 : Math.min(W - hw, Math.max(hw, it.x)); it.y = 2 * hh >= D ? D / 2 : Math.min(D - hh, Math.max(hh, it.y)); } trPlanSave(); if (P.view === 'plan') trPlanDraw(); else { trPlanBar(); trGlStart(); } },
+  trPlanDel() { const P = S.trP; if (!P) return; P.p.items = P.p.items.filter((i) => i.id !== P.sel); P.sel = null; trPlanSave(); if (P.view === '3d' && P.p.items.length) { trPlanBar(); trGlStart(); } else trPlanSheet(P.rid, true); },
   trPlanClear() { const P = S.trP; if (!P || !confirm('Enlever tous les meubles du plan ?')) return; P.p.items = []; P.p.cfg = null; P.sel = null; trPlanSave(); trPlanSheet(P.rid, true); },
   trPlanCfg(d) {
     const P = S.trP, c = TR_CFG.find((x) => x[0] === d.k); if (!P || !c || !trCan()) return;

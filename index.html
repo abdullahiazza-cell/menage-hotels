@@ -428,6 +428,8 @@ body.trmode,body.mgr.trmode{--hz:#FBE3C0;--hz-ink:#8A4B00;--bg:#F6F2EC;--accent:
 .tr-tools button{width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.88);color:#1c1c1e;font-size:19px;box-shadow:0 2px 8px rgba(0,0,0,.18)}
 .tr-stage.big{position:fixed;inset:0;z-index:60;border-radius:0;border:0}
 .tr-stage.big .tr-3d{height:100%}
+.tr-selbar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));display:none;background:var(--card);border-radius:16px;padding:8px 10px 8px 14px;box-shadow:0 6px 24px rgba(0,0,0,.22);z-index:3}
+.tr-selbar.on{display:block}
 .tr-stage.big .tr-tools{top:calc(12px + env(safe-area-inset-top,0px))}
 </style>
 </head>

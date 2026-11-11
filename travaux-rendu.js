@@ -125,6 +125,7 @@ export function trRendu(o) {
   { const g = new THREE.PlaneGeometry(f0.s[0], f0.s[2]); geos.push(g); const m = new THREE.Mesh(g, fmat); m.rotation.x = -Math.PI / 2; m.position.set(f0.t[0], 0, f0.t[2]); m.receiveShadow = true; scene.add(m); }
 
   /* ----- murs : celui de la fenêtre est percé, pour que le jour entre vraiment ----- */
+  const byItem = {}, later = [], lampOf = [];
   const wallGroups = sc.walls.map((wl, i) => {
     const grp = new THREE.Group(), body = wl.boxes[0], along = i % 2 ? 2 : 0, parts = [];
     if (sc.win && sc.win.wall === i) {
@@ -133,7 +134,7 @@ export function trRendu(o) {
       part(lo, c - hw, 0, sc.H); part(c + hw, hi, 0, sc.H); part(c - hw, c + hw, 0, y0); part(c - hw, c + hw, y1, sc.H);
     } else parts.push(body);
     parts.forEach((b) => { grp.add(mesh(b, { sharp: true })); ghost(b.t, b.s); });
-    for (let j = 1; j < wl.boxes.length; j++) { const b = wl.boxes[j]; if (b.cur) continue; grp.add(mesh(b, { cast: b.k === 4 || b.k === 3 })); }
+    for (let j = 1; j < wl.boxes.length; j++) { const b = wl.boxes[j]; if (b.cur) continue; const m = mesh(b, { cast: b.k === 4 || b.k === 3 }); grp.add(m); if (b.mi >= 0) { m.userData.mi = b.mi; (byItem[b.mi] = byItem[b.mi] || []).push(m); } }
     (wl.curt || []).forEach((cu) => { const cm = new THREE.MeshStandardMaterial({ color: col(cu.c), map: T.weave, roughness: 0.96, metalness: 0, side: THREE.DoubleSide }); trash.push(cm); const m = curtain(cu, cm, 0.034); m.castShadow = true; m.receiveShadow = true; grp.add(m); });
     const gm = new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, roughness: 1, depthWrite: false, side: THREE.DoubleSide }); trash.push(gm);
     wl.glass.forEach((b) => { const m = curtain(b, gm, 0.018); m.position.x -= wl.n[0] * 0.055; m.position.z -= wl.n[1] * 0.055; grp.add(m); noAO.push(m); }); // le voilage pend devant la vitre, pas dedans
@@ -147,8 +148,7 @@ export function trRendu(o) {
   const plaf = (() => { const g = new THREE.CylinderGeometry(0.19, 0.21, 0.05, 36); geos.push(g); const m = new THREE.Mesh(g, plafMat); m.position.set(0, sc.H - 0.026, 0); m.visible = false; scene.add(m); return m; })();
   /* ----- meubles ----- */
   const lamps = [];
-  const byItem = {}, later = [];
-  for (let i = 1; i < sc.B.length; i++) { const b = sc.B[i], m = mesh(b, { cast: !!b.cast && b.k !== 6 }); scene.add(m); if (b.mi >= 0) (byItem[b.mi] = byItem[b.mi] || []).push(m); if (b.lamp) lamps.push(b.t); }
+  for (let i = 1; i < sc.B.length; i++) { const b = sc.B[i], m = mesh(b, { cast: !!b.cast && b.k !== 6 }); scene.add(m); if (b.mi >= 0) { m.userData.mi = b.mi; (byItem[b.mi] = byItem[b.mi] || []).push(m); } if (b.lamp) { lamps.push(b.t); lampOf.push(b.mi); } }
   // Pose un modèle à la place d'un meuble en blocs : même emplacement, même orientation, à l'échelle de son emprise au sol.
   function poser(f, it, olds) {
     glb(f).then((src) => {
@@ -156,12 +156,17 @@ export function trRendu(o) {
       const inner = src.clone(true), kill = []; inner.traverse((x) => { if (x.isLight || x.isCamera) kill.push(x); else if (x.isMesh) { x.castShadow = true; x.receiveShadow = true; } }); kill.forEach((x) => x.removeFromParent());
       inner.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(inner), sz = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3());
       const u = it.fitH ? it.h / sz.y : Math.min(1.15, it.w / sz.x); // jamais plus large que la place prévue sur le plan inner.position.set(-c.x, -bb.min.y, -c.z);
-      const g = new THREE.Group(); g.add(inner); g.scale.setScalar(u); g.position.set(it.x, 0, it.z); g.rotation.y = -(it.r || 0) * Math.PI / 180; scene.add(g);
-      olds.forEach((m) => { m.visible = false; }); ask();
+      const g = new THREE.Group(); g.add(inner); g.scale.setScalar(u); g.position.set(it.cx !== undefined ? it.cx : it.x, 0, it.cz !== undefined ? it.cz : it.z); if (it.mi >= 0) { g.userData.mi = it.mi; olds.push(g); } g.rotation.y = -(it.r || 0) * Math.PI / 180; scene.add(g);
+      olds.forEach((m) => { if (m !== g && !m.isLight) m.visible = false; }); ask();
     }).catch((e) => console.warn('modèle', f, e));
   }
-  (sc.models || []).forEach((it, i) => { if (MODELES[it.t]) later.push(() => poser(MODELES[it.t], it, byItem[i] || [])); });
-  const lampL = lamps.slice(0, 4).map((t) => { const l = new THREE.PointLight(0xffc988, 0.55, 3.4, 2); l.position.set(t[0], t[1] - 0.02, t[2]); scene.add(l); return l; });
+  (sc.models || []).forEach((it, i) => { it.mi = i; it.cx = it.x; it.cz = it.z; byItem[i] = byItem[i] || []; if (MODELES[it.t]) later.push(() => poser(MODELES[it.t], it, byItem[i])); });
+  // Meuble choisi : une plaque de couleur au sol, sous lui.
+  const selMat = new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.38, depthWrite: false }); trash.push(selMat);
+  const selGeo = new THREE.PlaneGeometry(1, 1); geos.push(selGeo);
+  const selMesh = new THREE.Mesh(selGeo, selMat); selMesh.rotation.x = -Math.PI / 2; selMesh.visible = false; selMesh.renderOrder = 5; scene.add(selMesh); noAO.push(selMesh);
+  const half = (it) => ((it.r || 0) % 180 ? [it.d / 2, it.w / 2] : [it.w / 2, it.d / 2]);
+  const lampL = lamps.slice(0, 4).map((t, i) => { const l = new THREE.PointLight(0xffc988, 0.55, 3.4, 2); l.position.set(t[0], t[1] - 0.02, t[2]); scene.add(l); if (lampOf[i] >= 0) (byItem[lampOf[i]] = byItem[lampOf[i]] || []).push(l); return l; });
   /* ----- plante verte ----- */
   (sc.plants || []).forEach(([px, pz]) => {
     let sd = 7; const rr = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
@@ -245,6 +250,8 @@ export function trRendu(o) {
     // Vue d'ensemble : les murs entre l'œil et la pièce s'effacent. De l'intérieur : tout est là, plafond compris.
     sc.walls.forEach((wl, i) => { wallGroups[i].visible = inside || !((eye[0] - wl.c[0]) * wl.n[0] + (eye[2] - wl.c[1]) * wl.n[1] > 0); });
     ceil.visible = inside; plaf.visible = inside; sdbGlass.forEach((m) => { m.visible = !inside; }); if (sdbWall) sdbWall.visible = inside;
+    { const id = o.sel ? o.sel() : null, it = id ? (sc.models || []).find((m) => m.id === id) : null;
+      if (it && !it.tv) { const [hx, hz] = half(it); selMesh.visible = true; selMesh.scale.set(hx * 2 + 0.14, hz * 2 + 0.14, 1); selMesh.position.set(it.cx, 0.016, it.cz); } else selMesh.visible = false; }
     if (fx) {
       try {
         if (fx.w !== w || fx.h !== h || fx.d !== dpr) { fx.composer.setPixelRatio(dpr); fx.composer.setSize(w, h); fx.w = w; fx.h = h; fx.d = dpr; }
@@ -267,22 +274,54 @@ export function trRendu(o) {
   const ask = () => { if (!raf && !dead) raf = requestAnimationFrame(frame); };
   // Un doigt pour tourner autour de la chambre (ou regarder autour de soi depuis la porte), deux doigts ou la molette pour s'approcher.
   const pts = new Map(); let pinch = 0;
-  const down = (e) => { pts.set(e.pointerId, [e.clientX, e.clientY]); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} pinch = 0; e.preventDefault(); };
+  // Toucher un meuble : le choisir. Le glisser : il suit le doigt sur le sol, sans sortir de la pièce, et se colle aux murs.
+  const ray = new THREE.Raycaster(), floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), v2 = new THREE.Vector2(), v3 = new THREE.Vector3();
+  const aim = (e) => { const r = canvas.getBoundingClientRect(); v2.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1); ray.setFromCamera(v2, camera); };
+  const pick = (e) => {
+    aim(e); const list = []; Object.values(byItem).forEach((a) => a.forEach((m) => { if (!m.isLight && m.visible && m.parent && (m.parent === scene || m.parent.visible)) list.push(m); }));
+    const hit = ray.intersectObjects(list, true)[0]; if (!hit) return -1;
+    for (let x = hit.object; x; x = x.parent) if (x.userData && x.userData.mi >= 0) return x.userData.mi; return -1;
+  };
+  const onFloor = (e) => { aim(e); return ray.ray.intersectPlane(floor, v3) ? [v3.x, v3.z] : null; };
+  let grab = null, tap = null;
+  const down = (e) => {
+    pts.set(e.pointerId, [e.clientX, e.clientY]); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} pinch = 0; e.preventDefault();
+    grab = null; tap = pts.size === 1 ? [e.clientX, e.clientY, false] : null;
+    if (pts.size === 1 && o.onSelect) { const mi = pick(e); if (mi >= 0) { const it = sc.models[mi], f = onFloor(e); grab = { it, f, ox: it.cx, oz: it.cz, moved: false }; } }
+  };
   const move = (e) => {
     const p = pts.get(e.pointerId); if (!p) return; pts.set(e.pointerId, [e.clientX, e.clientY]);
     const dx = e.clientX - p[0], dy = e.clientY - p[1];
+    if (tap && Math.hypot(e.clientX - tap[0], e.clientY - tap[1]) > 7) tap[2] = true;
+    if (grab && pts.size === 1) {
+      if (!tap || !tap[2] || !o.edit || grab.it.tv || !grab.f) return;
+      const f = onFloor(e); if (!f) return; grab.moved = true;
+      const it = grab.it, [hx, hz] = half(it), lx = sc.W / 2 - hx, lz = sc.D / 2 - hz;
+      let nx = Math.round((grab.ox + f[0] - grab.f[0]) * 100) / 100, nz = Math.round((grab.oz + f[1] - grab.f[1]) * 100) / 100;
+      nx = lx <= 0 ? 0 : Math.min(lx, Math.max(-lx, nx)); nz = lz <= 0 ? 0 : Math.min(lz, Math.max(-lz, nz));
+      if (lx > 0) { if (lx - nx < 0.08) nx = lx; if (nx + lx < 0.08) nx = -lx; } if (lz > 0) { if (lz - nz < 0.08) nz = lz; if (nz + lz < 0.08) nz = -lz; }
+      const mx = nx - it.cx, mz = nz - it.cz; if (mx || mz) { (byItem[it.mi] || []).forEach((m) => { m.position.x += mx; m.position.z += mz; }); it.cx = nx; it.cz = nz; }
+      ask(); return;
+    }
     if (pts.size === 1) {
       if (cam.mode === 'porte') { cam.ly += dx * 0.005; cam.lp = Math.min(0.7, Math.max(-0.8, cam.lp + dy * 0.004)); }
       else { cam.yaw -= dx * 0.008; cam.pitch = Math.min(1.5, Math.max(0.12, cam.pitch + dy * 0.006)); }
     } else if (pts.size === 2 && cam.mode !== 'porte') { const [a, b] = [...pts.values()], dd = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) cam.dist = Math.min(30, Math.max(1.5, cam.dist * pinch / dd)); pinch = dd; }
     ask();
   };
-  const up = (e) => { pts.delete(e.pointerId); pinch = 0; ask(); };
+  const up = (e) => {
+    pts.delete(e.pointerId); pinch = 0;
+    if (grab && grab.moved && o.onMove) o.onMove(grab.it.id, Math.round((grab.it.cx + sc.W / 2) * 100), Math.round((grab.it.cz + sc.D / 2) * 100));
+    else if (tap && !tap[2] && o.onSelect && e.type === 'pointerup') o.onSelect(grab ? grab.it.id : null);
+    grab = null; tap = null; ask();
+  };
   const wheel = (e) => { if (cam.mode !== 'porte') cam.dist = Math.min(30, Math.max(1.5, cam.dist * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); ask(); };
   canvas.addEventListener('pointerdown', down); canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up); canvas.addEventListener('wheel', wheel, { passive: false });
   ask(); later.forEach((fn) => fn());
   return {
     ask,
+    // Où un meuble se trouve à l'écran (pour les essais automatiques).
+    where: (id) => { const it = (sc.models || []).find((m) => m.id === id); if (!it) return null; const r = canvas.getBoundingClientRect(), v = new THREE.Vector3(it.cx, it.tv ? 1.2 : Math.min(0.4, it.h * 0.6), it.cz).project(camera); return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (1 - (v.y * 0.5 + 0.5)) * r.height]; },
     snap: () => new Promise((res) => { if (raf) { cancelAnimationFrame(raf); raf = 0; } frame(true); canvas.toBlob((b) => { ask(); res(b); }, 'image/jpeg', 0.93); }),
     stop() {
       dead = true; if (raf) cancelAnimationFrame(raf);
