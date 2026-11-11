@@ -1,6 +1,6 @@
 // Service worker : coquille hors-ligne + notifications.
-const VERSION = 'v47';
-const SHELL = ['./', './index.html', './app.js', './travaux.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/badge-96.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
+const VERSION = 'v48';
+const SHELL = ['./', './index.html', './app.js', './travaux.js', './travaux3d.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/badge-96.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));

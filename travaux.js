@@ -93,7 +93,9 @@ window.addEventListener('online', () => { if (trPend.length) trFlush(); });
 function trSurf(d) {
   const ch = d.surf ? trNum(d.surf) : (trNum(d.len) * trNum(d.wid)) / 10000;
   const sdb = (trNum(d.sdb_len) * trNum(d.sdb_wid)) / 10000;
-  return { ch, sdb, tot: ch + sdb, vol: ch && trNum(d.hei) ? (ch * trNum(d.hei)) / 100 : 0 };
+  // Salle de bain placée dans un coin du plan : elle est déjà comprise dans longueur × largeur.
+  const inside = !!(d.plan && d.plan.sdb && d.plan.sdb.c && sdb);
+  return { ch, sdb, inside, tot: inside ? ch : ch + sdb, vol: ch && trNum(d.hei) ? (ch * trNum(d.hei)) / 100 : 0 };
 }
 const trPeople = (d) => trNum(d.lits_s) + 2 * trNum(d.lits_d);
 // Nombre de personnes que la surface permet en 3 étoiles ; « tol » = avec la tolérance de 10 % (admise pour 20 % des chambres au plus).
@@ -175,7 +177,7 @@ function trSurfHtml(rid) {
     v = cap.plein ? `En 3★ : jusqu’à ${cap.plein} personne${cap.plein > 1 ? 's' : ''}` : (cap.tol ? `En 3★ : ${cap.tol} personne${cap.tol > 1 ? 's' : ''}, avec la tolérance de 10 %` : 'Trop petite pour le 3★ (11,5 m² demandés pour 1 personne)');
     if (cap.plein && cap.tol > cap.plein) v += ` (${cap.tol} avec la tolérance de 10 %)`;
   }
-  return `<b>${trFr(s.tot)} m²</b>${s.sdb ? ` <span class="sm">= chambre ${trFr(s.ch)} + salle de bain ${trFr(s.sdb)}</span>` : ''}${s.vol ? ` · ${trFr(s.vol, 0)} m³` : ''}${v ? `<br><span class="sm">${v}</span>` : ''}`;
+  return `<b>${trFr(s.tot)} m²</b>${s.sdb ? (s.inside ? ` <span class="sm">dont salle de bain ${trFr(s.sdb)}</span>` : ` <span class="sm">= chambre ${trFr(s.ch)} + salle de bain ${trFr(s.sdb)}</span>`) : ''}${s.vol ? ` · ${trFr(s.vol, 0)} m³` : ''}${v ? `<br><span class="sm">${v}</span>` : ''}`;
 }
 function trGapsHtml(rid) {
   const d = trData(rid), g = trGaps(rid);
@@ -183,7 +185,12 @@ function trGapsHtml(rid) {
   if (!g.length) return '<p class="banner sm c-green">Rien ne manque d’après la fiche ✓</p>';
   return `<ul class="tr-gaps">${g.map((x) => `<li>${esc(x.t)}</li>`).join('')}</ul>`;
 }
-function trLive(rid) { const a = $('tr-surf'); if (a) a.innerHTML = trSurfHtml(rid); const b = $('tr-gaps'); if (b) b.innerHTML = trGapsHtml(rid); }
+function trPlanCardHtml(rid) {
+  const d = trData(rid), n = d.plan && Array.isArray(d.plan.items) ? d.plan.items.length : 0;
+  if (!(trNum(d.len) && trNum(d.wid))) return '<p class="muted">Entre la longueur et la largeur : le plan et la vue 3D se dessinent tout seuls.</p>';
+  return `<p class="muted">${n ? `${n} meuble${n > 1 ? 's' : ''} placé${n > 1 ? 's' : ''} sur le plan.` : 'La chambre à l’échelle, avec la porte, la fenêtre et les lits. L’appli propose des dispositions et vérifie que tout tient.'}</p><button class="btn soft" data-a="trPlan" data-id="${esc(rid)}">Ouvrir le plan et la 3D ›</button>`;
+}
+function trLive(rid) { const a = $('tr-surf'); if (a) a.innerHTML = trSurfHtml(rid); const b = $('tr-gaps'); if (b) b.innerHTML = trGapsHtml(rid); const c = $('tr-plan-card'); if (c) c.innerHTML = trPlanCardHtml(rid); }
 function trShots(rid, slots) {
   const ph = trPhotosOf(rid), used = new Set();
   const shot = (p, l) => { const u = trUrl(p.path); return `<button class="shot done" data-a="trZoom" data-id="${p.id}">${u ? `<img alt="" src="${esc(u)}" loading="lazy">` : ''}<span class="lbl">${esc(l)}</span></button>`; };
@@ -216,6 +223,7 @@ function trRoomSheet(rid) {
       ${commun ? '' : `<p class="muted">Fenêtre principale (pour les rideaux)</p>
       <div class="three">${trIn(rid, 'fen_w', 'Largeur', d, { cm: 1 })}${trIn(rid, 'fen_h', 'Hauteur', d, { cm: 1 })}${trIn(rid, 'fen_allege', 'Sol → bas de fenêtre', d, { cm: 1 })}</div>
       <div class="two">${trIn(rid, 'fen_n', 'Nombre de fenêtres', d)}${trSel(rid, 'rideaux', 'Aujourd’hui', d, TR_RIDEAUX)}</div>`}</div>
+    ${commun ? '' : `<div class="card"><h3>🧊 Plan et vue 3D</h3><div id="tr-plan-card" class="col">${trPlanCardHtml(rid)}</div></div>`}
     ${commun ? '' : `<div class="card form"><h3>🛏️ Couchage</h3>
       <div class="three">${trIn(rid, 'lits_s', 'Lits simples', d)}${trIn(rid, 'lits_d', 'Lits doubles', d)}${trIn(rid, 'lit_d_w', 'Largeur lit double', d, { cm: 1, ph: '140' })}</div>
       ${trSel(rid, 'cap_pv', 'Personnes admises par la commission de sécurité', d, [['1', '1 personne'], ['2', '2 personnes'], ['3', '3 personnes'], ['4', '4 personnes']])}</div>
@@ -359,7 +367,7 @@ Object.assign(A, {
   async trShot(d) {
     if (!trCan()) return;
     const r = S.rooms[d.rid]; if (!r) return;
-    const path = await takePhoto(placeShort(r) + ' · ' + d.l); if (!path) return;
+    const path = await takePhoto(placeShort(r) + ' · ' + d.l, false, true); if (!path) return;
     try { const x = await api('tr_photo_add', { room_id: d.rid, path, label: d.l }); S.tr.photos.push(x.photo); toast('Photo enregistrée ✓'); }
     catch (e) { toast(errMsg(e)); }
     if (trSheetRoom() === d.rid) trRoomSheet(d.rid);
@@ -391,7 +399,7 @@ Object.assign(A, {
   },
   async trItemShot(d) {
     const it = S.tr.items.find((x) => x.id === d.id); if (!it) return;
-    const path = await takePhoto(it.label || trType(it.type)[1]); if (!path) return;
+    const path = await takePhoto(it.label || trType(it.type)[1], false, true); if (!path) return;
     try { const x = await api('tr_photo_add', { item_id: d.id, path, label: 'Meuble' }); S.tr.photos.push(x.photo); toast('Photo enregistrée ✓'); } catch (e) { toast(errMsg(e)); }
     if (S.sheet === 'tritem') trItemSheet(d.id);
   },

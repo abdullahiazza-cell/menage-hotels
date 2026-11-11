@@ -225,7 +225,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 // Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
 // Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
-const APP_V = 'v47';
+const APP_V = 'v48';
 async function onlineVersion() {
   const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
   const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
@@ -294,8 +294,12 @@ async function upload(blob, type, ext) {
   S.localUrls[u.path] = URL.createObjectURL(blob);
   return u.path;
 }
-async function takePhoto(label, needFresh) {
-  const f = await pickFile('image/*', touch() ? 'environment' : null); if (!f) return null;
+// « gallery » : la personne choisit entre l'appareil photo et ses photos déjà prises (réparations, signalements, mode travaux).
+// Sans « gallery », l'appareil photo s'ouvre directement : c'est le cas de la preuve de ménage, qui doit être prise sur le moment.
+// « label » peut être une fonction : elle reçoit le fichier, pour dater la photo du jour où elle a été prise.
+async function takePhoto(label, needFresh, gallery) {
+  const f = await pickFile('image/*', touch() && !gallery ? 'environment' : null); if (!f) return null;
+  if (typeof label === 'function') label = label(f);
   if (needFresh && f.lastModified && Date.now() - f.lastModified > 15 * 60000) { toast('Prends la photo maintenant, avec l’appareil. Pas une ancienne photo.'); return null; }
   try { const b = await shrink(f, label); return await upload(b, 'image/jpeg', 'jpg'); }
   catch (e) { toast('La photo n’a pas pu partir. Vérifie la connexion et réessaie.'); return null; }
@@ -2938,7 +2942,7 @@ const A = {
   repOpen(d) { repSheet(d.id); },
   repNew() { S.rfPhoto = null; repForm(null); },
   repEdit(d) { repForm(d.id); },
-  async repFormPhoto() { const p = await takePhoto(null, false); if (p) { S.rfPhoto = p; const t = $('rf-title'); const keep = t ? t.value : ''; toast('Photo ajoutée ✓'); const b = document.querySelector('[data-a="repFormPhoto"]'); if (b) b.textContent = '✅ Photo ajoutée'; if (t) t.value = keep; } },
+  async repFormPhoto() { const p = await takePhoto(null, false, true); if (p) { S.rfPhoto = p; const t = $('rf-title'); const keep = t ? t.value : ''; toast('Photo ajoutée ✓'); const b = document.querySelector('[data-a="repFormPhoto"]'); if (b) b.textContent = '✅ Photo ajoutée'; if (t) t.value = keep; } },
   async repSave(d) {
     const v = (x) => ($(x) ? $(x).value.trim() : '');
     const body = { id: d.id || undefined, title: v('rf-title'), hotel: v('rf-hotel'), room: v('rf-room'), priority: v('rf-prio'), due: v('rf-due'), origin: v('rf-orig'), parts: v('rf-parts'), details: v('rf-details'), photo: d.id ? undefined : S.rfPhoto };
@@ -2948,8 +2952,8 @@ const A = {
     if (ok) { S.rfPhoto = null; if (newId) repSheet(newId); else closeSheet(); }
   },
   async repEtat(d) { if (await act(() => api('repair_etat', { id: d.id, etat: d.k }), RST[d.k].l)) repSheet(d.id); },
-  async repDone(d) { toast('Ouvre l’appareil photo…'); const p = await takePhoto(null, false); if (await act(() => api('repair_etat', { id: d.id, etat: 'fait', photo: p || undefined }), p ? 'Fait, avec la photo ✓' : 'Marqué fait')) repSheet(d.id); },
-  async repPhoto(d) { const p = await takePhoto(null, false); if (p && await act(() => api('repair_photo', { id: d.id, photo: p }), 'Photo ajoutée ✓')) repSheet(d.id); },
+  async repDone(d) { const p = await takePhoto(null, false, true); if (await act(() => api('repair_etat', { id: d.id, etat: 'fait', photo: p || undefined }), p ? 'Fait, avec la photo ✓' : 'Marqué fait')) repSheet(d.id); },
+  async repPhoto(d) { const p = await takePhoto(null, false, true); if (p && await act(() => api('repair_photo', { id: d.id, photo: p }), 'Photo ajoutée ✓')) repSheet(d.id); },
   async repNote(d) { const t = ($('rn-text').value || '').trim(); if (!t) return; if (await act(() => api('repair_note', { id: d.id, text: t }), 'Envoyé')) repSheet(d.id); },
   async repDel(d) { if (!S.confirmDel) { S.confirmDel = d.id; toast('Touche encore pour supprimer définitivement.'); setTimeout(() => S.confirmDel = null, 4000); return; } S.confirmDel = null; if (await act(() => api('repair_delete', { id: d.id }), 'Supprimée')) closeSheet(); },
   ctOpen(d) { ctSheet(d.id); },
@@ -3085,7 +3089,7 @@ const A = {
     const p = S.rep; if (!p || !p.items[d.k]) return; if (p.busy) { toast('Attends la fin de l’envoi.'); return; }
     p.busy = d.k; drawReport();
     let res = null;
-    if (d.m === 'photo') { const K = KINDS.find((x) => x.k === d.k); res = await takePhoto(`${K.l} · ${hotelName(p.hotel)}${p.room ? ' ch. ' + p.room : ''} · ${new Date().toLocaleString('fr-FR')}`, false); }
+    if (d.m === 'photo') { const K = KINDS.find((x) => x.k === d.k); res = await takePhoto((f) => `${K.l} · ${hotelName(p.hotel)}${p.room ? ' ch. ' + p.room : ''} · ${new Date(f.lastModified || Date.now()).toLocaleString('fr-FR')}`, false, true); }
     else res = await takeVideo();
     if (S.rep === p) { if (res && p.items[d.k]) p.items[d.k][d.m] = res; p.busy = null; drawReport(); }
   },

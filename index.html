@@ -405,6 +405,20 @@ body.trmode,body.mgr.trmode{--hz:#FBE3C0;--hz-ink:#8A4B00;--bg:#F6F2EC;--accent:
 .tr-prop{display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:.5px solid var(--line)}
 .tr-prop:first-of-type{border-top:0;padding-top:0}
 .shot:disabled{opacity:.5}
+/* Mode travaux : plan à l'échelle et vue 3D */
+.tr-stage{background:var(--card);border:1px solid var(--line);border-radius:18px;overflow:hidden;position:relative}
+#tr-svg{display:block;width:100%;max-height:60vh;touch-action:none;-webkit-user-select:none;user-select:none}
+#tr-svg .pf{fill:var(--bg)} #tr-svg .pw{fill:none;stroke:var(--ink);stroke-width:7;stroke-linejoin:round}
+#tr-svg .psdb{fill:var(--slate-soft);stroke:var(--slate);stroke-width:2;stroke-dasharray:8 6}
+#tr-svg .pi rect{fill:var(--card);stroke:var(--ink2);stroke-width:2.5} #tr-svg .pi.bed rect{fill:var(--hz);stroke:var(--hz-ink)} #tr-svg .pi .pp{fill:var(--card);stroke-width:1.5}
+#tr-svg .pi.sel rect{stroke:var(--accent);stroke-width:5} #tr-svg .pi.bad rect{stroke:#E5484D;stroke-width:4;stroke-dasharray:10 6}
+#tr-svg .pt{fill:var(--ink);font-weight:700;pointer-events:none} #tr-svg .pdim{fill:var(--ink2);font-weight:700}
+#tr-svg .pwin{stroke:#3B9BE0;stroke-width:12;stroke-linecap:round} #tr-svg .pdoor{stroke:#A8703A;stroke-width:12;stroke-linecap:round}
+#tr-svg .phit{stroke:transparent;stroke-width:60;stroke-linecap:round} #tr-svg .parc{fill:none;stroke:#A8703A;stroke-width:2;stroke-dasharray:6 6;opacity:.7}
+#tr-svg [data-it],#tr-svg [data-op]{cursor:grab}
+.tr-3d{position:relative;height:min(54vh,480px);background:linear-gradient(#EEF1F6,#DDE2EA)}
+.tr-3d canvas{width:100%;height:100%;display:block;touch-action:none}
+#tr-lab span{position:absolute;transform:translate(-50%,-50%);background:rgba(20,20,30,.72);color:#fff;font-size:12px;font-weight:700;padding:2px 8px;border-radius:9px;white-space:nowrap;pointer-events:none}
 </style>
 </head>
 <body>
@@ -416,5 +430,6 @@ body.trmode,body.mgr.trmode{--hz:#FBE3C0;--hz-ink:#8A4B00;--bg:#F6F2EC;--accent:
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script src="app.js"></script>
 <script src="travaux.js"></script>
+<script src="travaux3d.js"></script>
 </body>
 </html>
