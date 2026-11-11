@@ -41,9 +41,9 @@ const trHasPlan = (d) => !!(trNum(d.len) && trNum(d.wid));
 const trM = (cm) => (cm / 100).toLocaleString('fr-FR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' m';
 
 /* ---------- géométrie du plan ---------- */
-function trPlanOf(roomId) {
+function trPlanOf(roomId, src) {
   const d = trData(roomId), { W } = trWDH(d);
-  const p = d.plan ? JSON.parse(JSON.stringify(d.plan)) : {};
+  const p = src || d.plan ? JSON.parse(JSON.stringify(src || d.plan)) : {};
   p.items = Array.isArray(p.items) ? p.items.filter((i) => i && TR_FURN[i.t]) : [];
   p.door = p.door && p.door.wall >= 0 ? p.door : { wall: 2, pos: Math.min(W - TR_DOOR_W / 2, 75) };
   p.win = p.win && p.win.wall >= 0 ? p.win : { wall: 0, pos: W / 2 };
@@ -117,7 +117,7 @@ function trPlanCheck(roomId, p) {
 // Règles tenues par toutes les propositions : rien dans l'ouverture de la porte ni devant la fenêtre (rideaux, radiateur, lumière),
 // 50 cm au minimum autour des lits et 90 cm sur un grand côté dès que la pièce le permet (la mesure des chambres adaptées), surface 3★.
 function trAuto(roomId, beds, base, opt) {
-  const lvl = opt && opt.lvl !== undefined ? opt.lvl : 1, big = !!(opt && opt.big);
+  const lvl = opt && opt.lvl !== undefined ? opt.lvl : 1, big = !!(opt && opt.big), alt = (opt && opt.alt) || 0, bare = !!(opt && opt.bare);
   const d = trData(roomId), { W, D } = trWDH(d), p = { door: base.door, win: base.win, sdb: base.sdb, items: [] }, miss = [];
   const sdb = trSdbRect(d, p, W, D), winW = trNum(d.fen_w) || 120;
   const fixed = [trOpening(p.door, TR_DOOR_W + 10, W, D, 95)]; if (sdb) fixed.push(sdb);
@@ -129,7 +129,7 @@ function trAuto(roomId, beds, base, opt) {
   const GAP = 50;
   // Une rangée de lits côte à côte, têtes contre le même mur.
   function tryRow(types) {
-    let best = null;
+    let best = null; const walls = {};
     const orders = new Set(types).size > 1 ? [types, [...types].reverse()] : [types];
     for (const ord of orders) {
       const ws = ord.map(bedW), total = ws.reduce((a, b) => a + b, 0) + GAP * (ord.length - 1);
@@ -152,10 +152,12 @@ function trAuto(roomId, beds, base, opt) {
           let sc = -Math.abs(c - L / 2) / L * 30 + sidesAll * 6 + wide * 6 + Math.min((wall % 2 ? W : D) - 190, 200) / 10;
           const ws2 = span(wall, p.win, winW); if (ws2 && ws2[0] < c + total / 2 && ws2[1] > c - total / 2) sc -= 35;
           if (p.door.wall === wall) sc -= 15;
-          if (!best || sc > best.sc) best = { sc, its };
+          if (!best || sc > best.sc) best = { sc, its }; if (!walls[wall] || sc > walls[wall].sc) walls[wall] = { sc, its };
         }
       }
     }
+    // Variante demandée : un autre mur pour les têtes de lit, s'il s'en trouve un presque aussi bon.
+    if (best && alt) { const c = Object.values(walls).filter((w) => w.sc >= best.sc - 45).sort((a, b) => b.sc - a.sc); return c[alt % c.length].its; }
     return best ? best.its : null;
   }
   let rest = [...beds];
@@ -192,7 +194,7 @@ function trAuto(roomId, beds, base, opt) {
   const dist = (it, pt) => Math.hypot(it.x - pt[0], it.y - pt[1]);
   const doorPt = mid(trOpening(p.door, TR_DOOR_W, W, D, 10)), winPt = mid(winZ);
   const corner = (c, L, w) => (c <= w / 2 + 1 || c >= L - w / 2 - 1 ? 8 : 0);
-  if (placed.length) {
+  if (placed.length && !bare) {
     putWall('armoire', { front: 60, noWin: true, score: (it, wall, c, L) => -dist(it, doorPt) / 12 + corner(c, L, 100) });
     const desk = putWall('bureau', { front: 70, noWin: true, score: (it, wall, c, L) => Math.min(dist(it, doorPt), 300) / 60 + corner(c, L, 100) });
     if (desk) { const [ox, oy] = trRot(0, 50 / 2 + 45 / 2 - 15, desk.r); p.items.push({ id: trPid(), t: 'chaise', r: (desk.r + 180) % 360, x: desk.x + ox, y: desk.y + oy }); }
@@ -206,21 +208,28 @@ function trAuto(roomId, beds, base, opt) {
       if (trInside(r, W, D) && !blocked.some((o) => trHit(r, o))) { tv = it; break; }
     }
     if (tv) p.items.push(tv); else miss.push('Télé murale');
-    if (lvl >= 1) putWall('bagages', { front: 50, optional: true, noWin: true, score: (it) => -dist(it, doorPt) / 12 });
-    if (lvl >= 1 && W * D >= 130000) putWall('fauteuil', { front: 45, optional: true, noWin: true, score: (it) => -dist(it, winPt) / 12 });
+    putWall('bagages', { front: 50, optional: true, noWin: true, score: (it) => -dist(it, doorPt) / 12 });
+    if (W * D >= 110000) putWall('fauteuil', { front: 45, optional: true, noWin: true, score: (it) => -dist(it, winPt) / 12 });
   }
   const n = beds.reduce((a, t) => a + (t === 'lit_d' ? 2 : 1), 0), need = TR_SURF3[Math.min(3, n)], s = trSurf({ ...d, plan: p });
   const pass90 = placed.length > 0 && placed.every((b) => { const ob = [...fixed, ...p.items.filter((i) => i !== b && i.t !== 'tv' && i.t !== 'chevet').map(trRect)]; return [1, -1].some((sg) => trFree(trBedSide(b, sg, 90), ob, W, D)); });
   return { p, miss, pass90, bedsOk: placed.length === beds.length, people: n, need, surf: s.tot, surfOk: s.tot >= need * 0.9 };
 }
 // Une proposition complète pour un niveau : la disposition (avec le nombre de lits de la fiche, sinon la plus grande qui tient en 3★) et ses finitions.
-function trNiveau(roomId, nv, base) {
+const TR_NIV_VAR = {
+  eco: { pal: [{ mur: 'blanc', accent: 'sauge', tissu: 'gris' }, { mur: 'blanc', accent: 'terracotta', tissu: 'lin' }, { mur: 'lin', accent: 'grege', tissu: 'gris' }, { mur: 'blanc', accent: 'bleunuit', tissu: 'gris' }], lum: [['plafonnier', 'appliques'], ['plafonnier', 'appliques', 'ruban']] },
+  confort: { pal: [{ mur: 'lin', accent: 'vertprofond', tissu: 'lin' }, { mur: 'blanc', accent: 'bleunuit', tissu: 'gris' }, { mur: 'grege', accent: 'terracotta', tissu: 'lin' }, { mur: 'sauge', accent: 'vertprofond', sol: 'chene', tissu: 'lin' }], lum: [['spots', 'appliques', 'ruban'], ['plafonnier', 'appliques', 'ruban'], ['corniche', 'appliques']] },
+  prestige: { pal: [{ mur: 'grege', accent: 'bleunuit', tissu: 'anthracite' }, { mur: 'lin', accent: 'vertprofond', tissu: 'sauge' }, { mur: 'blanc', accent: 'grege', sol: 'chene', tissu: 'bleunuit' }, { mur: 'grege', accent: 'terracotta', tissu: 'lin' }], lum: [['corniche', 'spots', 'appliques', 'ruban'], ['corniche', 'appliques', 'ruban'], ['spots', 'appliques', 'ruban']] },
+};
+// Finitions d'un niveau pour la variante n : chaque nouvel appui change les couleurs, l'éclairage et, si possible, le mur des lits.
+const trNivDeco = (nv, n) => { const v = TR_NIV_VAR[nv.k]; return { ...nv.deco, ...v.pal[n % v.pal.length], lum: v.lum[n % v.lum.length] }; };
+function trNiveau(roomId, nv, base, n) {
   const d = trData(roomId), want = [...Array(trNum(d.lits_d) || 0).fill('lit_d'), ...Array(trNum(d.lits_s) || 0).fill('lit_s')];
   const cands = want.length ? [want] : (base.cfg && TR_CFG.find((c) => c[0] === base.cfg) ? [TR_CFG.find((c) => c[0] === base.cfg)[2]] : [['lit_d', 'lit_s'], ['lit_d'], ['lit_s', 'lit_s'], ['lit_s']]);
   let best = null;
   for (const beds of cands) {
     for (const bigTry of (nv.lvl === 2 && beds.includes('lit_d') ? [true, false] : [false])) {
-      const a = trAuto(roomId, beds, base, { lvl: nv.lvl, big: bigTry }); a.big = bigTry; a.beds = beds;
+      const a = trAuto(roomId, beds, base, { lvl: nv.lvl, big: bigTry, alt: n || 0 }); a.big = bigTry; a.beds = beds;
       if (bigTry && (!a.bedsOk || trPlanCheck(roomId, { ...base, items: a.p.items }).lines.length)) continue; // le lit de 160 seulement s'il ne gêne rien
       if (a.bedsOk && a.surfOk) return a; if (!best && a.bedsOk) best = a;
     }
@@ -259,17 +268,58 @@ function trPlanDraw() { const g = $('tr-plan-g'); if (g && S.trP) g.innerHTML = 
 function trPlanBar() {
   const P = S.trP, bar = $('tr-plan-bar'), chkEl = $('tr-plan-chk'); if (!P) return;
   const it = P.p.items.find((i) => i.id === P.sel);
-  if (bar) bar.innerHTML = it && trCan() ? `<div class="row between"><b>${esc(trItName(it))} <span class="muted sm">${trDim(it).w} × ${trDim(it).d} cm</span></b><span class="row"><button class="btn small soft" data-a="trPlanRot">⟳ Tourner</button><button class="btn small ghost bad-t" data-a="trPlanDel">Enlever</button></span></div>` : (trCan() && P.view === 'plan' ? '<p class="muted sm">Glisse la porte (marron), la fenêtre (bleue) et les meubles à leur place. Touche un meuble pour le tourner ou l’enlever.</p>' : '');
-  if (bar) bar.classList.toggle('on', !!(it && trCan()));
+  if (bar) bar.innerHTML = it && trPlanCan() ? `<div class="row between"><b>${esc(trItName(it))} <span class="muted sm">${trDim(it).w} × ${trDim(it).d} cm</span></b><span class="row"><button class="btn small soft" data-a="trPlanRot">⟳ Tourner</button><button class="btn small ghost bad-t" data-a="trPlanDel">Enlever</button></span></div>` : (trPlanCan() && P.view === 'plan' ? '<p class="muted sm">Glisse la porte (marron), la fenêtre (bleue) et les meubles à leur place. Touche un meuble pour le tourner ou l’enlever.</p>' : '');
+  if (bar) bar.classList.toggle('on', !!(it && trPlanCan()));
+  if (chkEl && !trIsTest(P.rid)) { const a = trPmr(P.rid); chkEl.dataset.pmr = a.ok ? '♿ Cette chambre pourrait devenir une chambre adaptée (à confirmer : accès, porte de 83 cm, salle d’eau).' : `♿ Pas adaptable telle quelle : ${a.why}.`; } else if (chkEl) chkEl.dataset.pmr = '';
   if (chkEl) {
     const c = trPlanCheck(P.rid, P.p), beds = P.p.items.filter(trIsBed), n = beds.reduce((a, b) => a + (b.t === 'lit_d' ? 2 : 1), 0), s = trSurf({ ...trData(P.rid), plan: P.p });
     const need = n ? TR_SURF3[Math.min(3, n)] : 0, sOk = !n || s.tot >= need * 0.9;
     chkEl.innerHTML = !P.p.items.length ? '<p class="muted">Choisis une disposition ci-dessous, ou ajoute les meubles un par un.</p>'
       : `${c.lines.length ? `<ul class="tr-gaps">${c.lines.map((l) => `<li>⚠️ ${esc(l)}</li>`).join('')}</ul>` : '<p class="banner sm c-green">Tout tient : rien ne se chevauche, la porte s’ouvre, les lits sont accessibles ✓</p>'}
+        ${chkEl.dataset.pmr ? `<p class="muted sm">${esc(chkEl.dataset.pmr)}</p>` : ''}
         ${n ? `<p class="${sOk ? 'muted' : 'banner sm c-red'}">${n} couchage${n > 1 ? 's' : ''} · ${trFr(s.tot)} m² pour ${trFr(need)} m² demandés en 3★${sOk ? (s.tot < need ? ' (dans la tolérance)' : ' ✓') : ' : trop petit'}</p>` : ''}`;
   }
 }
-function trPlanSave() { const P = S.trP; if (P && trCan()) trPatch(P.rid, { plan: P.p }); }
+/* ---------- versions : chacun la sienne, personne n'écrase celle d'un autre ---------- */
+const trVPend = {}, trVTimer = {};
+const trVGet = (id) => (S.tr.plans || []).find((v) => v.id === id);
+const trVName = (rid, vid) => { if (vid) { const v = trVGet(vid); return v ? v.name : 'Version'; } const by = ((trData(rid).plan || {}).by); return by ? 'Version ' + trDe(by) : 'Plan de base'; };
+function trPlansMerge() { Object.values(trVPend).forEach((v) => { const i = S.tr.plans.findIndex((x) => x.id === v.id); if (i >= 0) S.tr.plans[i] = v; else S.tr.plans.push(v); }); }
+function trVSave(v) {
+  trVPend[v.id] = v; clearTimeout(trVTimer[v.id]);
+  trVTimer[v.id] = setTimeout(async () => { const sent = JSON.stringify(v.plan) + v.name; try { await api('tr_plan_save', { id: v.id, room_id: v.room_id, name: v.name, plan: v.plan }); if (trVPend[v.id] === v && JSON.stringify(v.plan) + v.name === sent) delete trVPend[v.id]; } catch (e) { toast('Version pas encore enregistrée : ' + errMsg(e)); } }, 700);
+}
+// Modifier la version de quelqu'un d'autre en crée une copie à son propre nom ; l'originale reste intacte.
+function trFork(name) {
+  const P = S.trP, me = trPrenom(S.me.label), src = trVName(P.rid, P.vid).replace(/ modifiée? par .*$/, ''), mine = 'Version ' + trDe(me);
+  let nm = name || (src === mine ? mine : `${src} ${/^Plan/.test(src) ? 'modifié' : 'modifiée'} par ${me}`); const taken = (x) => S.tr.plans.some((v) => v.room_id === P.rid && v.name === x) || (!P.vid && x === src);
+  if (taken(nm)) { let k = 2; while (taken(`${nm} (${k})`)) k++; nm = `${nm} (${k})`; }
+  const v = { id: crypto.randomUUID(), room_id: P.rid, owner_id: S.tr.me_id, owner_label: S.me.label, name: nm, plan: JSON.parse(JSON.stringify(P.p)) };
+  S.tr.plans.push(v); P.vid = v.id; if (!name) toast(`Ta version est créée : « ${nm} ». L’originale n’est pas touchée.`, 6000); return v;
+}
+function trPlanSave() {
+  const P = S.trP; if (!P || !trPlanCan()) return;
+  if (!P.vid) { if (trCan()) { P.p.by = trPrenom(S.me.label); trPatch(P.rid, { plan: P.p }); return; } trFork(); }
+  let v = trVGet(P.vid); if (v && v.owner_id !== S.tr.me_id) v = trFork();
+  if (!v) return; v.plan = JSON.parse(JSON.stringify(P.p)); trVSave(v); trVersDraw();
+}
+function trVersHtml() {
+  const P = S.trP, vs = (S.tr.plans || []).filter((v) => v.room_id === P.rid), cur = P.vid ? trVGet(P.vid) : null, mine = cur && cur.owner_id === S.tr.me_id;
+  const chip = (id, l) => `<button class="tr-sw" data-a="trVer" data-id="${esc(id)}" aria-pressed="${(P.vid || '') === id}">${esc(l)}</button>`;
+  return `<div class="tr-sws tr-vers">${chip('', trVName(P.rid, null))}${vs.map((v) => chip(v.id, v.name)).join('')}</div>
+    ${trPlanCan() ? `<div class="row tr-vact"><button class="btn small soft" data-a="trVerNew">＋ Ma version à partir de celle-ci</button>${mine ? '<button class="btn small" data-a="trVerName">Renommer</button><button class="btn small ghost bad-t" data-a="trVerDel">Supprimer</button>' : ''}</div>` : ''}
+    <p class="muted sm">${cur ? (mine ? 'C’est ta version : tu la modifies librement.' : `Version ${trDe(cur.owner_label)}. Si tu la modifies, une copie à ton nom est créée ; la sienne ne bouge pas.`) : (trCan() ? 'Le plan de base : celui de la fiche.' : 'Le plan de base. Si tu le modifies, une copie à ton nom est créée ; l’original ne bouge pas.')}</p>`;
+}
+function trVersDraw() { const el = $('tr-vers'); if (el && S.trP) el.innerHTML = trVersHtml(); }
+// Une chambre peut-elle devenir une chambre adaptée ? Un lit de 140, 90 cm le long d'un grand côté, un rond de 1,50 m libre.
+function trPmr(roomId) {
+  const d = trData(roomId); if (!trNum(d.len) || !trNum(d.wid)) return { ok: false, why: 'pas encore mesurée' };
+  const { W, D } = trWDH(d), base = trPlanOf(roomId), a = trAuto(roomId, ['lit_d'], base, { lvl: 0, bare: true });
+  if (!a.bedsOk) return { ok: false, why: 'un lit de 140 ne rentre pas' }; if (!a.pass90) return { ok: false, why: 'pas 90 cm le long du lit' };
+  const sdb = trSdbRect(d, a.p, W, D), obs = [...a.p.items.filter((i) => i.t !== 'tv').map(trRect), ...(sdb ? [sdb] : []), trOpening(base.door, TR_DOOR_W, W, D, 60)];
+  for (let x = 0; x + 150 <= W + 0.5; x += 10) for (let y = 0; y + 150 <= D + 0.5; y += 10) if (trFree({ x0: x, y0: y, x1: x + 150, y1: y + 150 }, obs, W, D)) return { ok: true, why: '' };
+  return { ok: false, why: 'pas de rond de 1,50 m libre' };
+}
 function trPlanBind() {
   const svg = $('tr-svg'); if (!svg || !S.trP) return;
   const pt = (e) => { const m = svg.getScreenCTM(); if (!m) return [0, 0]; const q = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse()); return [q.x, q.y]; };
@@ -277,7 +327,7 @@ function trPlanBind() {
   svg.addEventListener('pointerdown', (e) => {
     const P = S.trP, el = e.target.closest('[data-it],[data-op]');
     if (!el) { if (P.sel) { P.sel = null; trPlanDraw(); } return; }
-    if (!trCan()) return;
+    if (!trPlanCan()) return;
     const [x, y] = pt(e);
     if (el.dataset.op) drag = { op: el.dataset.op, moved: false };
     else { const it = P.p.items.find((i) => i.id === el.dataset.it); if (!it) return; drag = { it, dx: it.x - x, dy: it.y - y, sx: x, sy: y, moved: false }; }
@@ -452,7 +502,7 @@ function trGlStart() {
   const basic = () => { if (TR_GL.token !== token) return; const old = $('tr-gl'); if (!old) return; const fresh = old.cloneNode(false); old.replaceWith(fresh); trGlStartBasic(); };
   import('./travaux-rendu.js?v=' + APP_V).then((mod) => {
     if (TR_GL.token !== token || !cv.isConnected) return;
-    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false, soir: () => !!P.soir, edit: trCan(), sel: () => P.sel,
+    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false, soir: () => !!P.soir, lumi: () => (P.lumi || 100) / 100, edit: trPlanCan(), sel: () => P.sel,
       onSelect: (id) => { P.sel = id && id !== P.sel ? id : null; trPlanBar(); if (TR_GL.ask) TR_GL.ask(); },
       onMove: (id, x, y) => { const it = P.p.items.find((i) => i.id === id); if (!it) return; it.x = x; it.y = y; P.sel = id; trPlanSave(); trPlanBar(); if (trIsBed(it) && trLum(P.p.deco).some((k) => k === 'appliques' || k === 'ruban')) trGlStart(); } }); TR_GL.three = h; TR_GL.ask = h.ask; TR_GL.snap = h.snap; }
     catch (e) { console.warn('rendu', e); basic(); }
@@ -654,6 +704,7 @@ function trScanParse(j) {
     items, counts, nWalls: walls.length, nDoors: doors.length, nRooms: Array.isArray(j.sections) ? j.sections.length : 0 };
 }
 function trScanSheet(roomId) {
+  S.trCtx = roomId;
   const sc = S.trScan, r = trRoomGet(roomId); if (!sc || !r) { closeSheet(); return; }
   const lst = Object.entries(sc.counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} × ${(TR_SCAN_FR[k] || k).toLowerCase()}`);
   openSheet('trscan', `<div class="row between"><h2>Scan lu · ${esc(trPlace(r))}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">Annuler</button></div>
@@ -668,7 +719,7 @@ function trScanSheet(roomId) {
 
 /* ---------- l'écran « Plan et 3D » d'une chambre ---------- */
 function trDecoCard(roomId) {
-  const P = S.trP, deco = P.p.deco || {}, can = trCan(), q = trDecoQty(roomId, P.p), lines = trDecoLines(roomId, P.p);
+  const P = S.trP, deco = P.p.deco || {}, can = trPlanCan(), q = trDecoQty(roomId, P.p), lines = trDecoLines(roomId, P.p);
   const sw = (key, list, cur) => `<div class="tr-sws">${list.map(([k, l, c]) => `<button class="tr-sw" ${can ? '' : 'disabled'} data-a="trDeco" data-k="${key}" data-v="${k}" aria-pressed="${(cur || '') === k}">${c ? `<i style="background:${trCss(c)}"></i>` : ''}${l}</button>`).join('')}</div>`;
   return `<div class="card"><h3>🎨 Finitions du projet</h3><p class="muted">Choisis, puis regarde le résultat en vue 3D. Rien n’est acheté tant que ce n’est pas dans la liste.</p>
     <p class="tr-cap">Murs · ${trFr(q.murs)} m²</p>${sw('mur', TR_DECO_MUR, deco.mur)}
@@ -678,28 +729,31 @@ function trDecoCard(roomId) {
     ${deco.rideau && deco.rideau !== 'aucun' && deco.rideau !== 'voilage' ? `<p class="tr-cap">Tissu des rideaux</p>${sw('tissu', TR_DECO_TISSU, deco.tissu || 'lin')}` : ''}
     <p class="tr-cap">Dessus de lit</p>${sw('linge', TR_DECO_TISSU, deco.linge)}
     <p class="tr-cap">Éclairage · à voir en 🌙 Soir, depuis la porte</p><div class="tr-sws">${TR_DECO_LUM.map(([k, l]) => `<button class="tr-sw" ${can ? '' : 'disabled'} data-a="trDecoLum" data-v="${k}" aria-pressed="${trLum(deco).includes(k)}">${l}</button>`).join('')}</div>
-    ${lines.length ? `<p class="tr-cap">À prévoir</p><ul class="tr-gaps">${lines.map((l) => `<li>${l.qty > 1 ? l.qty + ' × ' : ''}${esc(l.label)}${l.note ? ` <span class="muted sm">· ${esc(l.note)}</span>` : ''}</li>`).join('')}</ul>${can && !trIsTest(roomId) ? '<button class="btn small soft" data-a="trDecoList">＋ Mettre ces finitions dans la liste</button>' : ''}` : ''}</div>`;
+    ${lines.length ? `<p class="tr-cap">À prévoir</p><ul class="tr-gaps">${lines.map((l) => `<li>${l.qty > 1 ? l.qty + ' × ' : ''}${esc(l.label)}${l.note ? ` <span class="muted sm">· ${esc(l.note)}</span>` : ''}</li>`).join('')}</ul>${trCan() && !trIsTest(roomId) ? '<button class="btn small soft" data-a="trDecoList">＋ Mettre ces finitions dans la liste</button>' : ''}` : ''}</div>`;
 }
 function trPlanSheet(roomId, keep) {
+  S.trCtx = roomId;
   const r = trRoomGet(roomId), d = trData(roomId); if (!r || !S.tr || !trHasPlan(d)) { closeSheet(); return; }
   const { W, D } = trWDH(d);
-  if (!keep || !S.trP || S.trP.rid !== roomId) S.trP = { rid: roomId, view: (S.trP && S.trP.rid === roomId && S.trP.view) || 'plan', sel: null, p: trPlanOf(roomId), cam: null, soir: !!(S.trP && S.trP.rid === roomId && S.trP.soir) };
-  const P = S.trP, can = trCan(), hasSdb = trNum(d.sdb_len) && trNum(d.sdb_wid), fs = Math.max(11, Math.round(Math.max(W, D) / 26)), pad = fs * 2.2;
+  if (!keep || !S.trP || S.trP.rid !== roomId) S.trP = { rid: roomId, view: (S.trP && S.trP.rid === roomId && S.trP.view) || 'plan', sel: null, p: trPlanOf(roomId), vid: null, cam: null, soir: !!(S.trP && S.trP.rid === roomId && S.trP.soir), lumi: (S.trP && S.trP.lumi) || 100 };
+  const P = S.trP, can = trPlanCan(), hasSdb = trNum(d.sdb_len) && trNum(d.sdb_wid), fs = Math.max(11, Math.round(Math.max(W, D) / 26)), pad = fs * 2.2;
   const cfgs = TR_CFG.map(([k, l, beds]) => { const a = trAuto(roomId, beds, P.p); return { k, l, a, ok: a.bedsOk && a.surfOk }; });
   const bank = S.tr.items.filter((i) => i.etat !== 'a_jeter' && i.w_cm && i.d_cm);
   trGlStop();
   openSheet('trplan:' + roomId, `<div class="row between"><h2>${esc(trPlace(r))} · ${trM(W)} × ${trM(D)}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">‹ Fiche</button></div>
+    <div id="tr-vers">${trVersHtml()}</div>
     <div class="segc" role="group"><button data-a="trPlanView" data-k="plan" aria-pressed="${P.view === 'plan'}">Plan</button><button data-a="trPlanView" data-k="3d" aria-pressed="${P.view === '3d'}">Vue 3D</button></div>
     <div class="tr-stage">${P.view === 'plan'
       ? `<svg id="tr-svg" viewBox="${-pad} ${-pad} ${W + pad * 1.4} ${D + pad * 1.4}" preserveAspectRatio="xMidYMid meet"><g id="tr-plan-g"></g></svg>`
       : `<div class="tr-3d"><canvas id="tr-gl"></canvas><div id="tr-lab"></div><div class="tr-tools"><button data-a="trFull" aria-label="Plein écran">⤢</button><button data-a="trSnap" aria-label="Enregistrer l’image">📸</button></div><div id="tr-plan-bar" class="tr-selbar"></div></div>`}</div>
     ${P.view === '3d' ? `<div class="segc" role="group" aria-label="Point de vue">${[['orbit', 'Vue d’ensemble'], ['porte', 'Depuis la porte'], ['dessus', 'Du dessus']].map(([k, l]) => `<button data-a="trCam" data-k="${k}" aria-pressed="${((P.cam && P.cam.mode) || 'orbit') === k}">${l}</button>`).join('')}</div>
     <div class="segc" role="group" aria-label="Ambiance">${[['', '☀️ Jour'], ['1', '🌙 Soir']].map(([k, l]) => `<button data-a="trAmb" data-k="${k}" aria-pressed="${!!P.soir === !!k}">${l}</button>`).join('')}</div>
+    <label class="tr-lumi"><span>💡 Puissance des lumières</span><input type="range" min="15" max="130" step="5" value="${P.lumi || 100}" data-input="trLumi" aria-label="Puissance des lumières"></label>
     <p class="muted sm">${can ? 'Touche un meuble pour le tourner ou l’enlever, glisse-le pour le déplacer. ' : ''}Un doigt à côté des meubles pour tourner la vue, deux doigts pour s’approcher. ⤢ plein écran, 📸 garder l’image.</p>` : ''}
     ${P.view === 'plan' ? '<div id="tr-plan-bar"></div>' : ''}
     <div class="card"><h3>Est-ce que ça tient ?</h3><div id="tr-plan-chk"></div></div>
     <div class="card"><h3>🏨 Trois niveaux d’aménagement</h3><p class="muted">Une proposition complète par budget : meubles, finitions et éclairage. Règles tenues : rien devant la fenêtre ni dans l’ouverture de la porte, 50 cm au moins autour des lits (90 cm sur un côté quand la pièce le permet), surface 3★.</p>
-      <div class="group flat">${TR_NIVEAUX.map((nv) => { const a = trNiveau(roomId, nv, P.p), nb = a.p.items.filter(trIsBed).length; return `<button class="prow" ${can ? '' : 'disabled'} data-a="trNiveauGo" data-k="${nv.k}"><span class="pr-t"><b>${nv.e} ${nv.l}${P.p.niv === nv.k ? ' · en place' : ''}</b><span class="muted sm">${esc(nv.txt)}</span><span class="muted sm">${!a.bedsOk ? '⚠️ Les lits de la fiche ne rentrent pas tous. ' : ''}${a.people} couchage${a.people > 1 ? 's' : ''}${nv.lvl === 2 && nb ? (a.big ? ' · lit de 160' : ' · lit de 160 impossible ici') : ''} · ${a.pass90 ? 'passage de 90 cm ✓' : 'passage de 50 cm seulement'}${a.miss.length ? ' · pas de place pour : ' + a.miss.join(', ').toLowerCase() : ''}</span></span><span class="chev">›</span></button>`; }).join('')}</div></div>
+      <div class="group flat">${TR_NIVEAUX.map((nv) => { const a = trNiveau(roomId, nv, P.p), nb = a.p.items.filter(trIsBed).length; return `<button class="prow" ${can ? '' : 'disabled'} data-a="trNiveauGo" data-k="${nv.k}"><span class="pr-t"><b>${nv.e} ${nv.l}${P.p.niv === nv.k ? ` · en place (variante ${(P.p.nivN || 0) + 1}) · touche encore pour une autre` : ''}</b><span class="muted sm">${esc(nv.txt)}</span><span class="muted sm">${!a.bedsOk ? '⚠️ Les lits de la fiche ne rentrent pas tous. ' : ''}${a.people} couchage${a.people > 1 ? 's' : ''}${nv.lvl === 2 && nb ? (a.big ? ' · lit de 160' : ' · lit de 160 impossible ici') : ''} · ${a.pass90 ? 'passage de 90 cm ✓' : 'passage de 50 cm seulement'}${a.miss.length ? ' · pas de place pour : ' + a.miss.join(', ').toLowerCase() : ''}</span></span><span class="chev">›</span></button>`; }).join('')}</div></div>
     <div class="card"><h3>💡 Dispositions proposées</h3><p class="muted">Calculées avec la place de la porte et de la fenêtre. Touche une proposition pour la voir${can ? ' ; elle remplace les meubles du plan' : ''}.</p>
       <div class="group flat">${cfgs.map((c) => `<button class="prow" ${can ? '' : 'disabled'} data-a="trPlanCfg" data-k="${c.k}"><span class="pr-t"><b>${c.l}</b><span class="muted sm">${!c.a.bedsOk ? 'Les lits ne rentrent pas' : (!c.a.surfOk ? `Surface trop petite en 3★ (${trFr(c.a.surf)} m² pour ${trFr(c.a.need)})` : (c.a.miss.length ? 'Pas de place pour : ' + c.a.miss.join(', ').toLowerCase() : 'Tout rentre, avec bureau, armoire et télé'))}</span></span><span class="pill ${c.ok ? (c.a.miss.length ? 'p-amber' : 'p-green') : 'p-red'}">${c.ok ? (c.a.miss.length ? 'Juste' : 'Oui') : 'Non'}</span></button>`).join('')}</div></div>
     ${can ? `<div class="card"><h3>Ajouter un meuble</h3><div class="tr-eq">${Object.entries(TR_FURN).filter(([k]) => k !== 'meuble').map(([k, f]) => `<button data-a="trPlanAdd" data-k="${k}">＋ ${f.l}</button>`).join('')}</div>
@@ -714,6 +768,10 @@ function trPlanSheet(roomId, keep) {
 }
 Object.assign(A, {
   trPlan(d) { trPlanSheet(d.id); },
+  trVer(d) { const P = S.trP; if (!P) return; const v = d.id ? trVGet(d.id) : null; if (d.id && !v) return; P.vid = v ? v.id : null; P.p = v ? trPlanOf(P.rid, v.plan) : trPlanOf(P.rid); P.sel = null; trPlanSheet(P.rid, true); },
+  trVerNew() { const P = S.trP; if (!P || !trPlanCan()) return; const me = trPrenom(S.me.label), nm = (prompt('Nom de ta version', 'Version ' + trDe(me)) || '').trim().slice(0, 60); if (!nm) return; const v = trFork(nm); trVSave(v); trPlanSheet(P.rid, true); },
+  trVerName() { const P = S.trP, v = P && trVGet(P.vid); if (!v || v.owner_id !== S.tr.me_id) return; const nm = (prompt('Nom de la version', v.name) || '').trim().slice(0, 60); if (!nm) return; v.name = nm; trVSave(v); trVersDraw(); },
+  async trVerDel() { const P = S.trP, v = P && trVGet(P.vid); if (!v || v.owner_id !== S.tr.me_id || !confirm(`Supprimer « ${v.name} » ?`)) return; clearTimeout(trVTimer[v.id]); delete trVPend[v.id]; try { await api('tr_plan_del', { id: v.id }); } catch (e) { toast(errMsg(e)); return; } S.tr.plans = S.tr.plans.filter((x) => x.id !== v.id); A.trVer({ id: '' }); },
   trPlanView(d) { if (!S.trP) return; S.trP.view = d.k; S.trP.sel = null; trPlanSheet(S.trP.rid, true); },
   trCam(d) {
     const P = S.trP; if (!P || !P.cam) return; const c = P.cam;
@@ -732,7 +790,7 @@ Object.assign(A, {
     try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast('Image enregistrée ✓');
   },
-  trPlanAdd(d) { const P = S.trP; if (!P || !trCan()) return; const { W, D } = trWDH(trData(P.rid)); const it = { id: trPid(), t: d.k, r: 0, x: Math.round(W / 2), y: Math.round(D / 2) };
+  trPlanAdd(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)); const it = { id: trPid(), t: d.k, r: 0, x: Math.round(W / 2), y: Math.round(D / 2) };
     // Une place libre, la plus proche du milieu : deux meubles ajoutés ne se retrouvent pas l'un dans l'autre.
     if (d.k !== 'tv') { const obs = P.p.items.filter((i) => i.t !== 'tv').map(trRect), m = trDim(it); let best = null; for (let x = m.w / 2; x <= W - m.w / 2; x += 10) for (let y = m.d / 2; y <= D - m.d / 2; y += 10) { const q = { ...it, x, y }; if (!trFree(trRect(q), obs, W, D)) continue; const dd = Math.hypot(x - W / 2, y - D / 2); if (!best || dd < best[0]) best = [dd, x, y]; } if (best) { it.x = Math.round(best[1]); it.y = Math.round(best[2]); } }
     if (d.k === 'tv') Object.assign(it, trAtWall('tv', 0, W / 2, W, D), { id: it.id }); P.p.items.push(it); P.sel = it.id; trPlanSave(); trPlanSheet(P.rid, true); },
@@ -740,20 +798,21 @@ Object.assign(A, {
   trPlanDel() { const P = S.trP; if (!P) return; P.p.items = P.p.items.filter((i) => i.id !== P.sel); P.sel = null; trPlanSave(); if (P.view === '3d' && P.p.items.length) { trPlanBar(); trGlStart(); } else trPlanSheet(P.rid, true); },
   trPlanClear() { const P = S.trP; if (!P || !confirm('Enlever tous les meubles du plan ?')) return; P.p.items = []; P.p.cfg = null; P.sel = null; trPlanSave(); trPlanSheet(P.rid, true); },
   trPlanCfg(d) {
-    const P = S.trP, c = TR_CFG.find((x) => x[0] === d.k); if (!P || !c || !trCan()) return;
+    const P = S.trP, c = TR_CFG.find((x) => x[0] === d.k); if (!P || !c || !trPlanCan()) return;
     if (P.p.items.length && !confirm('Remplacer les meubles du plan par cette proposition ?')) return;
     const a = trAuto(P.rid, c[2], P.p); if (!a.p.items.length) { toast('Rien ne rentre dans cette disposition.'); return; }
     P.p.items = a.p.items; P.p.cfg = d.k; P.sel = null; trPlanSave(); trPlanSheet(P.rid, true);
   },
-  trPlanSdb(d) { const P = S.trP; if (!P || !trCan()) return; P.p.sdb = { c: d.k, rot: !!P.p.sdb.rot }; trPlanSave(); trPlanSheet(P.rid, true); },
-  trPlanSdbRot() { const P = S.trP; if (!P || !trCan()) return; P.p.sdb.rot = !P.p.sdb.rot; trPlanSave(); trPlanSheet(P.rid, true); },
-  trDeco(d) { const P = S.trP; if (!P || !trCan()) return; const deco = { ...(P.p.deco || {}) }; if (!d.v || deco[d.k] === d.v) delete deco[d.k]; else deco[d.k] = d.v; P.p.deco = deco; trPlanSave(); trPlanSheet(P.rid, true); },
-  trDecoLum(d) { const P = S.trP; if (!P || !trCan()) return; const cur = trLum(P.p.deco), lum = cur.includes(d.v) ? cur.filter((x) => x !== d.v) : [...cur, d.v]; P.p.deco = { ...(P.p.deco || {}), lum }; trPlanSave(); trPlanSheet(P.rid, true); },
+  trPlanSdb(d) { const P = S.trP; if (!P || !trPlanCan()) return; P.p.sdb = { c: d.k, rot: !!P.p.sdb.rot }; trPlanSave(); trPlanSheet(P.rid, true); },
+  trPlanSdbRot() { const P = S.trP; if (!P || !trPlanCan()) return; P.p.sdb.rot = !P.p.sdb.rot; trPlanSave(); trPlanSheet(P.rid, true); },
+  trDeco(d) { const P = S.trP; if (!P || !trPlanCan()) return; const deco = { ...(P.p.deco || {}) }; if (!d.v || deco[d.k] === d.v) delete deco[d.k]; else deco[d.k] = d.v; P.p.deco = deco; trPlanSave(); trPlanSheet(P.rid, true); },
+  trDecoLum(d) { const P = S.trP; if (!P || !trPlanCan()) return; const cur = trLum(P.p.deco), lum = cur.includes(d.v) ? cur.filter((x) => x !== d.v) : [...cur, d.v]; P.p.deco = { ...(P.p.deco || {}), lum }; trPlanSave(); trPlanSheet(P.rid, true); },
   trNiveauGo(d) {
-    const P = S.trP, nv = TR_NIVEAUX.find((x) => x.k === d.k); if (!P || !nv || !trCan()) return;
-    if (P.p.items.length && !confirm(`Remplacer les meubles et les finitions du plan par la proposition « ${nv.l} » ?`)) return;
-    const a = trNiveau(P.rid, nv, P.p); if (!a.p.items.length) { toast('Rien ne rentre dans cette pièce avec ces lits.'); return; }
-    P.p.items = a.p.items; P.p.deco = { ...nv.deco }; P.p.niv = nv.k; P.p.cfg = null; P.sel = null; P.view = '3d'; trPlanSave(); trPlanSheet(P.rid, true);
+    const P = S.trP, nv = TR_NIVEAUX.find((x) => x.k === d.k); if (!P || !nv || !trPlanCan()) return;
+    if (P.p.items.length && !P.p.niv && !confirm(`Remplacer les meubles et les finitions du plan par la proposition « ${nv.l} » ?`)) return;
+    const n = P.p.niv === nv.k ? (P.p.nivN || 0) + 1 : 0; // un nouvel appui sur le même niveau : une autre combinaison
+    const a = trNiveau(P.rid, nv, P.p, n); if (!a.p.items.length) { toast('Rien ne rentre dans cette pièce avec ces lits.'); return; }
+    P.p.items = a.p.items; P.p.deco = trNivDeco(nv, n); P.p.niv = nv.k; P.p.nivN = n; if (n) toast(`${nv.l} · variante ${n + 1}`); P.p.cfg = null; P.sel = null; P.view = '3d'; trPlanSave(); trPlanSheet(P.rid, true);
   },
   async trDecoList() {
     const P = S.trP; if (!P || !trCan()) return; const lines = trDecoLines(P.rid, P.p); if (!lines.length) return;
@@ -764,7 +823,7 @@ Object.assign(A, {
     toast(n ? `${n} ligne${n > 1 ? 's' : ''} ajoutée${n > 1 ? 's' : ''} à la liste ✓` : 'Déjà dans la liste');
   },
   async trScanPick(d) {
-    if (!trCan()) return;
+    S.trCtx = d.id; if (!trCan()) return;
     const f = await pickFile('.json,application/json,text/plain'); if (!f) return;
     try { S.trScan = trScanParse(JSON.parse(await f.text())); }
     catch (e) { toast('Ce fichier n’est pas un scan lisible. Dans OpenPlan3D : Export → Editable Plan (JSON).', 7000); return; }
@@ -772,7 +831,7 @@ Object.assign(A, {
   },
   // Réceptacle : on dépose d'abord le fichier, on choisit ensuite où il va (une chambre, ou une nouvelle pièce d'essai).
   async trScanDrop() {
-    if (!trCan()) return;
+    if (!trPlanCan()) return;
     const f = await pickFile('.json,application/json,text/plain'); if (!f) return;
     try { S.trScan = trScanParse(JSON.parse(await f.text())); }
     catch (e) { toast('Ce fichier n’est pas un scan lisible. Dans OpenPlan3D : Export → Editable Plan (JSON).', 7000); return; }
@@ -781,18 +840,18 @@ Object.assign(A, {
       <div class="card"><h3>📏 ${trM(sc.W)} × ${trM(sc.D)} · hauteur ${trM(sc.H)}</h3><p class="muted">${sc.items.length} meuble${sc.items.length > 1 ? 's' : ''} reconnu${sc.items.length > 1 ? 's' : ''}${sc.sdb ? ', salle de bain repérée' : ''}.</p></div>
       <h2 class="sec">Où ranger ce scan ?</h2>
       <div class="group"><button class="prow" data-a="trScanTo" data-id="new"><span class="pr-t"><b>＋ Nouvelle pièce d’essai</b><span class="muted sm">Ne compte pas dans les travaux de l’Archange</span></span><span class="chev">›</span></button></div>
-      <h2 class="sec">Chambres de l’Archange</h2><div class="group">${trRooms().map(row).join('')}</div>
-      ${trTests().length ? `<h2 class="sec">Essais</h2><div class="group">${trTests().map(row).join('')}</div>` : ''}`);
+      ${S.tr.can_edit ? `<h2 class="sec">Chambres de l’Archange</h2><div class="group">${trRooms().map(row).join('')}</div>` : ''}
+      ${trTests().filter((r) => trMine(r.id)).length ? `<h2 class="sec">Mes projets</h2><div class="group">${trTests().filter((r) => trMine(r.id)).map(row).join('')}</div>` : ''}`);
   },
   trScanTo(d) {
-    if (!S.trScan || !trCan()) return;
+    if (!S.trScan || !trPlanCan()) return;
     if (d.id !== 'new') { trScanSheet(d.id); return; } // chambre existante : écran de confirmation, puisque ses mesures seront remplacées
     const id = 'test__' + Math.random().toString(36).slice(2, 10), t = new Date();
-    S.tr.rooms[id] = { room_id: id, hotel: 'test', data: {} }; trPatch(id, { nom: `Scan du ${t.getDate()}/${t.getMonth() + 1} à ${t.getHours()}h${String(t.getMinutes()).padStart(2, '0')}` });
+    S.tr.rooms[id] = { room_id: id, hotel: 'test', data: {}, owner_id: S.tr.me_id, shared: [] }; S.trCtx = id; trPatch(id, { dossier: 'Mes scans', nom: `Scan du ${t.getDate()}/${t.getMonth() + 1} à ${t.getHours()}h${String(t.getMinutes()).padStart(2, '0')}` });
     A.trScanApply({ id });
   },
   trScanApply(d) {
-    const sc = S.trScan; if (!sc || !trCan()) return;
+    S.trCtx = d.id; const sc = S.trScan; if (!sc || !trCan()) return;
     const old = trPlanOf(d.id), plan = { items: sc.items, door: sc.door || old.door, win: sc.win || old.win, sdb: sc.sdb ? { c: sc.sdb.c, rot: false } : { c: '' }, deco: old.deco };
     if (!sc.door) plan.door = { wall: 2, pos: Math.min(sc.W - TR_DOOR_W / 2, 75) }; if (!sc.win) plan.win = { wall: 0, pos: sc.W / 2 };
     const patch = { len: sc.W, wid: sc.D, hei: sc.H, surf: null, plan, scan_at: new Date().toISOString() };
@@ -802,9 +861,10 @@ Object.assign(A, {
     trPlanSheet(d.id); S.trP.view = '3d'; trPlanSheet(d.id, true);
   },
 });
+Object.assign(I, { trLumi(el) { const P = S.trP; if (!P) return; P.lumi = Number(el.value) || 100; if (TR_GL.ask) TR_GL.ask(); } });
 Object.assign(C, {
   trPlanBank(el) {
-    const P = S.trP, b = S.tr.items.find((i) => i.id === el.value); if (!P || !b || !trCan()) return;
+    const P = S.trP, b = S.tr.items.find((i) => i.id === el.value); if (!P || !b || !trPlanCan()) return;
     const { W, D } = trWDH(trData(P.rid)), t = TR_BANK_MAP[b.type] || 'meuble';
     const it = { id: trPid(), t, r: 0, x: Math.round(W / 2), y: Math.round(D / 2), w: b.w_cm, d: b.d_cm, n: b.label || trType(b.type)[1], bank: b.id }; if (b.h_cm) it.h = b.h_cm;
     if (t === 'tv') { delete it.d; Object.assign(it, trAtWall('tv', 0, W / 2, W, D, { w: b.w_cm }), { id: it.id }); }

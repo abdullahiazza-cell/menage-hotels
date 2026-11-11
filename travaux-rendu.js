@@ -215,12 +215,13 @@ export function trRendu(o) {
   spot.castShadow = true; spot.shadow.mapSize.set(1024, 1024); spot.shadow.bias = -0.0008; spot.shadow.normalBias = 0.02; spot.shadow.camera.near = 0.1; spot.shadow.camera.far = 12; spot.visible = false; scene.add(spot, spot.target);
   const bgDay = sky('#dfe7ee', '#f4f1ec'), bgNight = sky('#070a12', '#1b1f2b'); trash.push(bgDay, bgNight);
   let mood = null;
-  function setMood(soir) {
-    if (mood === soir) return; mood = soir;
-    sun.visible = !soir; spot.visible = soir; spot.intensity = L.plaf ? 11 : L.spots.length ? 9 : 2.5; fill.intensity = soir ? 0.16 + (L.corniche ? 0.34 : 0) : 0.42; fill.color.set(soir && L.corniche ? 0xffe2bd : 0xffffff); scene.environmentIntensity = soir ? 0.14 : 0.5;
-    lampL.forEach((l) => { l.intensity = soir ? 2.1 : 0.45; });
-    lampMat.color.setRGB(soir ? 3.4 : 1.25, soir ? 2.5 : 1.13, soir ? 1.45 : 0.92); plafMat.color.setRGB(soir ? 3.2 : 0.98, soir ? 2.8 : 0.97, soir ? 2.2 : 0.95);
-    skyMat.color.setRGB(soir ? 0.035 : 1.85, soir ? 0.05 : 2.0, soir ? 0.10 : 2.25); ceilMat.color.set(soir ? 0x6f675c : 0xe9e8e4);
+  let f = 1;
+  function setMood(soir, pw) {
+    const key = soir + '|' + pw; if (mood === key) return; mood = key; f = pw;
+    sun.visible = !soir; spot.visible = soir; spot.intensity = (L.plaf ? 11 : L.spots.length ? 9 : 2.5) * f; fill.intensity = soir ? 0.16 + (L.corniche ? 0.34 : 0) : 0.42; fill.color.set(soir && L.corniche ? 0xffe2bd : 0xffffff); scene.environmentIntensity = soir ? 0.14 : 0.5;
+    lampL.forEach((l) => { l.intensity = (soir ? 2.1 : 0.45) * f; }); sun.intensity = 2.0 * (0.5 + 0.5 * f);
+    const e = soir ? Math.max(0.3, f) : 1; lampMat.color.setRGB((soir ? 3.4 : 1.25) * e, (soir ? 2.5 : 1.13) * e, (soir ? 1.45 : 0.92) * e); plafMat.color.setRGB((soir ? 3.2 : 0.98) * e, (soir ? 2.8 : 0.97) * e, (soir ? 2.2 : 0.95) * e);
+    { const k = soir ? 1 : 0.55 + 0.45 * f; skyMat.color.setRGB((soir ? 0.035 : 1.85) * k, (soir ? 0.05 : 2.0) * k, (soir ? 0.10 : 2.25) * k); } ceilMat.color.set(soir ? 0x6f675c : 0xe9e8e4);
     scene.background = soir ? bgNight : bgDay; renderer.toneMappingExposure = soir ? 1.12 : 1.0;
   }
 
@@ -246,7 +247,7 @@ export function trRendu(o) {
     // Netteté : jusqu'à 3× pour l'image enregistrée, 2× à l'écran, sans dépasser ce qu'un téléphone encaisse.
     const dpr = Math.max(1, Math.min(hi === true ? 3 : Math.min(2, window.devicePixelRatio || 1), Math.sqrt((hi === true ? 4.2e6 : 2.6e6) / (w * h))));
     renderer.setPixelRatio(dpr); renderer.setSize(w, h, false);
-    const soir = !!(o.soir && o.soir()); setMood(soir);
+    const soir = !!(o.soir && o.soir()); setMood(soir, o.lumi ? Math.min(1.4, Math.max(0.1, o.lumi())) : 1);
     const inside = cam.mode === 'porte'; let eye, tg, fov = 42;
     if (inside) { const yaw = sc.dYaw + cam.ly, cp = Math.cos(cam.lp); eye = sc.dEye; tg = [eye[0] + cp * Math.sin(yaw), eye[1] + Math.sin(cam.lp), eye[2] + cp * Math.cos(yaw)]; fov = Math.min(100, Math.max(50, 2 * Math.atan(Math.tan(36 * Math.PI / 180) / (w / h)) * 180 / Math.PI)); }
     else { const cp = Math.cos(cam.pitch), ty = sc.H * 0.32; eye = [cam.dist * cp * Math.sin(cam.yaw), ty + cam.dist * Math.sin(cam.pitch), cam.dist * cp * Math.cos(cam.yaw)]; tg = [0, ty, 0]; }
@@ -260,7 +261,7 @@ export function trRendu(o) {
       try {
         if (fx.w !== w || fx.h !== h || fx.d !== dpr) { fx.composer.setPixelRatio(dpr); fx.composer.setSize(w, h); fx.w = w; fx.h = h; fx.d = dpr; }
         fx.gtao.enabled = hi === true || pts.size === 0; // pendant qu'on tourne, on allège ; l'image complète revient dès qu'on lâche
-        fx.bloom.strength = soir ? 0.55 : 0.2; fx.bloom.threshold = soir ? 0.95 : 1.55; fx.grade.uniforms.vig.value = inside ? 0.42 : 0.16; fx.grade.uniforms.sat.value = soir ? 1.12 : 1.08;
+        fx.bloom.strength = (soir ? 0.55 : 0.2) * Math.min(1.2, f); fx.bloom.threshold = soir ? 0.95 : 1.55; fx.grade.uniforms.vig.value = inside ? 0.42 : 0.16; fx.grade.uniforms.sat.value = soir ? 1.12 : 1.08;
         fx.composer.render();
       } catch (e) { console.warn('effets', e); fx = null; renderer.setRenderTarget(null); renderer.render(scene, camera); }
     } else renderer.render(scene, camera);

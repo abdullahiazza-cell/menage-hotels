@@ -35,7 +35,14 @@ const TR_TST = { a_faire: { l: 'À faire', c: 'p-amber' }, commande: { l: 'En co
 S.mode = null; S.tr = null; S.trTab = 'chambres'; S.trUrls = {}; S.trNiv = 'tout'; S.trForm = null; S.trDone = false;
 
 /* ---------- données ---------- */
-const trCan = () => !!(S.tr && S.tr.can_edit && S.me && !S.me.readonly);
+// Qui écrit quoi. Fiches et inventaire de l'Archange : le propriétaire et l'intendant. Un projet personnel : son auteur.
+// Les plans : toute personne du mode travaux peut proposer sa version (trPlanCan), sans toucher à celle d'un autre.
+const trPlanCan = () => !!(S.tr && S.tr.can_plan && S.me && !S.me.readonly);
+const trMine = (rid) => { const r = S.tr && S.tr.rooms[rid]; return !!r && !!r.owner_id && r.owner_id === S.tr.me_id; };
+const trCan = () => { if (!S.tr || !S.me || S.me.readonly) return false; const rid = S.trCtx; if (rid && trIsTest(rid) && S.tr.rooms[rid] && S.tr.rooms[rid].owner_id) return trMine(rid); return !!S.tr.can_edit; };
+const trPrenom = (label) => String(label || '').trim().split(/\s+/)[0] || 'quelqu’un';
+const trDe = (label) => { const n = trPrenom(label); return (/^[aeiouyhàâéèêîôûAEIOUYHÀÂÉÈÊÎÔÛ]/.test(n) ? 'd’' : 'de ') + n; };
+const trWho = (id) => { const u = ((S.tr && S.tr.people) || []).find((x) => x.id === id); return u ? u.label : ''; };
 const trRooms = () => roomsOf(TR_HOTEL);
 const trCommuns = () => communsOf(TR_HOTEL);
 const trData = (rid) => (S.tr && S.tr.rooms[rid] && S.tr.rooms[rid].data) || {};
@@ -47,7 +54,7 @@ const trFr = (n, d) => Number(n).toLocaleString('fr-FR', { maximumFractionDigits
 const trEur = (n) => Number(n).toLocaleString('fr-FR', { minimumFractionDigits: Number.isInteger(Number(n)) ? 0 : 2, maximumFractionDigits: 2 }) + ' €';
 // Pièces d'essai (hors hôtel) : elles vivent seulement dans le mode travaux et ne comptent dans aucun total de l'Archange.
 const trIsTest = (id) => /^test__/.test(String(id || ''));
-const trRoomGet = (id) => S.rooms[id] || (trIsTest(id) && S.tr && S.tr.rooms[id] ? { id, hotel: 'test', kind: 'chambre', test: true, num: (S.tr.rooms[id].data || {}).nom || 'Pièce d’essai', order: 9999 } : undefined);
+const trRoomGet = (id) => S.rooms[id] || (trIsTest(id) && S.tr && S.tr.rooms[id] ? { id, hotel: 'test', kind: 'chambre', test: true, num: [(S.tr.rooms[id].data || {}).dossier, (S.tr.rooms[id].data || {}).nom || 'Pièce'].filter(Boolean).join(' · '), order: 9999 } : undefined);
 const trPlace = (r) => r.test ? r.num : placeName(r);
 const trShort = (r) => r.test ? r.num : placeShort(r);
 const trTests = () => Object.keys(S.tr.rooms).filter(trIsTest).map(trRoomGet).filter(Boolean).sort((a, b) => String(a.num).localeCompare(String(b.num), 'fr'));
@@ -79,8 +86,9 @@ async function trLoad(silent) {
   try {
     const d = await api('tr_state');
     const rooms = {}; (d.rooms || []).forEach((r) => rooms[r.room_id] = r);
-    trPend.forEach((p) => { const r = rooms[p.rid] || (rooms[p.rid] = { room_id: p.rid, data: {} }); r.data = trApply(r.data || {}, p.patch); });
-    S.tr = { loaded: true, rooms, photos: d.photos || [], items: d.items || [], todo: d.todo || [], props: d.props || [], can_edit: !!d.can_edit };
+    trPend.forEach((p) => { const r = rooms[p.rid] || (rooms[p.rid] = trIsTest(p.rid) ? { room_id: p.rid, hotel: 'test', data: {}, owner_id: d.me_id, shared: [] } : { room_id: p.rid, data: {} }); r.data = trApply(r.data || {}, p.patch); });
+    S.tr = { loaded: true, rooms, photos: d.photos || [], items: d.items || [], todo: d.todo || [], props: d.props || [], can_edit: !!d.can_edit, can_plan: !!d.can_plan, me_id: d.me_id || (S.me && S.me.id), plans: d.plans || [], people: d.people || [] };
+    if (typeof trPlansMerge === 'function') trPlansMerge();
     Object.assign(S.trUrls, d.urls || {});
   } catch (e) {
     if (!S.tr) S.tr = { loaded: false, err: errMsg(e), rooms: {}, photos: [], items: [], todo: [], props: [], can_edit: false };
@@ -165,13 +173,14 @@ function trViewRooms() {
       <div class="prog"><i style="width:${rooms.length ? Math.round((done / rooms.length) * 100) : 0}%"></i></div>
       <p class="muted">Une fiche est complète avec l’état, les mesures et au moins une photo.</p>
       ${next && trCan() ? `<button class="btn soft" data-a="trRoom" data-id="${esc(next.id)}">Continuer : ${esc(trPlace(next))} ›</button>` : ''}</div>
-    ${trCan() ? `<div class="card"><h3>📥 Déposer un scan</h3><p class="muted">Tu as scanné une pièce avec l’iPhone (OpenPlan3D) ? Dépose le fichier ici : l’appli le lit, puis te demande dans quelle chambre le ranger.</p>
+    ${trPlanCan() ? `<div class="card"><h3>📥 Déposer un scan</h3><p class="muted">Tu as scanné une pièce avec l’iPhone (OpenPlan3D) ? Dépose le fichier ici : l’appli le lit, puis te demande dans quelle chambre le ranger.</p>
       <button class="btn big pri" data-a="trScanDrop">Choisir le fichier du scan</button></div>` : ''}
+    ${(() => { if (typeof trPmr !== 'function') return ''; const mes = rooms.filter((r) => trMeasured(trData(r.id))), ok = mes.filter((r) => trPmr(r.id).ok); return mes.length ? `<div class="card"><h3>♿ Chambres qui pourraient être adaptées</h3><p>${ok.length ? ok.map((r) => esc(trPlace(r))).join(', ') : 'Aucune parmi les chambres mesurées pour l’instant.'}</p><p class="muted sm">Calcul sur ${mes.length} chambre${mes.length > 1 ? 's' : ''} mesurée${mes.length > 1 ? 's' : ''} : un lit de 140, 90 cm libres le long du lit et un rond de 1,50 m pour tourner. Reste à vérifier sur place : accès sans marche ou par ascenseur, porte de 83 cm de passage, salle d’eau adaptée.</p></div>` : ''; })()}
     <h2 class="sec">Chambres</h2><div class="group">${rooms.map(trRoomRow).join('')}</div>
     ${communs.length ? `<h2 class="sec">Parties communes</h2><div class="group">${communs.map(trRoomRow).join('')}</div>` : ''}
-    <h2 class="sec">Essais</h2><p class="muted">Une pièce d’ailleurs (un appartement, par exemple) pour essayer le scan, le plan et la 3D. Elle ne compte pas dans les travaux de l’Archange.</p>
+    <h2 class="sec">Mes projets</h2><p class="muted">Des pièces hors de l’hôtel (un appartement, un local…), rangées dans des projets que tu nommes. Toi seul les vois, sauf si tu les partages. Elles ne comptent pas dans les travaux de l’Archange.</p>
     ${trTests().length ? `<div class="group">${trTests().map(trRoomRow).join('')}</div>` : ''}
-    ${trCan() ? '<button class="btn" data-a="trTestNew">＋ Créer une pièce d’essai</button>' : ''}`;
+    ${trPlanCan() ? '<button class="btn" data-a="trTestNew">＋ Nouvelle pièce dans un projet</button>' : ''}`;
 }
 
 /* ---------- fiche d'une chambre ---------- */
@@ -216,6 +225,7 @@ function trShots(rid, slots) {
   return `<div class="shots">${h}</div>`;
 }
 function trRoomSheet(rid) {
+  S.trCtx = rid;
   const r = trRoomGet(rid); if (!r || !S.tr) { closeSheet(); return; }
   const d = trData(rid), row = S.tr.rooms[rid], commun = isCommun(r), eq = d.eq || {};
   const test = !!r.test;
@@ -252,7 +262,7 @@ function trRoomSheet(rid) {
     <div class="card"><h3>⭐ Ce qui manque pour le 3 étoiles</h3><div id="tr-gaps">${trGapsHtml(rid)}</div>
       <p class="muted sm">Repères tirés de la <a href="${TR_GUIDE}" target="_blank" rel="noopener">grille officielle Atout France</a>, qui fait foi.</p></div>`}
     <div class="card form"><h3>📝 Notes</h3><label>Ce qu’il faut savoir sur ${commun ? 'cet endroit' : 'cette chambre'}<textarea ${trDis()} data-change="trF" data-rid="${esc(rid)}" data-k="notes" data-t="s" rows="3">${esc(d.notes || '')}</textarea></label></div>
-    ${test ? (trCan() ? `<button class="btn ghost bad-t" data-a="trTestDel" data-id="${esc(rid)}">Supprimer cette pièce d’essai</button>` : '') : `<div class="card"><div class="row between"><h3>À faire et à acheter${todo.length ? ` · ${todo.length}` : ''}</h3>${trCan() ? `<button class="btn small soft" data-a="trTodoNew" data-rid="${esc(rid)}">＋ Ajouter</button>` : ''}</div>
+    ${test ? `${row && row.owner_id && !trMine(rid) ? `<p class="banner sm c-slate">Projet partagé par ${esc(trPrenom(trWho(row.owner_id)))}. Tu peux le regarder et proposer ta version du plan.</p>` : ''}${trMine(rid) ? `<button class="btn" data-a="trShare" data-id="${esc(rid)}">👥 Partager ce projet${(row.shared || []).length ? ` · ${(row.shared || []).length}` : ''}</button>` : ''}${trCan() ? `<button class="btn ghost bad-t" data-a="trTestDel" data-id="${esc(rid)}">Supprimer cette pièce</button>` : ''}` : `<div class="card"><div class="row between"><h3>À faire et à acheter${todo.length ? ` · ${todo.length}` : ''}</h3>${trCan() ? `<button class="btn small soft" data-a="trTodoNew" data-rid="${esc(rid)}">＋ Ajouter</button>` : ''}</div>
       ${todo.length ? `<div class="group flat">${todo.map(trTodoRow).join('')}</div>` : '<p class="muted">Rien pour l’instant.</p>'}</div>`}
     ${props.length ? `<div class="card"><h3>💡 Idées pour ${commun ? 'cet endroit' : 'cette chambre'}</h3>${props.map(trPropCard).join('')}</div>` : ''}
     ${row && row.updated_label ? `<p class="muted sm">Dernière modification : ${esc(row.updated_label)}, ${when(row.updated_at)}</p>` : ''}`);
@@ -401,10 +411,24 @@ Object.assign(A, {
     if (p.room_id) trRoomSheet(p.room_id); else trItemSheet(p.item_id);
   },
   trTestNew() {
-    if (!trCan()) return;
-    const nom = (prompt('Nom de la pièce d’essai', 'Appartement test') || '').trim().slice(0, 40); if (!nom) return;
+    if (!trPlanCan()) return;
+    const mine = [...new Set(Object.values(S.tr.rooms).filter((r) => trIsTest(r.room_id) && trMine(r.room_id)).map((r) => (r.data || {}).dossier).filter(Boolean))];
+    const dossier = (prompt('Nom du projet' + (mine.length ? ' (déjà créés : ' + mine.join(', ') + ')' : ''), mine[0] || 'Mon projet') || '').trim().slice(0, 40); if (!dossier) return;
+    const nom = (prompt('Nom de la pièce', 'Séjour') || '').trim().slice(0, 40); if (!nom) return;
     const id = 'test__' + Math.random().toString(36).slice(2, 10);
-    S.tr.rooms[id] = { room_id: id, hotel: 'test', data: {} }; trPatch(id, { nom }); render(); trRoomSheet(id);
+    S.tr.rooms[id] = { room_id: id, hotel: 'test', data: {}, owner_id: S.tr.me_id, shared: [] }; S.trCtx = id; trPatch(id, { nom, dossier }); render(); trRoomSheet(id);
+  },
+  trShare(d) {
+    const row = S.tr.rooms[d.id]; if (!row || !trMine(d.id)) return; const cur = new Set(row.shared || []);
+    const people = (S.tr.people || []).filter((u) => u.id !== S.tr.me_id);
+    openSheet('trshare', `<div class="row between"><h2>Partager le projet</h2><button class="btn small" data-a="trRoom" data-id="${esc(d.id)}">‹ Retour</button></div>
+      <p class="muted">Les personnes cochées voient toutes les pièces de ce projet et peuvent y proposer leur version du plan. Elles ne peuvent pas modifier la tienne.</p>
+      <div class="group">${people.map((u) => `<button class="prow" data-a="trShareTo" data-id="${esc(d.id)}" data-u="${esc(u.id)}"><span class="pr-t"><b>${esc(u.label)}</b></span><span class="pill ${cur.has(u.id) ? 'p-green' : 'p-plain'}">${cur.has(u.id) ? 'Partagé ✓' : 'Non'}</span></button>`).join('') || '<p class="muted">Personne d’autre n’a accès au mode travaux.</p>'}</div>`);
+  },
+  async trShareTo(d) {
+    const row = S.tr.rooms[d.id]; if (!row || !trMine(d.id)) return; const cur = new Set(row.shared || []); if (cur.has(d.u)) cur.delete(d.u); else cur.add(d.u);
+    try { await trFlush(); const x = await api('tr_share', { room_id: d.id, user_ids: [...cur] }); (x.room_ids || [d.id]).forEach((id) => { if (S.tr.rooms[id]) S.tr.rooms[id].shared = x.shared || []; }); } catch (e) { toast(errMsg(e)); return; }
+    A.trShare({ id: d.id });
   },
   async trTestDel(d) {
     if (!trIsTest(d.id) || !confirm('Supprimer cette pièce d’essai, son plan et ses photos ?')) return;
