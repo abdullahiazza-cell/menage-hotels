@@ -166,7 +166,7 @@ const ERR = {
   deja: 'Cette prise en charge est déjà dans le registre.', too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
 };
 // Comptes en lecture seule : tout est visible, seules ces actions passent (lire, messages, notifications).
-const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'msg_edit', 'msg_delete', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info', 'bank_tx'];
+const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'msg_edit', 'msg_delete', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info', 'bank_tx', 'tr_state'];
 async function api(a, payload = {}) {
   if (S.me && S.me.readonly && !RO_OK.includes(a)) { const err = new Error('readonly'); err.code = 'readonly'; throw err; }
   let r;
@@ -225,7 +225,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 // Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
 // Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
-const APP_V = 'v46';
+const APP_V = 'v47';
 async function onlineVersion() {
   const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
   const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
@@ -421,6 +421,10 @@ function render() {
   if (!S.loaded) { a.innerHTML = `<div class="wrap"><div class="empty"><div class="e">🛎️</div><h2>Chargement…</h2></div></div>`; return; }
   document.body.dataset.hotel = (S.open && S.rooms[S.open]) ? S.rooms[S.open].hotel : S.hotel;
   const rl = role(); document.body.classList.toggle('mgr', (rl === 'mgr' || rl === 'brico') && !(rl === 'brico' && S.open));
+  // Mode travaux : un écran à part (travaux.js), pour les gérants et l'intendant.
+  const trOn = S.mode === 'travaux' && typeof viewTravaux === 'function' && (rl === 'mgr' || rl === 'brico') && !S.open;
+  document.body.classList.toggle('trmode', trOn);
+  if (trOn) { document.body.dataset.hotel = 'arc'; a.innerHTML = viewTravaux(); updateBadge(); return; }
   a.innerHTML = rl === 'mgr' ? viewManager() : (S.open ? viewCleanRoom() : (rl === 'brico' ? viewBrico() : viewCleanHome()));
   updateBadge();
 }
@@ -589,7 +593,7 @@ function viewHome() {
   const stat = (n, l, cls, go) => `<button class="stat" data-a="go" data-k="${go[0]}" data-s="${go[1] || ''}"><b class="${n ? cls : ''}">${n}</b><span>${l}</span></button>`;
   return `<div class="wrap home">
     <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div>
-      <div class="top-acts">${ptButton()}<button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div></div>
+      <div class="top-acts">${typeof trButton === 'function' ? trButton() : ''}${ptButton()}<button class="avatar" data-a="go" data-k="settings" aria-label="Réglages">${esc(initials)}</button></div></div>
     ${S.me.readonly ? '<div class="robar">👁 <span><b>Lecture seule</b> · vous pouvez tout regarder sans risque, rien n’est modifié.</span></div>' : ''}
     <div class="segc" role="group" aria-label="Hôtel">${scopes.map(([k, l]) => `<button data-a="scope" data-k="${k}" aria-pressed="${S.scope === k}">${esc(l)}</button>`).join('')}</div>
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
@@ -2137,7 +2141,7 @@ function viewBrico() {
   }
   const [, gt] = greet(), myClean = myCleanings();
   return `<div class="wrap home">${pvBar()}
-    <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div></div>
+    <div class="home-top"><div><p class="date">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</p><h1>${gt} ${esc(first(S.me.label))}</h1></div><div class="top-acts">${typeof trButton === 'function' ? trButton() : ''}</div></div>
     ${myClean.length ? `<div class="card"><h3>🧹 Mes nettoyages</h3><div class="group">${myClean.map(cleanRow).join('')}</div></div>` : ''}
     <div class="today"><p class="cap">Aujourd’hui</p><div class="stats">
       <button class="stat" data-a="go" data-k="issues"><b class="${todo.length ? 'n-blue' : ''}">${todo.length}</b><span>à faire</span></button>
@@ -2454,7 +2458,7 @@ function openSheet(kind, html, cls) {
   S.sheet = kind; s.innerHTML = `<div class="panel ${cls || ''}" role="dialog" aria-modal="true">${html}</div>`; s.hidden = false;
   if (top) { const p = s.querySelector('.panel'); if (p) p.scrollTop = top; }
 }
-function closeSheet() { S.sheet = null; S.rep = null; const s = $('sheet'); s.hidden = true; s.innerHTML = ''; if (S.dirty) softRender(); }
+function closeSheet() { S.sheet = null; S.rep = null; const s = $('sheet'); s.hidden = true; s.innerHTML = ''; if (S.dirty || S.mode === 'travaux') softRender(); }
 function refreshSheet() {
   if (!S.sheet) return;
   if (S.sheet.startsWith('room:')) roomSheet(S.sheet.slice(5));

@@ -390,6 +390,21 @@ body.mgr .bar{border-radius:16px 16px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.12)
 #tapplay .tp-ico{width:120px;height:120px;border-radius:50%;background:#16a34a;display:flex;align-items:center;justify-content:center;font-size:54px;padding-left:10px;box-shadow:0 10px 40px rgba(0,0,0,.4);animation:tpp 1.4s ease-in-out infinite}
 #tapplay .tp-t{font-size:22px;font-weight:700}#tapplay .tp-s{font-size:20px;font-family:'Noto Naskh Arabic',serif}
 @keyframes tpp{0%,100%{transform:scale(1)}50%{transform:scale(1.07)}}
+/* Mode travaux : un écran à part, teinte chaude « chantier », pour ne pas le confondre avec la réception. */
+body.trmode,body.mgr.trmode{--hz:#FBE3C0;--hz-ink:#8A4B00;--bg:#F6F2EC;--accent:#B45F06;--accent-soft:#FBE8CF;--accent-ink:#FFFFFF}
+@media (prefers-color-scheme: dark){body.trmode,body.mgr.trmode{--hz:#4A3413;--hz-ink:#FFD08A;--bg:#0D0A06;--accent:#FFB454;--accent-soft:#3D2A10;--accent-ink:#1F1405}}
+.three{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;align-items:end}
+.tr-save{font-size:12.5px;color:var(--ink2);margin-top:-8px}
+.tr-res{background:var(--hz);color:var(--hz-ink);border-radius:14px;padding:10px 12px;line-height:1.35}
+.tr-eq{display:flex;flex-wrap:wrap;gap:8px}
+.tr-eq button{border:1px solid var(--line);background:var(--card);border-radius:999px;padding:9px 13px;font-size:14px;font-weight:600;color:var(--ink2);min-height:40px}
+.tr-eq button[aria-pressed="true"]{background:var(--green-soft);border-color:var(--green);color:var(--green)}
+.tr-gaps{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px;font-size:14.5px}
+.tr-th{width:46px;height:46px;border-radius:10px;object-fit:cover;flex:none;background:var(--line)}
+.tr-ph{display:flex;align-items:center;justify-content:center;font-size:22px}
+.tr-prop{display:flex;flex-direction:column;gap:8px;padding:12px 0;border-top:.5px solid var(--line)}
+.tr-prop:first-of-type{border-top:0;padding-top:0}
+.shot:disabled{opacity:.5}
 </style>
 </head>
 <body>
@@ -400,5 +415,6 @@ body.mgr .bar{border-radius:16px 16px 0 0;box-shadow:0 -4px 20px rgba(0,0,0,.12)
 <div id="print"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script src="app.js"></script>
+<script src="travaux.js"></script>
 </body>
 </html>
