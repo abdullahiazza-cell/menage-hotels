@@ -1,5 +1,5 @@
 // Service worker : coquille hors-ligne + notifications.
-const VERSION = 'v45';
+const VERSION = 'v46';
 const SHELL = ['./', './index.html', './app.js', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/badge-96.png', './img/archange.jpg', './img/paris.jpg', './img/chateau.jpg'];
 
 self.addEventListener('install', (e) => {
@@ -12,7 +12,8 @@ self.addEventListener('fetch', (e) => {
   const u = new URL(e.request.url);
   if (e.request.method !== 'GET' || u.origin !== self.location.origin) return;
   // Réseau d'abord (pour recevoir les mises à jour), cache si pas de connexion.
-  e.respondWith(fetch(e.request).then((r) => {
+  // « no-cache » : on redemande toujours au serveur si le fichier a changé, sans attendre la fin du cache du navigateur.
+  e.respondWith(fetch(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }).then((r) => {
     if (r.ok) { const copy = r.clone(); caches.open(VERSION).then((c) => c.put(e.request, copy)); }
     return r;
   }).catch(() => caches.match(e.request).then((r) => r || caches.match('./index.html'))));

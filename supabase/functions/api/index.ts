@@ -358,7 +358,7 @@ async function actState(me: any, device: any) {
 async function regState() {
   const since = new Date(Date.now() - 120 * 864e5).toISOString().slice(0, 10);
   const [{ data: occ }, { data: pecs }, { data: inbox }, { data: log }, { data: relances }] = await Promise.all([
-    sb.from("occupants").select("*").or(`statut.eq.present,sortie.gte.${since}`).order("nom"),
+    sb.from("occupants").select("*").neq("statut", "supprime").or(`statut.eq.present,sortie.gte.${since}`).order("nom"),
     sb.from("pecs").select("*").order("debut", { ascending: false }),
     sb.from("pec_inbox").select("*").order("received_at", { ascending: false }).limit(300),
     sb.from("registre_log").select("*").order("ts", { ascending: false }).limit(600),
@@ -471,6 +471,36 @@ async function regAction(me: any, a: string, body: any) {
     row.created_by = me.id; if (Array.isArray(body.docs)) row.docs = body.docs.slice(0, 10);
     const { error } = await sb.from("pecs").insert(row); if (error) throw new E("db");
     await regLog(me, "PEC ajoutée", o.id, `${fullName(o)} · ${row.financeur || ""}`, raison, `${row.debut || "?"} → ${row.fin || "?"}`);
+    return { ok: true };
+  }
+  // Doublon : la fiche n'est jamais détruite, seulement retirée du registre (statut « supprime »), pour pouvoir la rétablir.
+  // Si on indique la fiche à garder, ses prises en charge et ses lignes de vérification y sont déplacées.
+  if (a === "reg_occ_delete") {
+    if (!raison) throw new E("reason");
+    const { data: o } = await sb.from("occupants").select("*").eq("id", body.id).single(); if (!o || o.statut === "supprime") throw new E("bad");
+    let keep: any = null, moved = 0;
+    if (body.keep_id) {
+      const { data: k } = await sb.from("occupants").select("*").eq("id", String(body.keep_id)).single();
+      if (!k || k.id === o.id || k.statut === "supprime") throw new E("bad");
+      keep = k;
+      const { data: mv, error: e1 } = await sb.from("pecs").update({ occupant_id: k.id, updated_at: now, updated_by: me.id }).eq("occupant_id", o.id).select("id"); if (e1) throw new E("db");
+      moved = (mv || []).length;
+      await sb.from("pec_inbox").update({ occupant_id: k.id }).eq("occupant_id", o.id);
+      await sb.from("verif_dates").update({ occupant_id: k.id }).eq("occupant_id", o.id);
+    }
+    const { error } = await sb.from("occupants").update({ statut: "supprime", updated_at: now, updated_by: me.id }).eq("id", o.id); if (error) throw new E("db");
+    const place = await placeLabel(o.room_id, o.hotel, o.formule);
+    if (keep) {
+      const kplace = await placeLabel(keep.room_id, keep.hotel, keep.formule), pe = moved ? ` · ${moved} prise${moved > 1 ? "s" : ""} en charge déplacée${moved > 1 ? "s" : ""}` : "";
+      await regLog(me, "Fiche supprimée (doublon)", o.id, `${fullName(o)} · ${place}`, raison, `fiche gardée : ${fullName(keep)} · ${kplace}${pe}`);
+      await regLog(me, "Doublon supprimé", keep.id, `${fullName(keep)} · ${kplace}`, raison, `l’autre fiche (${place}) a été supprimée${pe ? pe.replace("déplacée", "récupérée") : ""}`);
+    } else await regLog(me, "Fiche supprimée", o.id, `${fullName(o)} · ${place}`, raison, "");
+    return { ok: true, moved };
+  }
+  if (a === "reg_occ_restore") {
+    const { data: o } = await sb.from("occupants").select("*").eq("id", body.id).single(); if (!o || o.statut !== "supprime") throw new E("bad");
+    await sb.from("occupants").update({ statut: o.sortie ? "sorti" : "present", updated_at: now, updated_by: me.id }).eq("id", o.id);
+    await regLog(me, "Fiche rétablie", o.id, `${fullName(o)} · ${await placeLabel(o.room_id, o.hotel, o.formule)}`, raison || "Suppression annulée", "");
     return { ok: true };
   }
   if (a === "reg_pec_delete") {
@@ -1333,7 +1363,7 @@ async function handle(req: Request) {
     }
 
     // --- registre ---
-    case "reg_occ_save": case "reg_occ_exit": case "reg_occ_return": case "reg_pec_save": case "reg_pec_delete": case "reg_inbox_set": case "reg_inbox_apply":
+    case "reg_occ_save": case "reg_occ_exit": case "reg_occ_return": case "reg_occ_delete": case "reg_occ_restore": case "reg_pec_save": case "reg_pec_delete": case "reg_inbox_set": case "reg_inbox_apply":
       return await regAction(me, a, body);
     // --- vérification des dates avant facturation ---
     case "verif_validate": case "verif_unvalidate": case "verif_save": case "verif_add":

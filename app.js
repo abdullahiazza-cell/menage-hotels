@@ -223,8 +223,42 @@ function softRender() {
 document.addEventListener('focusout', () => setTimeout(() => { if (S.dirty && !isTyping()) softRender(); }, 300));
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') refresh(); });
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
+// Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
+// Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
+const APP_V = 'v46';
+async function onlineVersion() {
+  const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
+  const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
+}
+async function doUpdate(manual) {
+  if (manual) toast('Mise à jour…', 15000);
+  try {
+    if ('serviceWorker' in navigator) {
+      const reg = await navigator.serviceWorker.getRegistration();
+      if (reg) { const changed = new Promise((res) => { navigator.serviceWorker.addEventListener('controllerchange', res, { once: true }); setTimeout(res, 6000); }); await reg.update().catch(() => {}); if (reg.installing || reg.waiting) await changed; }
+    }
+    if (window.caches) { const ks = await caches.keys(); await Promise.all(ks.map((k) => caches.delete(k))); }
+  } catch (e) { /* on recharge quand même */ }
+  location.reload();
+}
+function updBanner(v) {
+  if ($('upd')) return; const b = document.createElement('button'); b.id = 'upd'; b.dataset.a = 'appUpdate';
+  b.textContent = `🔄 Nouvelle version (${v}) · toucher pour mettre à jour`; document.body.appendChild(b);
+}
+async function checkUpdate() {
+  try {
+    const v = await onlineVersion(); if (!v || v === APP_V) return;
+    let tried = null; try { tried = sessionStorage.getItem('mh-upd'); } catch (e) {}
+    const busy = S.sheet || S.rec || $('viewer') || isTyping();
+    if (tried === v || busy) { updBanner(v); return; }
+    try { sessionStorage.setItem('mh-upd', v); } catch (e) {}
+    doUpdate(false);
+  } catch (e) { /* pas de réseau : on réessaiera */ }
+}
+setTimeout(checkUpdate, 3000); setInterval(() => { if (document.visibilityState === 'visible') checkUpdate(); }, 300000);
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkUpdate(); });
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('sw.js').catch(() => {});
+  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => {});
   navigator.serviceWorker.addEventListener('message', (e) => { if (!e.data) return; if (e.data.type === 'refresh') refresh(); if (e.data.type === 'open' && e.data.conv) openConvWhenReady(e.data.conv); if (e.data.type === 'open' && e.data.point) refresh(true).then(() => pointSheet(e.data.point, true)); if (e.data.type === 'open' && e.data.sheet === 'courrier') refresh(true).then(() => { if (S.courrier) courrierSheet(); }); });
 }
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installEvt = e; if (S.sheet === 'onboard') onboardSheet(); });
@@ -612,6 +646,8 @@ const isResto = (o) => o.formule === 'restauration';
 // Logé qui mange aussi au restaurant sur place (case « Repas sur place » de la fiche).
 const eats = (o) => !isResto(o) && !!o.resto;
 const occCount = (L) => { const r = L.filter(isResto).length, h = L.length - r, m = L.filter(eats).length; return `${h} logé${h > 1 ? 's' : ''}${m ? ` (dont ${m} avec repas)` : ''}${r ? ` · ${r} repas seul${r > 1 ? 's' : ''}` : ''}`; };
+const sameWho = (a, b) => String(a.nom || '').trim().toUpperCase() === String(b.nom || '').trim().toUpperCase() && first(a.prenom || '').toLowerCase() === first(b.prenom || '').toLowerCase();
+const twins = (o) => presentOcc().filter((x) => x.id !== o.id && sameWho(x, o));
 const occHist = (id) => (S.reg.log || []).filter((l) => l.occupant_id === id);
 const activePecs = (id) => { const t = todayISO(); return pecsOf(id).filter((p) => (!p.debut || p.debut <= t) && (!p.fin || p.fin >= t)); };
 const occPlace = (o) => { if (isResto(o)) return 'restauration'; const r = o.room_id && S.rooms[o.room_id]; return r ? placeShort(r) : 'sans chambre'; };
@@ -696,7 +732,9 @@ function regInbox() {
   return `${scopeSeg(inboxTodo())}${todo.length ? `<p class="muted">Prises en charge reçues, pas encore rattachées à une personne du registre.</p><div class="col">${todo.map(pecInCard).join('')}</div>` : '<div class="card empty"><div class="e">✅</div><h3>Rien à traiter</h3></div>'}
     ${done.length ? `<button class="btn ghost" data-a="rDone">${S.rDone ? 'Masquer' : 'Voir'} les ${done.length} déjà traitées</button>${S.rDone ? `<div class="col">${done.map(pecInCard).join('')}</div>` : ''}` : ''}`;
 }
-const logRow = (l) => `<div class="prow ro"><span class="pr-t"><b>${esc(l.action || '')}</b><span>${esc(l.cible || '')}</span>${l.details ? `<span class="sm">${esc(l.details)}</span>` : ''}<span class="muted">✍️ ${esc(l.by_label || '?')} · ${when(l.ts)}${l.raison ? ' · « ' + esc(l.raison) + ' »' : ''}</span></span></div>`;
+// Une fiche supprimée peut être rétablie depuis sa ligne du journal, tant qu'elle ne l'a pas déjà été.
+const canRestore = (l) => /^Fiche supprimée/.test(l.action || '') && l.occupant_id && canReg('reg_full') && (S.reg.log.find((x) => x.occupant_id === l.occupant_id && /^Fiche (supprimée|rétablie)/.test(x.action || '')) || {}).id === l.id;
+const logRow = (l) => `<div class="prow ro"><span class="pr-t"><b>${esc(l.action || '')}</b><span>${esc(l.cible || '')}</span>${l.details ? `<span class="sm">${esc(l.details)}</span>` : ''}<span class="muted">✍️ ${esc(l.by_label || '?')} · ${when(l.ts)}${l.raison ? ' · « ' + esc(l.raison) + ' »' : ''}</span></span>${canRestore(l) ? `<button class="btn small" data-a="occRestore" data-id="${esc(l.occupant_id)}">Rétablir</button>` : ''}</div>`;
 function regJournal() {
   return `<p class="muted">Qui a fait quoi, quand et pourquoi.</p><div class="group">${S.reg.log.map(logRow).join('') || '<p class="muted" style="padding:14px">Vide.</p>'}</div>`;
 }
@@ -709,6 +747,7 @@ function occSheet(id, preset) {
   openSheet('occ:' + (id || ''), `${sheetHead(id ? esc(occName(o)) : 'Nouvelle arrivée')}
     ${id && o.statut === 'sorti' ? `<div class="banner c-amber">Parti le ${fdate(o.sortie)}</div>` : ''}
     ${id && o.statut !== 'sorti' ? (() => { const f = finsList().find((x) => x.o.id === id); if (!f) return ''; const rt = relanceTxt(f); return `<div class="banner c-${f.late ? 'red' : 'amber'}">${f.late ? `PEC finie le ${fdate(f.p.fin)}` : `PEC finit le ${fdate(f.p.fin)}`}<br><span class="sm">${esc(rt.t)}</span></div>`; })() : ''}
+    ${id && o.statut !== 'sorti' && twins(o).length ? `<div class="banner c-amber">⚠️ Doublon possible : ${twins(o).map((x) => `${esc(occName(x))} est aussi en ${esc(occPlace(x))}`).join(', ')}.${ro ? '' : `<br><button class="btn small" data-a="occDel" data-id="${id}" style="margin-top:8px">Supprimer cette fiche-ci</button>`}</div>` : ''}
     <fieldset class="card form" ${ro ? 'disabled' : ''}>
       <div class="two"><label>Prénom<input id="o-prenom" value="${esc(o.prenom || '')}"></label><label>Nom<input id="o-nom" value="${esc(o.nom || '')}"></label></div>
       <div class="two"><label>Naissance<input id="o-naissance" type="date" value="${esc(o.naissance || '')}"></label><label>Catégorie<select id="o-cat"><option value="">—</option>${CATS.map((c) => opt(c, o.categorie)).join('')}</select></label></div>
@@ -724,6 +763,7 @@ function occSheet(id, preset) {
       ${pecs.length ? `<div class="group">${pecs.map((p) => { const t = todayISO(), on = (!p.debut || p.debut <= t) && (!p.fin || p.fin >= t);
         return `<button class="prow" data-a="pecOpen" data-id="${p.id}"><span class="pr-t"><b>${esc(p.financeur || 'Financeur ?')}${p.reference ? ' · réf. ' + esc(p.reference) : ''}</b><span class="muted">${fdate(p.debut)} → ${fdate(p.fin)}${p.tarif ? ' · ' + esc(p.tarif) + ' €' : ''}${p.repas ? ' · repas : ' + esc(p.repas) : ''}</span></span><span class="pill ${on ? 'p-green' : 'p-plain'}">${on ? 'En cours' : (p.fin && p.fin < t ? 'Terminée' : 'À venir')}</span></button>`; }).join('')}</div>` : '<p class="muted">Aucune pour l’instant.</p>'}</div>
       ${ro ? '' : (o.statut === 'sorti' ? `<button class="btn" data-a="occReturn" data-id="${id}">Annuler le départ</button>` : `<button class="btn bad" data-a="occExit" data-id="${id}">Départ</button>`)}
+      ${ro ? '' : `<button class="btn ghost" data-a="occDel" data-id="${id}">🗑 Supprimer cette fiche (doublon ou erreur)</button>`}
       ${(() => { const H = occHist(id); if (!H.length) return ''; const show = S.occHistAll === id ? H : H.slice(0, 4);
         return `<div class="card"><h3>Historique</h3><p class="muted sm">Qui a modifié quoi sur cette fiche, quand et pourquoi.</p><div class="group flat">${show.map(logRow).join('')}</div>${H.length > show.length ? `<button class="btn small ghost" data-a="occHistAll" data-id="${id}">Voir les ${H.length} lignes</button>` : ''}</div>`; })()}` : ''}`);
 }
@@ -741,6 +781,20 @@ function pecSheet(occId, pecId) {
       <button class="btn pri" data-a="pecSave" data-occ="${o.id}" data-id="${pecId || ''}">Enregistrer</button>
       ${pecId ? `<button class="btn ghost" data-a="pecDel" data-id="${pecId}" data-occ="${o.id}">Supprimer cette prise en charge</button>` : ''}`}</fieldset>
     <button class="btn ghost" data-a="occOpen" data-id="${o.id}">← Retour à la fiche</button>`);
+}
+// Suppression d'un doublon : on choisit la fiche à garder, les prises en charge la suivent, et tout est noté dans le journal (avec « Rétablir »).
+function delSheet(id) {
+  const o = occById(id), n = pecsOf(id).length;
+  const cands = S.reg.occ.filter((x) => x.id !== id).sort((a, b) => sameWho(b, o) - sameWho(a, o) || (a.statut === 'sorti') - (b.statut === 'sorti') || String(a.nom || '').localeCompare(String(b.nom || ''), 'fr'));
+  const tw = cands.filter((x) => sameWho(x, o));
+  openSheet('occdel', `${sheetHead('Supprimer la fiche')}<p><b>${esc(occName(o))}</b> · ${esc(hotelName(o.hotel))} · ${esc(occPlace(o))}${o.entree ? ' · depuis le ' + fdate(o.entree) : ''}</p>
+    <div class="card form">
+      <label>Quelle fiche garde-t-on ?<select id="dl-keep">${opt('', tw.length ? tw[0].id : '', 'Aucune : ce n’est pas un doublon, juste une erreur')}${cands.map((x) => opt(x.id, tw.length ? tw[0].id : '', `${occName(x)} · ${hotelName(x.hotel)} · ${occPlace(x)}${x.statut === 'sorti' ? ' · parti' : ''}`)).join('')}</select></label>
+      <p class="muted sm">${n ? `Cette fiche a ${n} prise${n > 1 ? 's' : ''} en charge : ${n > 1 ? 'elles seront déplacées' : 'elle sera déplacée'} sur la fiche gardée. Sans fiche gardée, ${n > 1 ? 'elles sont retirées' : 'elle est retirée'} avec la fiche.` : 'Cette fiche n’a aucune prise en charge.'} La chambre n’est pas mise à blanc.</p>
+      <label>Pourquoi ? (obligatoire)<input id="dl-raison" value="${tw.length ? 'Doublon' : ''}" placeholder="Ex. : doublon, saisie par erreur"></label>
+      <button class="btn bad" data-a="occDelGo" data-id="${id}">Supprimer cette fiche</button>
+      <p class="muted sm">Rien n’est perdu : la suppression est notée dans le Journal avec ton nom, et un bouton « Rétablir » permet de revenir en arrière.</p></div>
+    <button class="btn ghost" data-a="occOpen" data-id="${id}">← Retour à la fiche</button>`);
 }
 function exitSheet(id) {
   const o = occById(id), r = o.room_id && S.rooms[o.room_id], others = o.room_id ? occOfRoom(o.room_id).filter((x) => x.id !== id).length : 0;
@@ -2311,6 +2365,7 @@ function viewSettings() {
   return `<div class="card"><h2>📱 Ce téléphone</h2>
       <div class="row"><button class="btn ${notif ? 'ok' : 'pri'}" data-a="pushOn">${notif ? '✓ Notifications activées' : '🔔 Activer les notifications'}</button><button class="btn" data-a="micTest">🎤 Tester le micro</button></div>
       ${!isStandalone() ? '<p class="muted">Astuce : installe l’appli sur l’écran d’accueil pour recevoir les notifications.</p>' : ''}
+      <button class="btn" data-a="appUpdate">🔄 Mettre à jour l’appli <span class="muted sm">· version ${APP_V}</span></button>
       <button class="btn ghost" data-a="logout">Se déconnecter de ce téléphone</button></div>
     ${pointSubsCard()}
     <div class="card"><h2>⏱️ Temps prévus</h2><p class="muted">Servent à répartir le travail selon les heures de chacune.</p>
@@ -2482,6 +2537,10 @@ const roomsPatch = (ids, patch) => api('rooms_patch', { ids, patch: toPatch(patc
 async function saveCfg(next) { await act(() => api('config_set', { data: next }), 'Enregistré'); }
 const A = {
   reload() { location.reload(); },
+  async appUpdate() {
+    try { const v = await onlineVersion(); if (v === APP_V) { toast(`L’appli est à jour (${APP_V}).`); return; } } catch (e) { toast('Pas de connexion pour vérifier. Réessaie.'); return; }
+    doUpdate(true);
+  },
   codeGo() { const v = ($('codeIn').value || '').toUpperCase().replace(/[^0-9A-Z]/g, ''); if (v.length !== 8) { toast('Le code fait 8 lettres et chiffres.'); return; } S.act = { code: v, info: null, checked: false, pin: '' }; render(); },
   codeReset() { S.act = { code: null, info: null, checked: true, pin: '' }; history.replaceState(null, '', location.pathname); render(); },
   pinKey(d) { const A_ = S.act; if (A_.busy || A_.pin.length >= 4) return; A_.pin += d.k; A_.err = null; render(); if (A_.pin.length === 4) { A_.busy = true; pinSubmit().finally(() => { if (S.act) S.act.busy = false; }); } },
@@ -2532,6 +2591,14 @@ const A = {
   occNewRoom(d) { occSheet(null, { hotel: S.rooms[d.id].hotel, room_id: d.id }); },
   occOpen(d) { occSheet(d.id); },
   occHistAll(d) { S.occHistAll = d.id; occSheet(d.id); },
+  occDel(d) { delSheet(d.id); },
+  async occDelGo(d) {
+    const raison = ($('dl-raison').value || '').trim(), keep = $('dl-keep').value || null;
+    if (!raison) { toast('Écris pourquoi tu supprimes cette fiche.'); return; }
+    if (S.confirmDel !== d.id + (keep || '')) { S.confirmDel = d.id + (keep || ''); toast('Touche encore « Supprimer » pour confirmer.'); setTimeout(() => S.confirmDel = null, 5000); return; }
+    if (await act(() => api('reg_occ_delete', { id: d.id, keep_id: keep, raison }), 'Fiche supprimée · visible dans le Journal')) { if (keep && occById(keep)) occSheet(keep); else closeSheet(); }
+  },
+  async occRestore(d) { await act(() => api('reg_occ_restore', { id: d.id }), 'Fiche rétablie'); },
   async occSave(d) {
     const v = (id) => ($(id) && $(id).value || '').trim();
     const body = { id: d.id || undefined, prenom: v('o-prenom'), nom: v('o-nom'), naissance: v('o-naissance'), categorie: v('o-cat'), hotel: v('o-hotel'), room_id: v('o-room') || null, entree: v('o-entree'), telephone: v('o-tel'), notes: v('o-notes'), raison: v('o-raison'), resto: !!($('o-resto') && $('o-resto').checked) };
