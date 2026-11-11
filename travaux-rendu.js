@@ -86,7 +86,7 @@ export function trRendu(o) {
     const key = b.k + '|' + b.c.join(',') + (b.lamp ? 'L' : '');
     if (mats.has(key)) return mats.get(key);
     let m;
-    if (b.k === 6) return b.lamp ? lampMat : skyMat;
+    if (b.k === 6) return b.lamp || b.glow ? lampMat : skyMat;
     else if (b.k === 3) m = new THREE.MeshStandardMaterial({ color: col(b.c), map: T.wood, roughness: 0.52, metalness: 0 });
     else if (b.k === 4) m = new THREE.MeshStandardMaterial({ color: col(b.c), map: T.weave, roughness: 0.97, metalness: 0 });
     else if (b.k === 5) m = new THREE.MeshStandardMaterial({ color: col(b.c), roughness: 0.94, metalness: 0 });
@@ -146,9 +146,13 @@ export function trRendu(o) {
   // Plafonnier : un disque lumineux au milieu du plafond.
   const plafMat = new THREE.MeshBasicMaterial({ color: 0xffffff }); trash.push(plafMat);
   const plaf = (() => { const g = new THREE.CylinderGeometry(0.19, 0.21, 0.05, 36); geos.push(g); const m = new THREE.Mesh(g, plafMat); m.position.set(0, sc.H - 0.026, 0); m.visible = false; scene.add(m); return m; })();
+  // Éclairage choisi dans les finitions : spots encastrés et corniche lumineuse, visibles quand on regarde depuis l'intérieur.
+  const L = sc.lum || { plaf: true, spots: [], corniche: false }, ceilLights = [];
+  { const g = new THREE.CylinderGeometry(0.045, 0.045, 0.012, 20); geos.push(g); L.spots.forEach(([x, z]) => { const m = new THREE.Mesh(g, plafMat); m.position.set(x, sc.H - 0.007, z); m.visible = false; scene.add(m); ceilLights.push(m); }); }
+  if (L.corniche) [[0, -1], [1, 0], [0, 1], [-1, 0]].forEach(([nx, nz]) => { const along = nz ? sc.W - 0.24 : sc.D - 0.24, g = new THREE.BoxGeometry(nz ? along : 0.035, 0.02, nz ? 0.035 : along); geos.push(g); const m = new THREE.Mesh(g, plafMat); m.position.set(nx * (sc.W / 2 - 0.12), sc.H - 0.11, nz * (sc.D / 2 - 0.12)); m.visible = false; scene.add(m); ceilLights.push(m); });
   /* ----- meubles ----- */
   const lamps = [];
-  for (let i = 1; i < sc.B.length; i++) { const b = sc.B[i], m = mesh(b, { cast: !!b.cast && b.k !== 6 }); scene.add(m); if (b.mi >= 0) { m.userData.mi = b.mi; (byItem[b.mi] = byItem[b.mi] || []).push(m); } if (b.lamp) { lamps.push(b.t); lampOf.push(b.mi); } }
+  for (let i = 1; i < sc.B.length; i++) { const b = sc.B[i], m = mesh(b, { cast: !!b.cast && b.k !== 6 }); scene.add(m); if (b.mi >= 0) { m.userData.mi = b.mi; (byItem[b.mi] = byItem[b.mi] || []).push(m); } if (b.lamp || b.glow) { lamps.push(b.glow ? [b.t[0], b.t[1] + 0.12, b.t[2]] : b.t); lampOf.push(b.mi === undefined ? -1 : b.mi); } }
   // Pose un modèle à la place d'un meuble en blocs : même emplacement, même orientation, à l'échelle de son emprise au sol.
   function poser(f, it, olds) {
     glb(f).then((src) => {
@@ -166,7 +170,7 @@ export function trRendu(o) {
   const selGeo = new THREE.PlaneGeometry(1, 1); geos.push(selGeo);
   const selMesh = new THREE.Mesh(selGeo, selMat); selMesh.rotation.x = -Math.PI / 2; selMesh.visible = false; selMesh.renderOrder = 5; scene.add(selMesh); noAO.push(selMesh);
   const half = (it) => ((it.r || 0) % 180 ? [it.d / 2, it.w / 2] : [it.w / 2, it.d / 2]);
-  const lampL = lamps.slice(0, 4).map((t, i) => { const l = new THREE.PointLight(0xffc988, 0.55, 3.4, 2); l.position.set(t[0], t[1] - 0.02, t[2]); scene.add(l); if (lampOf[i] >= 0) (byItem[lampOf[i]] = byItem[lampOf[i]] || []).push(l); return l; });
+  const lampL = lamps.slice(0, 6).map((t, i) => { const l = new THREE.PointLight(0xffc988, 0.55, 3.4, 2); l.position.set(t[0], t[1] - 0.02, t[2]); scene.add(l); if (lampOf[i] >= 0) (byItem[lampOf[i]] = byItem[lampOf[i]] || []).push(l); return l; });
   /* ----- plante verte ----- */
   (sc.plants || []).forEach(([px, pz]) => {
     let sd = 7; const rr = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
@@ -213,7 +217,7 @@ export function trRendu(o) {
   let mood = null;
   function setMood(soir) {
     if (mood === soir) return; mood = soir;
-    sun.visible = !soir; spot.visible = soir; fill.intensity = soir ? 0.16 : 0.42; scene.environmentIntensity = soir ? 0.14 : 0.5;
+    sun.visible = !soir; spot.visible = soir; spot.intensity = L.plaf ? 11 : L.spots.length ? 9 : 2.5; fill.intensity = soir ? 0.16 + (L.corniche ? 0.34 : 0) : 0.42; fill.color.set(soir && L.corniche ? 0xffe2bd : 0xffffff); scene.environmentIntensity = soir ? 0.14 : 0.5;
     lampL.forEach((l) => { l.intensity = soir ? 2.1 : 0.45; });
     lampMat.color.setRGB(soir ? 3.4 : 1.25, soir ? 2.5 : 1.13, soir ? 1.45 : 0.92); plafMat.color.setRGB(soir ? 3.2 : 0.98, soir ? 2.8 : 0.97, soir ? 2.2 : 0.95);
     skyMat.color.setRGB(soir ? 0.035 : 1.85, soir ? 0.05 : 2.0, soir ? 0.10 : 2.25); ceilMat.color.set(soir ? 0x6f675c : 0xe9e8e4);
@@ -249,7 +253,7 @@ export function trRendu(o) {
     camera.fov = fov; camera.aspect = w / h; camera.position.set(eye[0], eye[1], eye[2]); camera.up.set(0, 1, 0); camera.lookAt(tg[0], tg[1], tg[2]); camera.updateProjectionMatrix();
     // Vue d'ensemble : les murs entre l'œil et la pièce s'effacent. De l'intérieur : tout est là, plafond compris.
     sc.walls.forEach((wl, i) => { wallGroups[i].visible = inside || !((eye[0] - wl.c[0]) * wl.n[0] + (eye[2] - wl.c[1]) * wl.n[1] > 0); });
-    ceil.visible = inside; plaf.visible = inside; sdbGlass.forEach((m) => { m.visible = !inside; }); if (sdbWall) sdbWall.visible = inside;
+    ceil.visible = inside; plaf.visible = inside && L.plaf; ceilLights.forEach((m) => { m.visible = inside; }); sdbGlass.forEach((m) => { m.visible = !inside; }); if (sdbWall) sdbWall.visible = inside;
     { const id = o.sel ? o.sel() : null, it = id ? (sc.models || []).find((m) => m.id === id) : null;
       if (it && !it.tv) { const [hx, hz] = half(it); selMesh.visible = true; selMesh.scale.set(hx * 2 + 0.14, hz * 2 + 0.14, 1); selMesh.position.set(it.cx, 0.016, it.cz); } else selMesh.visible = false; }
     if (fx) {
