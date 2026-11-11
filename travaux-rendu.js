@@ -12,6 +12,15 @@ import { GTAOPass } from './vendor/three/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from './vendor/three/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from './vendor/three/postprocessing/OutputPass.js';
 import { ShaderPass } from './vendor/three/postprocessing/ShaderPass.js';
+import { GLTFLoader } from './vendor/three/loaders/GLTFLoader.js';
+
+// Vrais modèles 3D (libres, dossier vendor/modeles) : ils remplacent les blocs dès qu'ils sont chargés. Gardés en mémoire d'une chambre à l'autre.
+const MODELES = { fauteuil: 'SheenChair.glb', plante: 'DiffuseTransmissionPlant.glb' };
+const glbCache = new Map(); // (le tissu du fauteuil est reteint en bleu gris, comme les chaises)
+function glb(f) {
+  if (!glbCache.has(f)) glbCache.set(f, new GLTFLoader().loadAsync('./vendor/modeles/' + f).then((g) => { g.scene.traverse((x) => { if (x.isMesh && x.material && /^fabric/i.test(x.material.name || '')) x.material.color.setRGB(0.26, 0.44, 0.66, THREE.SRGBColorSpace); }); return g.scene; }).catch((e) => { glbCache.delete(f); throw e; }));
+  return glbCache.get(f);
+}
 
 const col = (c) => new THREE.Color().setRGB(c[0], c[1], c[2], THREE.SRGBColorSpace);
 const rnd = (a, b) => a + Math.random() * (b - a);
@@ -138,12 +147,26 @@ export function trRendu(o) {
   const plaf = (() => { const g = new THREE.CylinderGeometry(0.19, 0.21, 0.05, 36); geos.push(g); const m = new THREE.Mesh(g, plafMat); m.position.set(0, sc.H - 0.026, 0); m.visible = false; scene.add(m); return m; })();
   /* ----- meubles ----- */
   const lamps = [];
-  for (let i = 1; i < sc.B.length; i++) { const b = sc.B[i]; scene.add(mesh(b, { cast: !!b.cast && b.k !== 6 })); if (b.lamp) lamps.push(b.t); }
+  const byItem = {}, later = [];
+  for (let i = 1; i < sc.B.length; i++) { const b = sc.B[i], m = mesh(b, { cast: !!b.cast && b.k !== 6 }); scene.add(m); if (b.mi >= 0) (byItem[b.mi] = byItem[b.mi] || []).push(m); if (b.lamp) lamps.push(b.t); }
+  // Pose un modèle à la place d'un meuble en blocs : même emplacement, même orientation, à l'échelle de son emprise au sol.
+  function poser(f, it, olds) {
+    glb(f).then((src) => {
+      if (dead) return;
+      const inner = src.clone(true), kill = []; inner.traverse((x) => { if (x.isLight || x.isCamera) kill.push(x); else if (x.isMesh) { x.castShadow = true; x.receiveShadow = true; } }); kill.forEach((x) => x.removeFromParent());
+      inner.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(inner), sz = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3());
+      const u = it.fitH ? it.h / sz.y : Math.min(1.15, it.w / sz.x); // jamais plus large que la place prévue sur le plan inner.position.set(-c.x, -bb.min.y, -c.z);
+      const g = new THREE.Group(); g.add(inner); g.scale.setScalar(u); g.position.set(it.x, 0, it.z); g.rotation.y = -(it.r || 0) * Math.PI / 180; scene.add(g);
+      olds.forEach((m) => { m.visible = false; }); ask();
+    }).catch((e) => console.warn('modèle', f, e));
+  }
+  (sc.models || []).forEach((it, i) => { if (MODELES[it.t]) later.push(() => poser(MODELES[it.t], it, byItem[i] || [])); });
   const lampL = lamps.slice(0, 4).map((t) => { const l = new THREE.PointLight(0xffc988, 0.55, 3.4, 2); l.position.set(t[0], t[1] - 0.02, t[2]); scene.add(l); return l; });
   /* ----- plante verte ----- */
   (sc.plants || []).forEach(([px, pz]) => {
     let sd = 7; const rr = () => { sd = (sd * 16807) % 2147483647; return sd / 2147483647; };
-    const add = (g, m, x, y, z, cast) => { geos.push(g); const me = new THREE.Mesh(g, m); me.position.set(px + x, y, pz + z); me.castShadow = cast !== false; me.receiveShadow = true; scene.add(me); return me; };
+    const olds = [], add = (g, m, x, y, z, cast) => { geos.push(g); const me = new THREE.Mesh(g, m); me.position.set(px + x, y, pz + z); me.castShadow = cast !== false; me.receiveShadow = true; scene.add(me); olds.push(me); return me; };
+    later.push(() => poser(MODELES.plante, { x: px, z: pz, r: 0, h: 1.25, fitH: true }, olds));
     const pot = new THREE.MeshStandardMaterial({ color: 0xe9e4da, roughness: 0.55 }), soil = new THREE.MeshStandardMaterial({ color: 0x3a2c22, roughness: 1 }), stem = new THREE.MeshStandardMaterial({ color: 0x5a4a32, roughness: 0.9 });
     trash.push(pot, soil, stem);
     add(new THREE.CylinderGeometry(0.15, 0.11, 0.3, 28), pot, 0, 0.15, 0); add(new THREE.CylinderGeometry(0.135, 0.135, 0.02, 24), soil, 0, 0.295, 0, false);
@@ -155,7 +178,7 @@ export function trRendu(o) {
         const f = 0.35 + 0.65 * (k + rr() * 0.6) / 5, y = 0.3 + hgt * f, a = a0 + k * 2.4 + rr(), g = 0.20 + rr() * 0.16;
         const lm = new THREE.MeshStandardMaterial({ color: new THREE.Color().setRGB(0.10 + rr() * 0.05, g + 0.12, 0.10 + rr() * 0.04, THREE.SRGBColorSpace), roughness: 0.42 }); trash.push(lm);
         const lf = new THREE.Mesh(lg, lm), ln = 0.13 + rr() * 0.07; lf.scale.set(ln, 0.006, ln * 0.52);
-        lf.position.set(px + sx * hgt * f + Math.cos(a) * ln * 0.85, y, pz + sz * hgt * f + Math.sin(a) * ln * 0.85); lf.rotation.set(0, -a, 0.35 + rr() * 0.5, 'YXZ'); lf.castShadow = true; lf.receiveShadow = true; scene.add(lf);
+        lf.position.set(px + sx * hgt * f + Math.cos(a) * ln * 0.85, y, pz + sz * hgt * f + Math.sin(a) * ln * 0.85); lf.rotation.set(0, -a, 0.35 + rr() * 0.5, 'YXZ'); lf.castShadow = true; lf.receiveShadow = true; scene.add(lf); olds.push(lf);
       }
     }
   });
@@ -257,7 +280,7 @@ export function trRendu(o) {
   const up = (e) => { pts.delete(e.pointerId); pinch = 0; ask(); };
   const wheel = (e) => { if (cam.mode !== 'porte') cam.dist = Math.min(30, Math.max(1.5, cam.dist * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); ask(); };
   canvas.addEventListener('pointerdown', down); canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up); canvas.addEventListener('wheel', wheel, { passive: false });
-  ask();
+  ask(); later.forEach((fn) => fn());
   return {
     ask,
     snap: () => new Promise((res) => { if (raf) { cancelAnimationFrame(raf); raf = 0; } frame(true); canvas.toBlob((b) => { ask(); res(b); }, 'image/jpeg', 0.93); }),

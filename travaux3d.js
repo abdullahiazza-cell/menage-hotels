@@ -348,9 +348,11 @@ function trScene(roomId, p) {
     if (r.x1 - r.x0 > 90 && r.y1 - r.y0 > 90 && !(sdb && trHit(r, sdb))) B.push(box(r.x0, r.y0, 0, r.x1, r.y1, 1.2, TR_COL.rug, 4));
   }
   const dl = trDecoOf(TR_DECO_TISSU, deco.linge), duvet = dl ? dl[2] : null;
+  const models = []; // pour le rendu soigné : où poser un vrai modèle 3D à la place des blocs
   p.items.forEach((it) => {
-    const dest = it.t === 'tv' ? walls[((it.r || 0) / 90) % 4].boxes : B;
-    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp, soft: c === TR_COL.pillow })); });
+    const dest = it.t === 'tv' ? walls[((it.r || 0) / 90) % 4].boxes : B, mi = models.length;
+    if (it.t !== 'tv') { const m = trDim(it); models.push({ t: it.t, x: (it.x - W / 2) * cm, z: (it.y - D / 2) * cm, r: it.r || 0, w: m.w * cm, d: m.d * cm, h: m.h * cm }); }
+    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp, soft: c === TR_COL.pillow, mi: it.t !== 'tv' ? mi : -1 })); });
   });
   // Une plante verte dans un coin libre (rendu soigné seulement) : jamais devant la porte, la fenêtre ou un meuble.
   const plants = [];
@@ -363,7 +365,7 @@ function trScene(roomId, p) {
   // Point de vue « depuis la porte » : à 50 cm à l'intérieur, à hauteur des yeux, tourné vers le milieu de la pièce.
   const dz = trOpening(p.door, 10, W, D, 50), de = [(((dz.x0 + dz.x1) / 2) - W / 2) * cm, 1.55, (((dz.y0 + dz.y1) / 2) - D / 2) * cm];
   const inward = [[0, 1], [-1, 0], [0, -1], [1, 0]][p.door.wall], dEye = [de[0] + inward[0] * 0.25, 1.55, de[2] + inward[1] * 0.25];
-  return { W: W * cm, D: D * cm, H: H * cm, B, glass, walls, plants, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: sdb ? box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, H, wc, 5) : null, Wc: W, Dc: D, Hc: H, win: { wall: p.win.wall, pos: p.win.pos, w: fw, z0: al, z1: ft }, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
+  return { W: W * cm, D: D * cm, H: H * cm, B, glass, walls, plants, models, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: sdb ? box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, H, wc, 5) : null, Wc: W, Dc: D, Hc: H, win: { wall: p.win.wall, pos: p.win.pos, w: fw, z0: al, z1: ft }, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
 }
 const TR_GL = { gl: null, raf: 0, ask: null, snap: null, three: null, token: null };
 window.addEventListener('resize', () => { if (TR_GL.gl && TR_GL.ask) TR_GL.ask(); });
@@ -704,6 +706,27 @@ Object.assign(A, {
     try { S.trScan = trScanParse(JSON.parse(await f.text())); }
     catch (e) { toast('Ce fichier n’est pas un scan lisible. Dans OpenPlan3D : Export → Editable Plan (JSON).', 7000); return; }
     trScanSheet(d.id);
+  },
+  // Réceptacle : on dépose d'abord le fichier, on choisit ensuite où il va (une chambre, ou une nouvelle pièce d'essai).
+  async trScanDrop() {
+    if (!trCan()) return;
+    const f = await pickFile('.json,application/json,text/plain'); if (!f) return;
+    try { S.trScan = trScanParse(JSON.parse(await f.text())); }
+    catch (e) { toast('Ce fichier n’est pas un scan lisible. Dans OpenPlan3D : Export → Editable Plan (JSON).', 7000); return; }
+    const sc = S.trScan, row = (r) => { const d = trData(r.id), has = trNum(d.len) && trNum(d.wid); return `<button class="prow" data-a="trScanTo" data-id="${esc(r.id)}"><span class="pr-t"><b>${esc(trPlace(r))}</b><span class="muted sm">${has ? `Déjà mesurée : ${trM(trNum(d.len))} × ${trM(trNum(d.wid))} (sera remplacé)` : 'Pas encore mesurée'}</span></span><span class="chev">›</span></button>`; };
+    openSheet('trscanw', `<div class="row between"><h2>Scan lu ✓</h2><button class="btn small" data-a="close">Annuler</button></div>
+      <div class="card"><h3>📏 ${trM(sc.W)} × ${trM(sc.D)} · hauteur ${trM(sc.H)}</h3><p class="muted">${sc.items.length} meuble${sc.items.length > 1 ? 's' : ''} reconnu${sc.items.length > 1 ? 's' : ''}${sc.sdb ? ', salle de bain repérée' : ''}.</p></div>
+      <h2 class="sec">Où ranger ce scan ?</h2>
+      <div class="group"><button class="prow" data-a="trScanTo" data-id="new"><span class="pr-t"><b>＋ Nouvelle pièce d’essai</b><span class="muted sm">Ne compte pas dans les travaux de l’Archange</span></span><span class="chev">›</span></button></div>
+      <h2 class="sec">Chambres de l’Archange</h2><div class="group">${trRooms().map(row).join('')}</div>
+      ${trTests().length ? `<h2 class="sec">Essais</h2><div class="group">${trTests().map(row).join('')}</div>` : ''}`);
+  },
+  trScanTo(d) {
+    if (!S.trScan || !trCan()) return;
+    if (d.id !== 'new') { trScanSheet(d.id); return; } // chambre existante : écran de confirmation, puisque ses mesures seront remplacées
+    const id = 'test__' + Math.random().toString(36).slice(2, 10), t = new Date();
+    S.tr.rooms[id] = { room_id: id, hotel: 'test', data: {} }; trPatch(id, { nom: `Scan du ${t.getDate()}/${t.getMonth() + 1} à ${t.getHours()}h${String(t.getMinutes()).padStart(2, '0')}` });
+    A.trScanApply({ id });
   },
   trScanApply(d) {
     const sc = S.trScan; if (!sc || !trCan()) return;

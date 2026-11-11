@@ -165,6 +165,8 @@ function trViewRooms() {
       <div class="prog"><i style="width:${rooms.length ? Math.round((done / rooms.length) * 100) : 0}%"></i></div>
       <p class="muted">Une fiche est complète avec l’état, les mesures et au moins une photo.</p>
       ${next && trCan() ? `<button class="btn soft" data-a="trRoom" data-id="${esc(next.id)}">Continuer : ${esc(trPlace(next))} ›</button>` : ''}</div>
+    ${trCan() ? `<div class="card"><h3>📥 Déposer un scan</h3><p class="muted">Tu as scanné une pièce avec l’iPhone (OpenPlan3D) ? Dépose le fichier ici : l’appli le lit, puis te demande dans quelle chambre le ranger.</p>
+      <button class="btn big pri" data-a="trScanDrop">Choisir le fichier du scan</button></div>` : ''}
     <h2 class="sec">Chambres</h2><div class="group">${rooms.map(trRoomRow).join('')}</div>
     ${communs.length ? `<h2 class="sec">Parties communes</h2><div class="group">${communs.map(trRoomRow).join('')}</div>` : ''}
     <h2 class="sec">Essais</h2><p class="muted">Une pièce d’ailleurs (un appartement, par exemple) pour essayer le scan, le plan et la 3D. Elle ne compte pas dans les travaux de l’Archange.</p>
