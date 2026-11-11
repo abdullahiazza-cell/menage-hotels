@@ -140,17 +140,34 @@ function trGaps(rid) {
 
 /* ---------- écran principal ---------- */
 function trButton() { return `<button class="ptbtn" data-a="trEnter" aria-label="Mode travaux">🛠️</button>`; }
+/* ---------- catalogue IKEA : des références relevées sur ikea.com (nom, dimensions, prix du jour du relevé, lien, photo affichée depuis leur site) ---------- */
+const TR_IK_CATS = [['lit_d', 'Lits doubles', 'lit_d'], ['lit_s', 'Lits simples', 'lit_s'], ['tete', 'Têtes de lit', null], ['chevet', 'Chevets', 'chevet'], ['armoire', 'Armoires', 'armoire'], ['bureau', 'Bureaux', 'bureau'], ['chaise', 'Chaises', 'chaise'], ['applique', 'Appliques', null], ['rideau', 'Rideaux', null], ['deco', 'Décoration', null]];
+const trIkUrl = (c) => 'https://www.ikea.com/fr/fr/p/' + c.slug + '/';
+const trIkImg = (c) => c.img ? 'https://www.ikea.com/fr/fr/images/products/' + c.img + '?f=xs' : '';
+// Dimensions lues dans la description : « 40x50x53 cm » (largeur × profondeur × hauteur) ou « 140x200 cm » pour un lit.
+function trIkDims(c) { const m = /(\d+)x(\d+)(?:x(\d+))?\s*cm/.exec(c.descr || ''); if (!m) return null; const o = { w: +m[1], d: +m[2] }; if (m[3]) o.h = +m[3]; else if (c.cat === 'armoire') { o.h = o.d; o.d = 58; } return o; }
+async function trIkLoad() { if (S.trCat || S.trCatBusy) return; S.trCatBusy = true; try { const d = await api('tr_catalog'); S.trCat = d.items || []; } catch (e) { S.trCatErr = errMsg(e); } S.trCatBusy = false; if (S.mode === 'travaux' && !S.sheet) render(); else if (S.trP && S.sheet && S.sheet.startsWith('trplan:')) trPlanSheet(S.trP.rid, true); }
+function trViewIkea() {
+  if (!S.trCat) { trIkLoad(); return `<div class="card empty"><div class="e">🛋️</div><h2>${S.trCatErr ? 'Catalogue indisponible' : 'Chargement du catalogue…'}</h2>${S.trCatErr ? `<p>${esc(S.trCatErr)}</p>` : ''}</div>`; }
+  const k = S.trCatK || 'lit_d', list = S.trCat.filter((c) => c.cat === k), seen = S.trCat.reduce((a, c) => (c.seen > a ? c.seen : a), '');
+  return `<p class="muted">Des références IKEA France utiles en hôtellerie : ${S.trCat.length} produits pour commencer. Prix relevés le ${seen ? seen.split('-').reverse().join('/') : '?'}, à revérifier avant d’acheter.</p>
+    <div class="tr-sws">${TR_IK_CATS.map(([c, l]) => `<button class="tr-sw" style="padding-left:12px" data-a="trIkCat" data-k="${c}" aria-pressed="${k === c}">${l} · ${S.trCat.filter((x) => x.cat === c).length}</button>`).join('')}</div>
+    <div class="tr-ikg">${list.map((c) => { const dm = trIkDims(c); return `<div class="tr-ik"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(trIkImg(c))}"><b>${esc(c.name)}</b><span class="muted sm">${esc(c.descr || '')}</span><span class="tr-ikp">${c.price != null ? trEur(c.price) : ''}</span><span class="muted sm">Réf. ${esc(c.ref.replace(/(\d{3})(\d{3})(\d{2})/, '$1.$2.$3'))}${dm ? '' : ' · dimensions à relever'}</span>
+      <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn small" href="${esc(trIkUrl(c))}" target="_blank" rel="noopener">Voir</a>${S.tr.can_edit ? `<button class="btn small soft" data-a="trIkList" data-ref="${esc(c.ref)}">＋ Liste</button>` : ''}</div></div>`; }).join('')}</div>
+    <p class="muted sm">Pour poser un de ces meubles dans une chambre : ouvre le plan de la chambre, puis « Un meuble du catalogue IKEA ». Les photos viennent du site d’IKEA.</p>`;
+}
+
 function viewTravaux() {
   const T = S.tr;
   const right = T && T.loaded && trCan() && (S.trTab === 'meubles' || S.trTab === 'liste') ? `<button class="nb-act" data-a="${S.trTab === 'meubles' ? 'trItemNew' : 'trTodoNew'}" aria-label="Ajouter">${ico('plus')}</button>` : '';
   const head = `<header class="navbar"><button class="nb-back" data-a="trExit">${ico('back')}<span>Réception</span></button><h1 class="nb-title">🛠️ Travaux · Archange</h1><div class="nb-right">${right}</div></header>`;
   if (!T || !T.loaded) return `${head}<div class="wrap"><div class="card empty"><div class="e">${T && T.err ? '📶' : '🛠️'}</div><h2>${T && T.err ? 'Pas de connexion' : 'Chargement…'}</h2>${T && T.err ? `<p>${esc(T.err)}</p><button class="btn pri" data-a="trReload">Réessayer</button>` : ''}</div></div>`;
-  const tabs = [['chambres', 'Chambres'], ['meubles', 'Meubles'], ['liste', 'Liste'], ['idees', 'Idées']];
+  const tabs = [['chambres', 'Chambres'], ['meubles', 'Meubles'], ['ikea', 'IKEA'], ['liste', 'Liste'], ['idees', 'Idées']];
   const nProp = T.props.filter((p) => p.statut === 'proposee').length;
-  const body = S.trTab === 'meubles' ? trViewItems() : S.trTab === 'liste' ? trViewListe() : S.trTab === 'idees' ? trViewIdees() : trViewRooms();
+  const body = S.trTab === 'ikea' ? trViewIkea() : S.trTab === 'meubles' ? trViewItems() : S.trTab === 'liste' ? trViewListe() : S.trTab === 'idees' ? trViewIdees() : trViewRooms();
   return `${head}<div class="wrap">
-    ${trCan() ? '' : '<div class="robar">👁 <span><b>Lecture seule</b> · vous voyez tout l’avancement. Seuls Abdullah et l’intendant modifient.</span></div>'}
-    <div class="segc four" role="group" aria-label="Rubrique">${tabs.map(([k, l]) => `<button data-a="trTab" data-k="${k}" aria-pressed="${S.trTab === k}">${l}${k === 'idees' && nProp ? ` <span class="badge sm">${nProp}</span>` : ''}</button>`).join('')}</div>
+    ${trCan() ? '' : `<div class="robar">👁 <span>${trPlanCan() ? '<b>Fiches et liste en lecture</b> · Abdullah et l’intendant les remplissent. Dans le plan d’une chambre, tu peux proposer ta version.' : '<b>Lecture seule</b> · vous voyez tout l’avancement.'}</span></div>`}
+    <div class="segc five" role="group" aria-label="Rubrique">${tabs.map(([k, l]) => `<button data-a="trTab" data-k="${k}" aria-pressed="${S.trTab === k}">${l}${k === 'idees' && nProp ? ` <span class="badge sm">${nProp}</span>` : ''}</button>`).join('')}</div>
     ${body}</div>`;
 }
 function trRoomRow(r) {
@@ -410,6 +427,8 @@ Object.assign(A, {
     try { await api('tr_photo_del', { id: p.id }); S.tr.photos = S.tr.photos.filter((x) => x.id !== p.id); } catch (e) { toast(errMsg(e)); return; }
     if (p.room_id) trRoomSheet(p.room_id); else trItemSheet(p.item_id);
   },
+  trIkCat(d) { S.trCatK = d.k; render(); },
+  trIkList(d) { const c = (S.trCat || []).find((x) => x.ref === d.ref); if (!c) return; trTodoSheet(null, { kind: 'achat', label: `${c.name} · ${c.descr || ''}`.slice(0, 200), ref: c.ref, url: trIkUrl(c), prix: c.price, magasin: 'IKEA', niveau: 'confort' }); },
   trTestNew() {
     if (!trPlanCan()) return;
     const mine = [...new Set(Object.values(S.tr.rooms).filter((r) => trIsTest(r.room_id) && trMine(r.room_id)).map((r) => (r.data || {}).dossier).filter(Boolean))];

@@ -739,7 +739,8 @@ function trPlanSheet(roomId, keep) {
   const P = S.trP, can = trPlanCan(), hasSdb = trNum(d.sdb_len) && trNum(d.sdb_wid), fs = Math.max(11, Math.round(Math.max(W, D) / 26)), pad = fs * 2.2;
   const cfgs = TR_CFG.map(([k, l, beds]) => { const a = trAuto(roomId, beds, P.p); return { k, l, a, ok: a.bedsOk && a.surfOk }; });
   const bank = S.tr.items.filter((i) => i.etat !== 'a_jeter' && i.w_cm && i.d_cm);
-  trGlStop();
+  trGlStop(); if (!S.trCat) trIkLoad();
+  const ikN = P.p.items.filter((i) => i.ik).length;
   openSheet('trplan:' + roomId, `<div class="row between"><h2>${esc(trPlace(r))} · ${trM(W)} × ${trM(D)}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">‹ Fiche</button></div>
     <div id="tr-vers">${trVersHtml()}</div>
     <div class="segc" role="group"><button data-a="trPlanView" data-k="plan" aria-pressed="${P.view === 'plan'}">Plan</button><button data-a="trPlanView" data-k="3d" aria-pressed="${P.view === '3d'}">Vue 3D</button></div>
@@ -757,11 +758,13 @@ function trPlanSheet(roomId, keep) {
     <div class="card"><h3>💡 Dispositions proposées</h3><p class="muted">Calculées avec la place de la porte et de la fenêtre. Touche une proposition pour la voir${can ? ' ; elle remplace les meubles du plan' : ''}.</p>
       <div class="group flat">${cfgs.map((c) => `<button class="prow" ${can ? '' : 'disabled'} data-a="trPlanCfg" data-k="${c.k}"><span class="pr-t"><b>${c.l}</b><span class="muted sm">${!c.a.bedsOk ? 'Les lits ne rentrent pas' : (!c.a.surfOk ? `Surface trop petite en 3★ (${trFr(c.a.surf)} m² pour ${trFr(c.a.need)})` : (c.a.miss.length ? 'Pas de place pour : ' + c.a.miss.join(', ').toLowerCase() : 'Tout rentre, avec bureau, armoire et télé'))}</span></span><span class="pill ${c.ok ? (c.a.miss.length ? 'p-amber' : 'p-green') : 'p-red'}">${c.ok ? (c.a.miss.length ? 'Juste' : 'Oui') : 'Non'}</span></button>`).join('')}</div></div>
     ${can ? `<div class="card"><h3>Ajouter un meuble</h3><div class="tr-eq">${Object.entries(TR_FURN).filter(([k]) => k !== 'meuble').map(([k, f]) => `<button data-a="trPlanAdd" data-k="${k}">＋ ${f.l}</button>`).join('')}</div>
+      <div class="form"><label>Un meuble du catalogue IKEA<select data-change="trPlanIk">${opt('', '', S.trCat ? 'Choisir une référence…' : 'Chargement…')}${S.trCat ? TR_IK_CATS.filter((c) => c[2]).map(([c, l]) => `<optgroup label="${l}">${S.trCat.filter((x) => x.cat === c && trIkDims(x)).map((x) => opt(x.ref, '', `${x.name} · ${(x.descr || '').split(',').slice(-1)[0].trim()}${x.price != null ? ' · ' + trEur(x.price) : ''}`)).join('')}</optgroup>`).join('') : ''}</select></label></div>
       ${bank.length ? `<div class="form"><label>Ou un meuble qu’on a déjà<select data-change="trPlanBank">${opt('', '', 'Choisir dans nos meubles…')}${bank.map((i) => opt(i.id, '', `${i.label || trType(i.type)[1]} · ${i.w_cm} × ${i.d_cm} cm`)).join('')}</select></label></div>` : ''}</div>` : ''}
     ${hasSdb ? `<div class="card"><h3>🚿 Salle de bain</h3><p class="muted">Où est-elle par rapport aux mesures de la chambre ?</p>
       <div class="segc five" role="group">${[['', 'À part'], ['no', '↖ coin'], ['ne', '↗ coin'], ['so', '↙ coin'], ['se', '↘ coin']].map(([k, l]) => `<button ${can ? '' : 'disabled'} data-a="trPlanSdb" data-k="${k}" aria-pressed="${(P.p.sdb.c || '') === k}">${l}</button>`).join('')}</div>
       ${P.p.sdb.c && can ? '<button class="btn small" data-a="trPlanSdbRot">⟳ Tourner la salle de bain</button>' : ''}
       <p class="muted sm">${P.p.sdb.c ? 'Dans un coin : elle est comprise dans la longueur × largeur de la chambre.' : 'À part : sa surface s’ajoute à celle de la chambre.'}</p></div>` : ''}
+    ${ikN && trCan() && !trIsTest(roomId) ? `<div class="card"><h3>🛒 Meubles IKEA de ce plan · ${ikN}</h3><p class="muted">Références, prix relevés et liens passent dans la liste d’achats de cette chambre.</p><button class="btn soft" data-a="trIkPlanList">Mettre ces meubles dans la liste</button></div>` : ''}
     ${trDecoCard(roomId)}
     ${can && P.p.items.length ? '<button class="btn ghost bad-t" data-a="trPlanClear">Vider le plan</button>' : ''}`, 'trfull');
   if (P.view === 'plan') { trPlanBind(); trPlanDraw(); } else { trPlanBar(); trGlStart(); }
@@ -814,6 +817,13 @@ Object.assign(A, {
     const a = trNiveau(P.rid, nv, P.p, n); if (!a.p.items.length) { toast('Rien ne rentre dans cette pièce avec ces lits.'); return; }
     P.p.items = a.p.items; P.p.deco = trNivDeco(nv, n); P.p.niv = nv.k; P.p.nivN = n; if (n) toast(`${nv.l} · variante ${n + 1}`); P.p.cfg = null; P.sel = null; P.view = '3d'; trPlanSave(); trPlanSheet(P.rid, true);
   },
+  async trIkPlanList() {
+    const P = S.trP; if (!P || !trCan() || !S.trCat) return; const by = {}; P.p.items.filter((i) => i.ik).forEach((i) => { by[i.ik] = (by[i.ik] || 0) + 1; });
+    let n = 0;
+    try { for (const [ref, qty] of Object.entries(by)) { const c = S.trCat.find((x) => x.ref === ref); if (!c || S.tr.todo.some((t) => t.room_id === P.rid && t.ref === ref && t.statut !== 'fait')) continue; const x = await api('tr_todo_save', { kind: 'achat', label: `${c.name} · ${c.descr || ''}`.slice(0, 200), qty, room_id: P.rid, niveau: 'confort', ref, url: trIkUrl(c), prix: c.price, magasin: 'IKEA', note: 'Prix relevé le ' + String(c.seen).split('-').reverse().join('/') }); S.tr.todo.push(x.todo); n++; } }
+    catch (e) { toast(errMsg(e)); return; }
+    toast(n ? `${n} référence${n > 1 ? 's' : ''} ajoutée${n > 1 ? 's' : ''} à la liste ✓` : 'Déjà dans la liste');
+  },
   async trDecoList() {
     const P = S.trP; if (!P || !trCan()) return; const lines = trDecoLines(P.rid, P.p); if (!lines.length) return;
     const have = (l) => S.tr.todo.some((t) => t.room_id === P.rid && t.statut !== 'fait' && t.label === l);
@@ -863,6 +873,11 @@ Object.assign(A, {
 });
 Object.assign(I, { trLumi(el) { const P = S.trP; if (!P) return; P.lumi = Number(el.value) || 100; if (TR_GL.ask) TR_GL.ask(); } });
 Object.assign(C, {
+  trPlanIk(el) {
+    const P = S.trP, c = (S.trCat || []).find((x) => x.ref === el.value), cat = c && TR_IK_CATS.find((x) => x[0] === c.cat), dm = c && trIkDims(c); if (!P || !c || !cat || !cat[2] || !dm || !trPlanCan()) return;
+    const { W, D } = trWDH(trData(P.rid)), it = { id: trPid(), t: cat[2], r: 0, x: Math.round(W / 2), y: Math.round(D / 2), w: dm.w, d: dm.d, n: 'IKEA ' + c.name, ik: c.ref }; if (dm.h) it.h = dm.h;
+    P.p.items.push(it); P.sel = it.id; trPlanSave(); trPlanSheet(P.rid, true);
+  },
   trPlanBank(el) {
     const P = S.trP, b = S.tr.items.find((i) => i.id === el.value); if (!P || !b || !trPlanCan()) return;
     const { W, D } = trWDH(trData(P.rid)), t = TR_BANK_MAP[b.type] || 'meuble';

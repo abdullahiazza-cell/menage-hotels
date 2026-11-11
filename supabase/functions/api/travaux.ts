@@ -82,6 +82,11 @@ export async function travauxState(me: any) {
 export async function travauxAction(me: any, a: string, body: any) {
   if (!canSee(me)) throw new TE("forbidden", 403);
   if (a === "tr_state") return await travauxState(me);
+  // Catalogue de références du commerce (IKEA) : nom, dimensions, prix relevé, lien. Lecture pour tous ceux du mode travaux.
+  if (a === "tr_catalog") {
+    const { data } = await db.from("tr_catalog").select("ref,cat,name,descr,price,slug,img,seen").order("cat").order("pos");
+    return { items: data || [] };
+  }
   if (me.readonly) throw new TE("forbidden", 403);
   const now = new Date().toISOString();
 
