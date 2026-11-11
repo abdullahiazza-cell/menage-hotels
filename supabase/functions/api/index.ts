@@ -1700,6 +1700,18 @@ Deno.serve(async (req) => {
   if (req.method === "GET" && new URL(req.url).searchParams.has("doc")) {
     try { return await docLink(req); } catch (e) { console.error(e); return new Response("Erreur", { status: 500 }); }
   }
+  // Vignette d'un produit du catalogue (mode travaux) : relayée depuis le site du marchand, seulement pour les images inscrites au catalogue.
+  if (req.method === "GET" && new URL(req.url).searchParams.has("ik")) {
+    try {
+      const f = new URL(req.url).searchParams.get("ik") || "";
+      if (!/^[a-z0-9_-]{5,200}\.jpg$/.test(f)) return new Response("?", { status: 400, headers: CORS });
+      const { data } = await sb.from("tr_catalog").select("ref").eq("img", f).limit(1);
+      if (!data || !data.length) return new Response("?", { status: 404, headers: CORS });
+      const r = await fetch("https://www.ikea.com/fr/fr/images/products/" + f + "?f=xs", { headers: { Accept: "image/jpeg,image/*;q=0.8" } });
+      if (!r.ok) return new Response("?", { status: 502, headers: CORS });
+      return new Response(r.body, { headers: { ...CORS, "content-type": r.headers.get("content-type") || "image/jpeg", "cache-control": "public, max-age=604800" } });
+    } catch (e) { console.error(e); return new Response("Erreur", { status: 500, headers: CORS }); }
+  }
   if (req.method !== "POST") return fail("method", 405);
   try { return ok(await handle(req)); }
   catch (e) {

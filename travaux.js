@@ -143,7 +143,9 @@ function trButton() { return `<button class="ptbtn" data-a="trEnter" aria-label=
 /* ---------- catalogue IKEA : des références relevées sur ikea.com (nom, dimensions, prix du jour du relevé, lien, photo affichée depuis leur site) ---------- */
 const TR_IK_CATS = [['lit_d', 'Lits doubles', 'lit_d'], ['lit_s', 'Lits simples', 'lit_s'], ['tete', 'Têtes de lit', null], ['chevet', 'Chevets', 'chevet'], ['armoire', 'Armoires', 'armoire'], ['bureau', 'Bureaux', 'bureau'], ['chaise', 'Chaises', 'chaise'], ['applique', 'Appliques', null], ['rideau', 'Rideaux', null], ['deco', 'Décoration', null]];
 const trIkUrl = (c) => 'https://www.ikea.com/fr/fr/p/' + c.slug + '/';
-const trIkImg = (c) => c.img ? 'https://www.ikea.com/fr/fr/images/products/' + c.img + '?f=xs' : '';
+// La vignette passe par notre serveur (certains téléphones n'affichent pas les images prises directement chez le marchand) ; en secours, l'adresse directe.
+const trIkImg = (c) => c.img ? API + '?ik=' + encodeURIComponent(c.img) : '';
+const trIkImg2 = (c) => c.img ? 'https://www.ikea.com/fr/fr/images/products/' + c.img + '?f=xs' : '';
 // Dimensions lues dans la description : « 40x50x53 cm » (largeur × profondeur × hauteur) ou « 140x200 cm » pour un lit.
 function trIkDims(c) { const m = /(\d+)x(\d+)(?:x(\d+))?\s*cm/.exec(c.descr || ''); if (!m) return null; const o = { w: +m[1], d: +m[2] }; if (m[3]) o.h = +m[3]; else if (c.cat === 'armoire') { o.h = o.d; o.d = 58; } return o; }
 async function trIkLoad() { if (S.trCat || S.trCatBusy) return; S.trCatBusy = true; try { const d = await api('tr_catalog'); S.trCat = d.items || []; } catch (e) { S.trCatErr = errMsg(e); } S.trCatBusy = false; if (S.mode === 'travaux' && !S.sheet) render(); else if (S.trP && S.sheet && S.sheet.startsWith('trplan:')) trPlanSheet(S.trP.rid, true); }
@@ -152,7 +154,7 @@ function trViewIkea() {
   const k = S.trCatK || 'lit_d', list = S.trCat.filter((c) => c.cat === k), seen = S.trCat.reduce((a, c) => (c.seen > a ? c.seen : a), '');
   return `<p class="muted">Des références IKEA France utiles en hôtellerie : ${S.trCat.length} produits pour commencer. Prix relevés le ${seen ? seen.split('-').reverse().join('/') : '?'}, à revérifier avant d’acheter.</p>
     <div class="tr-sws">${TR_IK_CATS.map(([c, l]) => `<button class="tr-sw" style="padding-left:12px" data-a="trIkCat" data-k="${c}" aria-pressed="${k === c}">${l} · ${S.trCat.filter((x) => x.cat === c).length}</button>`).join('')}</div>
-    <div class="tr-ikg">${list.map((c) => { const dm = trIkDims(c); return `<div class="tr-ik"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(trIkImg(c))}"><b>${esc(c.name)}</b><span class="muted sm">${esc(c.descr || '')}</span><span class="tr-ikp">${c.price != null ? trEur(c.price) : ''}</span><span class="muted sm">Réf. ${esc(c.ref.replace(/(\d{3})(\d{3})(\d{2})/, '$1.$2.$3'))}${dm ? '' : ' · dimensions à relever'}</span>
+    <div class="tr-ikg">${list.map((c) => { const dm = trIkDims(c); return `<div class="tr-ik"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(trIkImg(c))}" onerror="this.onerror=null;this.src='${esc(trIkImg2(c))}'"><b>${esc(c.name)}</b><span class="muted sm">${esc(c.descr || '')}</span><span class="tr-ikp">${c.price != null ? trEur(c.price) : ''}</span><span class="muted sm">Réf. ${esc(c.ref.replace(/(\d{3})(\d{3})(\d{2})/, '$1.$2.$3'))}${dm ? '' : ' · dimensions à relever'}</span>
       <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn small" href="${esc(trIkUrl(c))}" target="_blank" rel="noopener">Voir</a>${S.tr.can_edit ? `<button class="btn small soft" data-a="trIkList" data-ref="${esc(c.ref)}">＋ Liste</button>` : ''}</div></div>`; }).join('')}</div>
     <p class="muted sm">Pour poser un de ces meubles dans une chambre : ouvre le plan de la chambre, puis « Un meuble du catalogue IKEA ». Les photos viennent du site d’IKEA.</p>`;
 }
