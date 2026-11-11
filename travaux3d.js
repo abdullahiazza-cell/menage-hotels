@@ -348,16 +348,16 @@ function trScene(roomId, p) {
   const dl = trDecoOf(TR_DECO_TISSU, deco.linge), duvet = dl ? dl[2] : null;
   p.items.forEach((it) => {
     const dest = it.t === 'tv' ? walls[((it.r || 0) / 90) % 4].boxes : B;
-    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv' })); });
+    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp })); });
   });
   // Point de vue « depuis la porte » : à 50 cm à l'intérieur, à hauteur des yeux, tourné vers le milieu de la pièce.
   const dz = trOpening(p.door, 10, W, D, 50), de = [(((dz.x0 + dz.x1) / 2) - W / 2) * cm, 1.55, (((dz.y0 + dz.y1) / 2) - D / 2) * cm];
   const inward = [[0, 1], [-1, 0], [0, -1], [1, 0]][p.door.wall], dEye = [de[0] + inward[0] * 0.25, 1.55, de[2] + inward[1] * 0.25];
-  return { W: W * cm, D: D * cm, H: H * cm, B, glass, walls, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: sdb ? box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, H, wc, 5) : null, Wc: W, Dc: D, Hc: H, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
+  return { W: W * cm, D: D * cm, H: H * cm, B, glass, walls, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: sdb ? box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, H, wc, 5) : null, Wc: W, Dc: D, Hc: H, win: { wall: p.win.wall, pos: p.win.pos, w: fw, z0: al, z1: ft }, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
 }
-const TR_GL = { gl: null, raf: 0, ask: null, snap: null };
+const TR_GL = { gl: null, raf: 0, ask: null, snap: null, three: null, token: null };
 window.addEventListener('resize', () => { if (TR_GL.gl && TR_GL.ask) TR_GL.ask(); });
-function trGlStop() { if (TR_GL.raf) cancelAnimationFrame(TR_GL.raf); TR_GL.raf = 0; if (TR_GL.gl) { const x = TR_GL.gl.getExtension('WEBGL_lose_context'); if (x) x.loseContext(); } TR_GL.gl = null; TR_GL.ask = null; TR_GL.snap = null; }
+function trGlStop() { TR_GL.token = null; if (TR_GL.three) { try { TR_GL.three.stop(); } catch (_) {} TR_GL.three = null; } if (TR_GL.raf) cancelAnimationFrame(TR_GL.raf); TR_GL.raf = 0; if (TR_GL.gl) { const x = TR_GL.gl.getExtension('WEBGL_lose_context'); if (x) x.loseContext(); } TR_GL.gl = null; TR_GL.ask = null; TR_GL.snap = null; }
 // Petites matrices 4×4 (colonnes d'abord), juste ce qu'il faut pour une caméra et une lampe.
 const trM4 = {
   mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; return o; },
@@ -391,7 +391,20 @@ const TR_FS = TR_HP + 'uniform vec4 uC;uniform float uK;uniform sampler2D uSh;un
   + 'gl_FragColor=vec4(lit,uC.a);}';
 const TR_DVS = 'attribute vec3 p;attribute vec3 n;uniform mat4 uL;uniform vec3 uT;uniform vec3 uS;void main(){gl_Position=uL*vec4(p*uS+uT,1.0);}';
 const TR_DFS = TR_HP + 'void main(){float z=gl_FragCoord.z;vec4 e=fract(vec4(1.0,255.0,65025.0,16581375.0)*z);e-=e.yzww*vec4(1.0/255.0,1.0/255.0,1.0/255.0,0.0);gl_FragColor=e;}';
+// Le rendu soigné (three.js) se charge à la demande ; s'il ne peut pas (vieux téléphone, pas de réseau au premier essai), le dessin simple prend le relais.
 function trGlStart() {
+  const cv = $('tr-gl'), P = S.trP; if (!cv || !P) return;
+  trGlStop();
+  if (!P.cam) { const { W, D, H } = trWDH(trData(P.rid)); P.cam = { mode: 'orbit', yaw: 0.65, pitch: 0.58, dist: Math.max(W, D) / 100 * 1.3 + H / 100 * 0.75 + 0.9, ly: 0, lp: -0.1 }; }
+  const token = TR_GL.token = {};
+  const basic = () => { if (TR_GL.token !== token) return; const old = $('tr-gl'); if (!old) return; const fresh = old.cloneNode(false); old.replaceWith(fresh); trGlStartBasic(); };
+  import('./travaux-rendu.js?v=' + APP_V).then((mod) => {
+    if (TR_GL.token !== token || !cv.isConnected) return;
+    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false }); TR_GL.three = h; TR_GL.ask = h.ask; TR_GL.snap = h.snap; }
+    catch (e) { console.warn('rendu', e); basic(); }
+  }).catch((e) => { console.warn('rendu', e); basic(); });
+}
+function trGlStartBasic() {
   const cv = $('tr-gl'), P = S.trP; if (!cv || !P) return;
   trGlStop();
   const gl = cv.getContext('webgl', { antialias: true, alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true });
