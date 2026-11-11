@@ -34,8 +34,11 @@ async function signed(paths: string[]) {
   }
   return out;
 }
-async function roomOk(id: any) {
+// Pièce d'essai : hors hôtel, pour essayer le scan et le plan sans rien compter dans les travaux de l'Archange.
+const TEST_ID = /^test__[a-z0-9]{4,24}$/;
+async function roomOk(id: any, allowTest = false) {
   if (typeof id !== "string" || !id) return null;
+  if (TEST_ID.test(id)) return allowTest ? { id, hotel: "test" } : null;
   const { data } = await db.from("rooms").select("id,hotel").eq("id", id).maybeSingle();
   return data && TR_HOTELS.includes(data.hotel) ? data : null;
 }
@@ -43,8 +46,8 @@ async function roomOk(id: any) {
 export async function travauxState(me: any) {
   if (!canSee(me)) throw new TE("forbidden", 403);
   const [{ data: rooms }, { data: photos }, { data: items }, { data: todo }, { data: props }] = await Promise.all([
-    db.from("tr_rooms").select("*").in("hotel", TR_HOTELS),
-    db.from("tr_photos").select("*").in("hotel", TR_HOTELS).order("created_at"),
+    db.from("tr_rooms").select("*").in("hotel", [...TR_HOTELS, "test"]),
+    db.from("tr_photos").select("*").in("hotel", [...TR_HOTELS, "test"]).order("created_at"),
     db.from("tr_items").select("*").in("hotel", TR_HOTELS).order("created_at"),
     db.from("tr_todo").select("*").in("hotel", TR_HOTELS).order("created_at"),
     db.from("tr_props").select("*").in("hotel", TR_HOTELS).order("created_at", { ascending: false }),
@@ -61,7 +64,7 @@ export async function travauxAction(me: any, a: string, body: any) {
 
   // Fiche d'une chambre : on fusionne seulement les champs envoyés, pour que deux personnes puissent remplir la même fiche.
   if (a === "tr_room_patch") {
-    const room = await roomOk(body.room_id); if (!room) throw new TE("bad");
+    const room = await roomOk(body.room_id, true); if (!room) throw new TE("bad");
     const patch = body.patch && typeof body.patch === "object" && !Array.isArray(body.patch) ? body.patch : null;
     if (!patch || JSON.stringify(patch).length > 20000) throw new TE("bad");
     const { data: cur } = await db.from("tr_rooms").select("data").eq("room_id", room.id).maybeSingle();
@@ -84,7 +87,7 @@ export async function travauxAction(me: any, a: string, body: any) {
       const { data: it } = await db.from("tr_items").select("id,hotel").eq("id", body.item_id).maybeSingle();
       if (!it) throw new TE("bad"); item_id = it.id; hotel = it.hotel;
     } else {
-      const room = await roomOk(body.room_id); if (!room) throw new TE("bad");
+      const room = await roomOk(body.room_id, true); if (!room) throw new TE("bad");
       room_id = room.id; hotel = room.hotel;
     }
     const { data, error } = await db.from("tr_photos").insert({ hotel, room_id, item_id, path, label: str(body.label, 60), created_by: me.id, created_label: me.label }).select("*").single();
@@ -97,6 +100,16 @@ export async function travauxAction(me: any, a: string, body: any) {
     if (!p) return { ok: true };
     await db.from("tr_photos").delete().eq("id", p.id);
     await db.storage.from("media").remove([p.path]).catch(() => {});
+    return { ok: true };
+  }
+
+  if (a === "tr_test_del") {
+    const id = String(body.room_id || ""); if (!TEST_ID.test(id)) throw new TE("bad");
+    const { data: ph } = await db.from("tr_photos").select("id,path").eq("room_id", id);
+    await db.from("tr_photos").delete().eq("room_id", id);
+    await db.from("tr_rooms").delete().eq("room_id", id);
+    const paths = (ph || []).map((p: any) => p.path);
+    if (paths.length) await db.storage.from("media").remove(paths).catch(() => {});
     return { ok: true };
   }
 

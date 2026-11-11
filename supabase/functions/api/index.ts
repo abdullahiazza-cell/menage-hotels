@@ -1627,7 +1627,7 @@ async function handle(req: Request) {
       return { ok: true };
     }
     // Mode travaux : inventaire des chambres, meubles, liste d'actions et de courses (voir travaux.ts).
-    case "tr_state": case "tr_room_patch": case "tr_photo_add": case "tr_photo_del": case "tr_item_save": case "tr_item_del": case "tr_todo_save": case "tr_todo_statut": case "tr_todo_del": case "tr_prop_set": {
+    case "tr_state": case "tr_room_patch": case "tr_photo_add": case "tr_photo_del": case "tr_item_save": case "tr_item_del": case "tr_todo_save": case "tr_todo_statut": case "tr_todo_del": case "tr_prop_set": case "tr_test_del": {
       try { return await travauxAction(me, a, body); } catch (e) { if (e instanceof TE) throw new E(e.code, e.status); throw e; }
     }
     case "stats": {

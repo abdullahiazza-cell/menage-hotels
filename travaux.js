@@ -45,7 +45,13 @@ const trUrl = (p) => p ? (S.localUrls[p] || S.trUrls[p] || null) : null;
 const trNum = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
 const trFr = (n, d) => Number(n).toLocaleString('fr-FR', { maximumFractionDigits: d == null ? 1 : d });
 const trEur = (n) => Number(n).toLocaleString('fr-FR', { minimumFractionDigits: Number.isInteger(Number(n)) ? 0 : 2, maximumFractionDigits: 2 }) + ' €';
-const trRoomName = (rid) => { const r = S.rooms[rid]; return r ? placeName(r) : 'Tout l’hôtel'; };
+// Pièces d'essai (hors hôtel) : elles vivent seulement dans le mode travaux et ne comptent dans aucun total de l'Archange.
+const trIsTest = (id) => /^test__/.test(String(id || ''));
+const trRoomGet = (id) => S.rooms[id] || (trIsTest(id) && S.tr && S.tr.rooms[id] ? { id, hotel: 'test', kind: 'chambre', test: true, num: (S.tr.rooms[id].data || {}).nom || 'Pièce d’essai', order: 9999 } : undefined);
+const trPlace = (r) => r.test ? r.num : placeName(r);
+const trShort = (r) => r.test ? r.num : placeShort(r);
+const trTests = () => Object.keys(S.tr.rooms).filter(trIsTest).map(trRoomGet).filter(Boolean).sort((a, b) => String(a.num).localeCompare(String(b.num), 'fr'));
+const trRoomName = (rid) => { const r = trRoomGet(rid); return r ? trPlace(r) : 'Tout l’hôtel'; };
 
 // Modifications pas encore parties (pas de réseau dans un couloir) : gardées sur le téléphone et renvoyées dès que possible.
 const trPend = LS.get('mh-trq', []);
@@ -147,7 +153,7 @@ function trRoomRow(r) {
   if (d.cat && TR_CAT[d.cat]) bits.push(TR_CAT[d.cat]);
   const miss = [];
   if (!d.etat) miss.push('état'); if (!trMeasured(d)) miss.push('mesures'); if (!n) miss.push('photos');
-  return `<button class="prow" data-a="trRoom" data-id="${esc(r.id)}"><span class="pr-t"><b>${esc(placeName(r))}</b>
+  return `<button class="prow" data-a="trRoom" data-id="${esc(r.id)}"><span class="pr-t"><b>${esc(trPlace(r))}</b>
     <span class="muted sm">${bits.length ? esc(bits.join(' · ')) : ''}${miss.length ? `${bits.length ? ' · ' : ''}reste : ${miss.join(', ')}` : (bits.length ? '' : 'Fiche complète')}</span></span>
     ${n ? `<span class="pill p-plain">📷 ${n}</span>` : ''}${e ? `<span class="pill ${e.c}">${e.l}</span>` : ''}${trComplete(r.id) ? '<span class="pill p-green">✓</span>' : ''}<span class="chev">›</span></button>`;
 }
@@ -158,9 +164,12 @@ function trViewRooms() {
   return `<div class="card"><div class="row between"><h3>${done} / ${rooms.length} chambres répertoriées</h3><span class="muted sm">${ok} louable${ok > 1 ? 's' : ''} · ${petits} avec petits travaux</span></div>
       <div class="prog"><i style="width:${rooms.length ? Math.round((done / rooms.length) * 100) : 0}%"></i></div>
       <p class="muted">Une fiche est complète avec l’état, les mesures et au moins une photo.</p>
-      ${next && trCan() ? `<button class="btn soft" data-a="trRoom" data-id="${esc(next.id)}">Continuer : ${esc(placeName(next))} ›</button>` : ''}</div>
+      ${next && trCan() ? `<button class="btn soft" data-a="trRoom" data-id="${esc(next.id)}">Continuer : ${esc(trPlace(next))} ›</button>` : ''}</div>
     <h2 class="sec">Chambres</h2><div class="group">${rooms.map(trRoomRow).join('')}</div>
-    ${communs.length ? `<h2 class="sec">Parties communes</h2><div class="group">${communs.map(trRoomRow).join('')}</div>` : ''}`;
+    ${communs.length ? `<h2 class="sec">Parties communes</h2><div class="group">${communs.map(trRoomRow).join('')}</div>` : ''}
+    <h2 class="sec">Essais</h2><p class="muted">Une pièce d’ailleurs (un appartement, par exemple) pour essayer le scan, le plan et la 3D. Elle ne compte pas dans les travaux de l’Archange.</p>
+    ${trTests().length ? `<div class="group">${trTests().map(trRoomRow).join('')}</div>` : ''}
+    ${trCan() ? '<button class="btn" data-a="trTestNew">＋ Créer une pièce d’essai</button>' : ''}`;
 }
 
 /* ---------- fiche d'une chambre ---------- */
@@ -169,7 +178,7 @@ const trIn = (rid, k, label, d, o) => { o = o || {}; return `<label>${label}<inp
 const trSel = (rid, k, label, d, opts) => `<label>${label}<select ${trDis()} data-change="trF" data-rid="${esc(rid)}" data-k="${k}" data-t="s">${opt('', d[k] || '', '—')}${opts.map(([v, l]) => opt(v, d[k], l)).join('')}</select></label>`;
 const trSeg = (rid, k, d, entries, cls) => `<div class="segc ${cls || ''}" role="group">${entries.map(([v, l]) => `<button ${trDis()} data-a="trSet" data-rid="${esc(rid)}" data-k="${k}" data-v="${v}" aria-pressed="${d[k] === v}">${l}</button>`).join('')}</div>`;
 function trSurfHtml(rid) {
-  const d = trData(rid), s = trSurf(d), r = S.rooms[rid];
+  const d = trData(rid), s = trSurf(d), r = trRoomGet(rid);
   if (!s.ch) return '<span class="muted">Entre la longueur et la largeur : la surface se calcule toute seule.</span>';
   const cap = trCap3(s.tot);
   let v = '';
@@ -205,12 +214,14 @@ function trShots(rid, slots) {
   return `<div class="shots">${h}</div>`;
 }
 function trRoomSheet(rid) {
-  const r = S.rooms[rid]; if (!r || !S.tr) { closeSheet(); return; }
+  const r = trRoomGet(rid); if (!r || !S.tr) { closeSheet(); return; }
   const d = trData(rid), row = S.tr.rooms[rid], commun = isCommun(r), eq = d.eq || {};
+  const test = !!r.test;
   const todo = S.tr.todo.filter((t) => t.room_id === rid && t.statut !== 'fait');
   const props = S.tr.props.filter((p) => p.room_id === rid && p.statut !== 'ecartee');
-  openSheet('trroom:' + rid, `<div class="row between"><h2>${esc(placeName(r))}</h2><button class="btn small" data-a="close">Fermer</button></div>
+  openSheet('trroom:' + rid, `<div class="row between"><h2>${esc(trPlace(r))}</h2><button class="btn small" data-a="close">Fermer</button></div>
     <p class="tr-save" id="tr-save">${trCan() ? (trPend.length ? 'Enregistrement…' : 'Tout s’enregistre tout seul') : 'Lecture seule'}</p>
+    ${test ? '<div class="robar">🧪 <span><b>Pièce d’essai</b> · elle ne compte ni dans l’avancement, ni dans la liste, ni dans les écarts de l’Archange.</span></div>' : ''}
     <div class="card"><h3>État</h3>${trSeg(rid, 'etat', d, Object.entries(TR_ETAT).map(([k, v]) => [k, v.l]), 'four')}
       ${commun ? '' : `<p class="muted">Catégorie de la chambre</p>${trSeg(rid, 'cat', d, Object.entries(TR_CAT))}`}
       <div class="form">${trSel(rid, 'etage', 'Étage', d, TR_ETAGES)}</div></div>
@@ -239,8 +250,8 @@ function trRoomSheet(rid) {
     <div class="card"><h3>⭐ Ce qui manque pour le 3 étoiles</h3><div id="tr-gaps">${trGapsHtml(rid)}</div>
       <p class="muted sm">Repères tirés de la <a href="${TR_GUIDE}" target="_blank" rel="noopener">grille officielle Atout France</a>, qui fait foi.</p></div>`}
     <div class="card form"><h3>📝 Notes</h3><label>Ce qu’il faut savoir sur ${commun ? 'cet endroit' : 'cette chambre'}<textarea ${trDis()} data-change="trF" data-rid="${esc(rid)}" data-k="notes" data-t="s" rows="3">${esc(d.notes || '')}</textarea></label></div>
-    <div class="card"><div class="row between"><h3>À faire et à acheter${todo.length ? ` · ${todo.length}` : ''}</h3>${trCan() ? `<button class="btn small soft" data-a="trTodoNew" data-rid="${esc(rid)}">＋ Ajouter</button>` : ''}</div>
-      ${todo.length ? `<div class="group flat">${todo.map(trTodoRow).join('')}</div>` : '<p class="muted">Rien pour l’instant.</p>'}</div>
+    ${test ? (trCan() ? `<button class="btn ghost bad-t" data-a="trTestDel" data-id="${esc(rid)}">Supprimer cette pièce d’essai</button>` : '') : `<div class="card"><div class="row between"><h3>À faire et à acheter${todo.length ? ` · ${todo.length}` : ''}</h3>${trCan() ? `<button class="btn small soft" data-a="trTodoNew" data-rid="${esc(rid)}">＋ Ajouter</button>` : ''}</div>
+      ${todo.length ? `<div class="group flat">${todo.map(trTodoRow).join('')}</div>` : '<p class="muted">Rien pour l’instant.</p>'}</div>`}
     ${props.length ? `<div class="card"><h3>💡 Idées pour ${commun ? 'cet endroit' : 'cette chambre'}</h3>${props.map(trPropCard).join('')}</div>` : ''}
     ${row && row.updated_label ? `<p class="muted sm">Dernière modification : ${esc(row.updated_label)}, ${when(row.updated_at)}</p>` : ''}`);
 }
@@ -274,7 +285,7 @@ function trItemSheet(id) {
       <label>Description (marque, couleur, matière)<input id="ti-label" ${trDis()} value="${esc(it.label || '')}" placeholder="Ex. : lit bois clair avec tête de lit"></label>
       <div class="three"><label>Largeur (cm)<input id="ti-w" ${trDis()} inputmode="decimal" value="${esc(it.w_cm || '')}"></label><label>Longueur (cm)<input id="ti-d" ${trDis()} inputmode="decimal" value="${esc(it.d_cm || '')}"></label><label>Hauteur (cm)<input id="ti-h" ${trDis()} inputmode="decimal" value="${esc(it.h_cm || '')}"></label></div>
       <div class="two"><label>État<select id="ti-etat" ${trDis()}>${Object.entries(TR_IETAT).map(([k, v]) => opt(k, it.etat, v.l)).join('')}</select></label>
-        <label>Où est-il ?<select id="ti-room" ${trDis()}>${opt('', it.room_id || '', 'Réserve / ailleurs')}${rooms.map((r) => opt(r.id, it.room_id, placeName(r))).join('')}</select></label></div>
+        <label>Où est-il ?<select id="ti-room" ${trDis()}>${opt('', it.room_id || '', 'Réserve / ailleurs')}${rooms.map((r) => opt(r.id, it.room_id, trPlace(r))).join('')}</select></label></div>
       <label>Si ailleurs : où exactement ?<input id="ti-lieu" ${trDis()} value="${esc(it.lieu || '')}" placeholder="Ex. : grenier, cave, Hôtel de Paris"></label>
       <label>Note<input id="ti-note" ${trDis()} value="${esc(it.note || '')}"></label></div>
     ${id ? `<div class="card"><h3>📷 Photos</h3><div class="shots">${ph.map((p) => { const u = trUrl(p.path); return `<button class="shot done" data-a="trZoom" data-id="${p.id}">${u ? `<img alt="" src="${esc(u)}">` : ''}</button>`; }).join('')}${trCan() ? `<button class="shot" data-a="trItemShot" data-id="${id}"><span class="cam">📷</span><span>Photo</span></button>` : ''}</div></div>` : ''}
@@ -312,7 +323,7 @@ function trViewListe() {
     <div class="card"><h3>⭐ Écarts avec le 3 étoiles</h3>
       <p class="muted">Calculé à partir des ${fiches} fiche${fiches > 1 ? 's' : ''} où les équipements sont cochés.</p>
       ${eqg.length ? `<div class="group flat">${eqg.map((g) => `<div class="prow"><span class="pr-t"><b>${esc(g.t)} · ${g.rooms.length}</b><span class="muted sm">Chambre${g.rooms.length > 1 ? 's' : ''} ${esc(g.rooms.join(', '))}</span></span>${inList(g.t) ? '<span class="pill p-green">dans la liste</span>' : (trCan() ? `<button class="btn small soft" data-a="trGapBuy" data-k="${g.k}">＋ Courses</button>` : '')}</div>`).join('')}</div>` : ''}
-      ${other.length ? `<div class="group flat">${other.map(({ r, g }) => `<button class="prow" data-a="trRoom" data-id="${esc(r.id)}"><span class="pr-t"><b>${esc(placeName(r))}</b><span class="muted sm">${esc(g.t)}</span></span><span class="chev">›</span></button>`).join('')}</div>` : ''}
+      ${other.length ? `<div class="group flat">${other.map(({ r, g }) => `<button class="prow" data-a="trRoom" data-id="${esc(r.id)}"><span class="pr-t"><b>${esc(trPlace(r))}</b><span class="muted sm">${esc(g.t)}</span></span><span class="chev">›</span></button>`).join('')}</div>` : ''}
       ${!eqg.length && !other.length ? '<p class="muted">Rien à signaler pour l’instant. Les écarts apparaissent ici au fur et à mesure des fiches.</p>' : ''}</div>
     ${done.length ? `<button class="btn small ghost" data-a="trDone">${S.trDone ? 'Masquer' : 'Voir'} les ${done.length} terminé${done.length > 1 ? 's' : ''}</button>${S.trDone ? `<div class="group">${done.map(trTodoRow).join('')}</div>` : ''}` : ''}`;
 }
@@ -326,7 +337,7 @@ function trTodoSheet(id, pre) {
     <div class="segc" role="group"><button ${trDis()} data-a="trKind" data-k="action" aria-pressed="${S.trForm.kind === 'action'}">🔨 Action à faire</button><button ${trDis()} data-a="trKind" data-k="achat" aria-pressed="${S.trForm.kind === 'achat'}">🛒 Achat</button></div>
     <div class="card form">
       <label>Quoi ?<input id="tt-label" ${trDis()} value="${esc(t.label || '')}" placeholder="Ex. : changer le robinet du lavabo"></label>
-      <div class="two"><label>Où ?<select id="tt-room" ${trDis()}>${opt('', t.room_id || '', 'Tout l’hôtel')}${rooms.map((r) => opt(r.id, t.room_id, placeName(r))).join('')}</select></label><label>Quantité<input id="tt-qty" ${trDis()} inputmode="numeric" value="${esc(t.qty || 1)}"></label></div>
+      <div class="two"><label>Où ?<select id="tt-room" ${trDis()}>${opt('', t.room_id || '', 'Tout l’hôtel')}${rooms.map((r) => opt(r.id, t.room_id, trPlace(r))).join('')}</select></label><label>Quantité<input id="tt-qty" ${trDis()} inputmode="numeric" value="${esc(t.qty || 1)}"></label></div>
       <div class="two"><label>Niveau<select id="tt-niv" ${trDis()}>${Object.entries(TR_NIV).map(([k, v]) => opt(k, t.niveau, v.l)).join('')}</select></label><label>Avancement<select id="tt-st" ${trDis()}>${Object.entries(TR_TST).map(([k, v]) => opt(k, t.statut, v.l)).join('')}</select></label></div>
       <div class="two"><label>Magasin<input id="tt-mag" ${trDis()} value="${esc(t.magasin || '')}"></label><label>Prix à l’unité (€)<input id="tt-prix" ${trDis()} inputmode="decimal" value="${esc(t.prix == null ? '' : t.prix)}"></label></div>
       <label>Référence du produit<input id="tt-ref" ${trDis()} value="${esc(t.ref || '')}"></label>
@@ -348,7 +359,7 @@ function trViewIdees() {
   const props = S.tr.props;
   if (!props.length) return `<div class="card empty"><div class="e">💡</div><h2>Les propositions arriveront ici</h2><p>Une fois les chambres mesurées et photographiées, demande à Claude : il lit les fiches et dépose ici ses idées d’aménagement, de rideaux, de sols et de murs, par niveau de budget.</p></div>`;
   const groups = {}; props.forEach((p) => { (groups[p.room_id || ''] = groups[p.room_id || ''] || []).push(p); });
-  const keys = Object.keys(groups).sort((a, b) => ((S.rooms[a] || {}).order || 0) - ((S.rooms[b] || {}).order || 0));
+  const keys = Object.keys(groups).sort((a, b) => ((trRoomGet(a) || {}).order || 0) - ((trRoomGet(b) || {}).order || 0));
   return keys.map((k) => `<div class="card"><h3>${esc(k ? trRoomName(k) : 'Tout l’hôtel')}</h3>${groups[k].map(trPropCard).join('')}</div>`).join('');
 }
 
@@ -367,8 +378,8 @@ Object.assign(A, {
   trEq(d) { const eq = { ...(trData(d.rid).eq || {}) }; if (eq[d.k]) delete eq[d.k]; else eq[d.k] = true; trPatch(d.rid, { eq }); trRoomSheet(d.rid); },
   async trShot(d) {
     if (!trCan()) return;
-    const r = S.rooms[d.rid]; if (!r) return;
-    const path = await takePhoto(placeShort(r) + ' · ' + d.l, false, true); if (!path) return;
+    const r = trRoomGet(d.rid); if (!r) return;
+    const path = await takePhoto(trShort(r) + ' · ' + d.l, false, true); if (!path) return;
     try { const x = await api('tr_photo_add', { room_id: d.rid, path, label: d.l }); S.tr.photos.push(x.photo); toast('Photo enregistrée ✓'); }
     catch (e) { toast(errMsg(e)); }
     if (trSheetRoom() === d.rid) trRoomSheet(d.rid);
@@ -386,6 +397,19 @@ Object.assign(A, {
     if (!confirm('Supprimer cette photo ?')) return;
     try { await api('tr_photo_del', { id: p.id }); S.tr.photos = S.tr.photos.filter((x) => x.id !== p.id); } catch (e) { toast(errMsg(e)); return; }
     if (p.room_id) trRoomSheet(p.room_id); else trItemSheet(p.item_id);
+  },
+  trTestNew() {
+    if (!trCan()) return;
+    const nom = (prompt('Nom de la pièce d’essai', 'Appartement test') || '').trim().slice(0, 40); if (!nom) return;
+    const id = 'test__' + Math.random().toString(36).slice(2, 10);
+    S.tr.rooms[id] = { room_id: id, hotel: 'test', data: {} }; trPatch(id, { nom }); render(); trRoomSheet(id);
+  },
+  async trTestDel(d) {
+    if (!trIsTest(d.id) || !confirm('Supprimer cette pièce d’essai, son plan et ses photos ?')) return;
+    for (let i = trPend.length - 1; i >= 0; i--) if (trPend[i].rid === d.id) trPend.splice(i, 1);
+    LS.set('mh-trq', trPend);
+    try { await api('tr_test_del', { room_id: d.id }); } catch (e) { toast(errMsg(e)); return; }
+    delete S.tr.rooms[d.id]; S.tr.photos = S.tr.photos.filter((p) => p.room_id !== d.id); closeSheet(); render();
   },
   trItemNew() { trItemSheet(null); },
   trItem(d) { trItemSheet(d.id); },
@@ -423,14 +447,14 @@ Object.assign(A, {
       const x = await api('tr_todo_save', body);
       const i = S.tr.todo.findIndex((y) => y.id === x.todo.id); if (i >= 0) S.tr.todo[i] = x.todo; else S.tr.todo.push(x.todo);
       toast('Enregistré ✓');
-      if (F.back && S.rooms[F.back]) trRoomSheet(F.back); else closeSheet();
+      if (F.back && trRoomGet(F.back)) trRoomSheet(F.back); else closeSheet();
       render();
     } catch (e) { toast(errMsg(e)); }
   },
   async trTodoDel(d) {
     if (!confirm('Supprimer cette ligne ?')) return;
     const F = S.trForm || {};
-    try { await api('tr_todo_del', { id: d.id }); S.tr.todo = S.tr.todo.filter((x) => x.id !== d.id); if (F.back && S.rooms[F.back]) trRoomSheet(F.back); else closeSheet(); render(); } catch (e) { toast(errMsg(e)); }
+    try { await api('tr_todo_del', { id: d.id }); S.tr.todo = S.tr.todo.filter((x) => x.id !== d.id); if (F.back && trRoomGet(F.back)) trRoomSheet(F.back); else closeSheet(); render(); } catch (e) { toast(errMsg(e)); }
   },
   async trProp(d) {
     const p = S.tr.props.find((x) => x.id === d.id); if (!p) return;

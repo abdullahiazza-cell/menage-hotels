@@ -464,13 +464,31 @@ function trScanParse(j) {
   const onEdge = (e) => { const [px, py] = P(e.transform[12], e.transform[14]), ds = [py, W - px, D - py, px], dist = Math.min(...ds), wall = ds.indexOf(dist), L = wall % 2 ? D : W, width = e.dimensions[0] * 100; return { wall, dist, width, height: e.dimensions[1] * 100, pos: Math.min(L - Math.min(width, L) / 2, Math.max(Math.min(width, L) / 2, wall % 2 ? py : px)), y: e.transform[13] }; };
   const doors = [...(j.doors || []), ...(j.openings || [])].filter(okEl).map(onEdge), wins = (j.windows || []).filter(okEl).map((e) => ({ ...onEdge(e), sill: num(e.sillHeight) ? e.sillHeight * 100 : (e.transform[13] - e.dimensions[1] / 2 - floorY) * 100 }));
   const outer = doors.filter((d) => d.dist <= 60).sort((a, b) => a.dist - b.dist), door = outer[0] || [...doors].sort((a, b) => a.dist - b.dist)[0] || null;
-  const owins = wins.filter((w) => w.dist <= 60).sort((a, b) => b.width - a.width), win = owins[0] || null;
+  // Salle de bain scannée avec la chambre : on la reconnaît à ses sanitaires (ou à l'étiquette « bathroom » du scan),
+  // puis on cherche les cloisons qui la séparent de la chambre. Elle devient un bloc dans un coin du plan.
+  const SAN = ['toilet', 'sink', 'bathtub'], sanPts = (j.objects || []).filter((o) => okEl(o) && SAN.includes(Object.keys(o.category || {})[0])).map((o) => P(o.transform[12], o.transform[14]));
+  (j.sections || []).forEach((sx) => { if (sx && /bath/i.test(String(sx.label || '')) && Array.isArray(sx.center) && sx.center.length >= 3 && sx.center.every(num)) sanPts.push(P(sx.center[0], sx.center[2])); });
+  let sdb = null;
+  if (sanPts.length) {
+    const bx = sanPts.reduce((a, q) => a + q[0], 0) / sanPts.length, by = sanPts.reduce((a, q) => a + q[1], 0) / sanPts.length, west = bx < W / 2, north = by < D / 2;
+    const segs = walls.map((w) => { const a = P(w.x - w.dx * w.len / 2, w.z - w.dz * w.len / 2), b = P(w.x + w.dx * w.len / 2, w.z + w.dz * w.len / 2); return { a, b }; });
+    // Cloison verticale (sur le plan) la plus proche des sanitaires, du côté opposé au coin ; puis la même chose à l'horizontale.
+    const vert = segs.filter((g) => Math.abs(g.a[0] - g.b[0]) < 20).map((g) => ({ v: (g.a[0] + g.b[0]) / 2, lo: Math.min(g.a[1], g.b[1]), hi: Math.max(g.a[1], g.b[1]) })).filter((g) => g.v > 30 && g.v < W - 30 && g.lo - 30 < by && g.hi + 30 > by && (west ? g.v > bx : g.v < bx)).sort((p1, p2) => Math.abs(p1.v - bx) - Math.abs(p2.v - bx))[0];
+    const horiz = segs.filter((g) => Math.abs(g.a[1] - g.b[1]) < 20).map((g) => ({ v: (g.a[1] + g.b[1]) / 2, lo: Math.min(g.a[0], g.b[0]), hi: Math.max(g.a[0], g.b[0]) })).filter((g) => g.v > 30 && g.v < D - 30 && g.lo - 30 < bx && g.hi + 30 > bx && (north ? g.v > by : g.v < by)).sort((p1, p2) => Math.abs(p1.v - by) - Math.abs(p2.v - by))[0];
+    if (vert || horiz) {
+      const a = Math.round(vert ? (west ? vert.v : W - vert.v) : W), b = Math.round(horiz ? (north ? horiz.v : D - horiz.v) : D);
+      const x0s = west ? 0 : W - a, y0s = north ? 0 : D - b;
+      sdb = { c: (north ? 'n' : 's') + (west ? 'o' : 'e'), len: a, wid: b, rect: { x0: x0s, y0: y0s, x1: x0s + a, y1: y0s + b }, inside: 0 };
+    }
+  }
+  const inSdb = (px, py) => !!sdb && px >= sdb.rect.x0 - 5 && px <= sdb.rect.x1 + 5 && py >= sdb.rect.y0 - 5 && py <= sdb.rect.y1 + 5;
   const counts = {}, items = [];
   (j.objects || []).filter(okEl).forEach((o) => {
     const cat = Object.keys(o.category || {})[0] || 'autre'; counts[cat] = (counts[cat] || 0) + 1;
     let w = Math.round(o.dimensions[0] * 100), h = Math.round(o.dimensions[1] * 100), dp = Math.round(o.dimensions[2] * 100), r = (Math.round(head(o.transform) / 90) * 90) % 360;
     const [px, py] = P(o.transform[12], o.transform[14]);
     if (w < 5 || dp < 2) return;
+    if (inSdb(px, py)) { sdb.inside++; return; } // ce qui est dans la salle de bain reste dans son bloc
     let it;
     if (cat === 'television') {
       const ds = [py, W - px, D - py, px], wall = ds.indexOf(Math.min(...ds)), L = wall % 2 ? D : W, ww = Math.max(w, dp);
@@ -492,18 +510,22 @@ function trScanParse(j) {
     }
     it.scan = 1; items.push(it);
   });
-  return { W, D, H, door: door ? { wall: door.wall, pos: Math.round(door.pos) } : null, win: win ? { wall: win.wall, pos: Math.round(win.pos) } : null,
+  // Fenêtre principale : la plus large du pourtour, en préférant celles de la chambre à celle de la salle de bain.
+  const wpt = (w) => (w.wall === 0 ? [w.pos, 0] : w.wall === 1 ? [W, w.pos] : w.wall === 2 ? [w.pos, D] : [0, w.pos]);
+  const owins = wins.filter((w) => w.dist <= 60).sort((a, b) => (inSdb(...wpt(a)) - inSdb(...wpt(b))) || (b.width - a.width)), win = owins[0] || null;
+  return { W, D, H, sdb, door: door ? { wall: door.wall, pos: Math.round(door.pos) } : null, win: win ? { wall: win.wall, pos: Math.round(win.pos) } : null,
     fen: win ? { w: Math.round(win.width), h: Math.round(win.height), allege: Math.max(0, Math.round(win.sill)), n: owins.length } : null,
     items, counts, nWalls: walls.length, nDoors: doors.length, nRooms: Array.isArray(j.sections) ? j.sections.length : 0 };
 }
 function trScanSheet(roomId) {
-  const sc = S.trScan, r = S.rooms[roomId]; if (!sc || !r) { closeSheet(); return; }
+  const sc = S.trScan, r = trRoomGet(roomId); if (!sc || !r) { closeSheet(); return; }
   const lst = Object.entries(sc.counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} × ${(TR_SCAN_FR[k] || k).toLowerCase()}`);
-  openSheet('trscan', `<div class="row between"><h2>Scan lu · ${esc(placeName(r))}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">Annuler</button></div>
+  openSheet('trscan', `<div class="row between"><h2>Scan lu · ${esc(trPlace(r))}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">Annuler</button></div>
     <div class="card"><h3>📏 ${trM(sc.W)} × ${trM(sc.D)} · hauteur ${trM(sc.H)}</h3>
       <p class="muted">${sc.nWalls} murs, ${sc.nDoors} porte${sc.nDoors > 1 ? 's' : ''}${sc.fen ? `, ${sc.fen.n} fenêtre${sc.fen.n > 1 ? 's' : ''} (la plus grande : ${sc.fen.w} × ${sc.fen.h} cm, à ${sc.fen.allege} cm du sol)` : ', pas de fenêtre vue'}.</p>
       ${lst.length ? `<p><b>Reconnu :</b> ${esc(lst.join(', '))}.</p>` : '<p class="muted">Aucun meuble reconnu dans ce scan.</p>'}
-      ${sc.nWalls > 4 || sc.nRooms > 1 ? '<p class="banner sm c-slate">Le scan compte plus de 4 murs : la pièce est ramenée au rectangle qui l’entoure. Si elle a un recoin ou contient la salle de bain, la surface réelle est un peu plus petite ; corrige-la dans la fiche.</p>' : ''}</div>
+      ${sc.sdb ? `<p><b>Salle de bain repérée</b> dans un coin : ${trM(sc.sdb.len)} × ${trM(sc.sdb.wid)}, soit ${trFr(sc.sdb.len * sc.sdb.wid / 10000)} m² compris dans la surface.</p>` : ''}
+      ${sc.nWalls > 4 || sc.nRooms > 1 ? `<p class="banner sm c-slate">Le scan compte plus de 4 murs : l’ensemble est ramené au rectangle qui l’entoure${sc.sdb ? ', salle de bain comprise' : ''}. S’il reste un recoin, la surface réelle est un peu plus petite ; corrige-la dans la fiche.</p>` : ''}</div>
     <p class="muted">Les mesures de la fiche, la fenêtre et le plan de cette chambre seront remplacés par le scan. Les photos, l’état et les notes ne bougent pas.</p>
     <button class="btn big pri" data-a="trScanApply" data-id="${esc(roomId)}">Utiliser ce scan</button>`);
 }
@@ -519,17 +541,17 @@ function trDecoCard(roomId) {
     <p class="tr-cap">Rideaux · fenêtre de ${trNum(trData(roomId).fen_w) || 120} cm</p>${sw('rideau', TR_DECO_RIDEAU, deco.rideau || 'aucun')}
     ${deco.rideau && deco.rideau !== 'aucun' && deco.rideau !== 'voilage' ? `<p class="tr-cap">Tissu des rideaux</p>${sw('tissu', TR_DECO_TISSU, deco.tissu || 'lin')}` : ''}
     <p class="tr-cap">Dessus de lit</p>${sw('linge', TR_DECO_TISSU, deco.linge)}
-    ${lines.length ? `<p class="tr-cap">À prévoir</p><ul class="tr-gaps">${lines.map((l) => `<li>${l.qty > 1 ? l.qty + ' × ' : ''}${esc(l.label)}${l.note ? ` <span class="muted sm">· ${esc(l.note)}</span>` : ''}</li>`).join('')}</ul>${can ? '<button class="btn small soft" data-a="trDecoList">＋ Mettre ces finitions dans la liste</button>' : ''}` : ''}</div>`;
+    ${lines.length ? `<p class="tr-cap">À prévoir</p><ul class="tr-gaps">${lines.map((l) => `<li>${l.qty > 1 ? l.qty + ' × ' : ''}${esc(l.label)}${l.note ? ` <span class="muted sm">· ${esc(l.note)}</span>` : ''}</li>`).join('')}</ul>${can && !trIsTest(roomId) ? '<button class="btn small soft" data-a="trDecoList">＋ Mettre ces finitions dans la liste</button>' : ''}` : ''}</div>`;
 }
 function trPlanSheet(roomId, keep) {
-  const r = S.rooms[roomId], d = trData(roomId); if (!r || !S.tr || !trHasPlan(d)) { closeSheet(); return; }
+  const r = trRoomGet(roomId), d = trData(roomId); if (!r || !S.tr || !trHasPlan(d)) { closeSheet(); return; }
   const { W, D } = trWDH(d);
   if (!keep || !S.trP || S.trP.rid !== roomId) S.trP = { rid: roomId, view: (S.trP && S.trP.rid === roomId && S.trP.view) || 'plan', sel: null, p: trPlanOf(roomId), cam: null };
   const P = S.trP, can = trCan(), hasSdb = trNum(d.sdb_len) && trNum(d.sdb_wid), fs = Math.max(11, Math.round(Math.max(W, D) / 26)), pad = fs * 2.2;
   const cfgs = TR_CFG.map(([k, l, beds]) => { const a = trAuto(roomId, beds, P.p); return { k, l, a, ok: a.bedsOk && a.surfOk }; });
   const bank = S.tr.items.filter((i) => i.etat !== 'a_jeter' && i.w_cm && i.d_cm);
   trGlStop();
-  openSheet('trplan:' + roomId, `<div class="row between"><h2>${esc(placeName(r))} · ${trM(W)} × ${trM(D)}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">‹ Fiche</button></div>
+  openSheet('trplan:' + roomId, `<div class="row between"><h2>${esc(trPlace(r))} · ${trM(W)} × ${trM(D)}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">‹ Fiche</button></div>
     <div class="segc" role="group"><button data-a="trPlanView" data-k="plan" aria-pressed="${P.view === 'plan'}">Plan</button><button data-a="trPlanView" data-k="3d" aria-pressed="${P.view === '3d'}">Vue 3D</button></div>
     <div class="tr-stage">${P.view === 'plan'
       ? `<svg id="tr-svg" viewBox="${-pad} ${-pad} ${W + pad * 1.4} ${D + pad * 1.4}" preserveAspectRatio="xMidYMid meet"><g id="tr-plan-g"></g></svg>`
@@ -582,10 +604,11 @@ Object.assign(A, {
   },
   trScanApply(d) {
     const sc = S.trScan; if (!sc || !trCan()) return;
-    const old = trPlanOf(d.id), plan = { items: sc.items, door: sc.door || old.door, win: sc.win || old.win, sdb: { c: '' }, deco: old.deco };
+    const old = trPlanOf(d.id), plan = { items: sc.items, door: sc.door || old.door, win: sc.win || old.win, sdb: sc.sdb ? { c: sc.sdb.c, rot: false } : { c: '' }, deco: old.deco };
     if (!sc.door) plan.door = { wall: 2, pos: Math.min(sc.W - TR_DOOR_W / 2, 75) }; if (!sc.win) plan.win = { wall: 0, pos: sc.W / 2 };
     const patch = { len: sc.W, wid: sc.D, hei: sc.H, surf: null, plan, scan_at: new Date().toISOString() };
     if (sc.fen) Object.assign(patch, { fen_w: sc.fen.w, fen_h: sc.fen.h, fen_allege: sc.fen.allege, fen_n: sc.fen.n });
+    if (sc.sdb) Object.assign(patch, { sdb_len: sc.sdb.len, sdb_wid: sc.sdb.wid });
     trPatch(d.id, patch); S.trScan = null; S.trP = null; toast('Scan intégré ✓');
     trPlanSheet(d.id); S.trP.view = '3d'; trPlanSheet(d.id, true);
   },
