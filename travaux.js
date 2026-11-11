@@ -187,8 +187,9 @@ function trGapsHtml(rid) {
 }
 function trPlanCardHtml(rid) {
   const d = trData(rid), n = d.plan && Array.isArray(d.plan.items) ? d.plan.items.length : 0;
-  if (!(trNum(d.len) && trNum(d.wid))) return '<p class="muted">Entre la longueur et la largeur : le plan et la vue 3D se dessinent tout seuls.</p>';
-  return `<p class="muted">${n ? `${n} meuble${n > 1 ? 's' : ''} placé${n > 1 ? 's' : ''} sur le plan.` : 'La chambre à l’échelle, avec la porte, la fenêtre et les lits. L’appli propose des dispositions et vérifie que tout tient.'}</p><button class="btn soft" data-a="trPlan" data-id="${esc(rid)}">Ouvrir le plan et la 3D ›</button>`;
+  const scan = trCan() ? `<button class="btn small" data-a="trScanPick" data-id="${esc(rid)}">📲 Importer un scan de l’iPhone</button><p class="muted sm">Avec un iPhone Pro et l’appli gratuite OpenPlan3D : scanne la chambre, puis Export → Editable Plan (JSON). Les mesures, la porte, la fenêtre et les meubles reconnus arrivent ici.</p>` : '';
+  if (!(trNum(d.len) && trNum(d.wid))) return '<p class="muted">Entre la longueur et la largeur, ou importe un scan : le plan et la vue 3D se dessinent tout seuls.</p>' + scan;
+  return `<p class="muted">${n ? `${n} meuble${n > 1 ? 's' : ''} placé${n > 1 ? 's' : ''} sur le plan.` : 'La chambre à l’échelle, avec la porte, la fenêtre et les lits. L’appli propose des dispositions et vérifie que tout tient.'}</p><button class="btn soft" data-a="trPlan" data-id="${esc(rid)}">Ouvrir le plan et la 3D ›</button>${scan}`;
 }
 function trLive(rid) { const a = $('tr-surf'); if (a) a.innerHTML = trSurfHtml(rid); const b = $('tr-gaps'); if (b) b.innerHTML = trGapsHtml(rid); const c = $('tr-plan-card'); if (c) c.innerHTML = trPlanCardHtml(rid); }
 function trShots(rid, slots) {

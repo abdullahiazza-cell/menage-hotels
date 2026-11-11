@@ -14,6 +14,14 @@ const TR_FURN = {
 const TR_CFG = [['d', '1 lit double', ['lit_d']], ['ss', '2 lits simples', ['lit_s', 'lit_s']], ['ds', '1 double + 1 simple', ['lit_d', 'lit_s']], ['sss', '3 lits simples', ['lit_s', 'lit_s', 'lit_s']], ['s', '1 lit simple', ['lit_s']]];
 const TR_BANK_MAP = { lit_simple: 'lit_s', lit_double: 'lit_d', bureau: 'bureau', chaise: 'chaise', fauteuil: 'fauteuil', armoire: 'armoire', chevet: 'chevet', tv: 'tv' };
 const TR_DOOR_W = 90;
+// Finitions du projet : teintes sobres, actuelles, qui ne se démodent pas. [clé, nom, couleur, motif du sol]
+const TR_DECO_MUR = [['blanc', 'Blanc cassé', [0.98, 0.97, 0.94]], ['lin', 'Lin', [0.93, 0.90, 0.84]], ['grege', 'Grège', [0.86, 0.83, 0.77]], ['sauge', 'Vert sauge', [0.76, 0.81, 0.74]], ['bleugris', 'Bleu gris', [0.72, 0.78, 0.83]], ['terracotta', 'Terracotta doux', [0.86, 0.68, 0.58]]];
+const TR_DECO_ACCENT = [['', 'Aucun', null], ['sauge', 'Vert sauge', [0.66, 0.74, 0.65]], ['vertprofond', 'Vert profond', [0.29, 0.40, 0.36]], ['bleunuit', 'Bleu nuit', [0.20, 0.27, 0.38]], ['terracotta', 'Terracotta', [0.78, 0.52, 0.40]], ['grege', 'Grège foncé', [0.72, 0.68, 0.61]]];
+const TR_DECO_SOL = [['chene', 'Parquet chêne clair', [0.80, 0.64, 0.46], 1], ['chenefume', 'Parquet chêne fumé', [0.55, 0.42, 0.31], 1], ['pvcgris', 'PVC gris clair', [0.76, 0.74, 0.71], 1], ['moquette', 'Moquette grise', [0.56, 0.58, 0.62], 0], ['carrelage', 'Carrelage clair', [0.86, 0.85, 0.82], 2]];
+const TR_DECO_RIDEAU = [['aucun', 'Rien'], ['voilage', 'Voilage'], ['occultant', 'Occultants'], ['double', 'Voilage + occultants']];
+const TR_DECO_TISSU = [['lin', 'Lin', [0.88, 0.84, 0.76]], ['gris', 'Gris perle', [0.74, 0.75, 0.77]], ['sauge', 'Vert sauge', [0.60, 0.69, 0.62]], ['bleunuit', 'Bleu nuit', [0.22, 0.29, 0.40]], ['terracotta', 'Terracotta', [0.76, 0.50, 0.38]], ['blanc', 'Blanc', [0.97, 0.97, 0.96]], ['anthracite', 'Anthracite', [0.27, 0.28, 0.30]]];
+const trDecoOf = (list, k) => list.find((x) => x[0] === k) || null;
+const trCss = (c) => `rgb(${c.map((v) => Math.round(v * 255)).join(',')})`;
 
 S.trP = null; // plan ouvert : { rid, view, sel, p (copie de travail), cam }
 const trPid = () => 'i' + Math.random().toString(36).slice(2, 8);
@@ -281,11 +289,11 @@ const TR_COL = {
 };
 const TR_FLOOR = { parquet: [[0.80, 0.64, 0.46], 1], pvc: [[0.74, 0.70, 0.64], 1], moquette: [[0.56, 0.60, 0.68], 0], carrelage: [[0.86, 0.85, 0.82], 2], autre: [[0.78, 0.74, 0.68], 0] };
 // Les pièces d'un meuble : [centre x, centre y (repère du meuble), largeur, profondeur, bas, haut, couleur], en cm.
-function trParts(it) {
+function trParts(it, duvet) {
   const m = trDim(it), w = m.w, d = m.d, h = m.h, C = TR_COL, legs = (ix, iy, top, c) => [[-ix, -iy], [ix, -iy], [-ix, iy], [ix, iy]].map(([x, y]) => [x, y, 4, 4, 0, top, c]);
   if (trIsBed(it)) {
     const pil = it.t === 'lit_d' ? [[-w / 4, -d / 2 + 30, w / 2 - 14, 36, 50, 60, C.pillow], [w / 4, -d / 2 + 30, w / 2 - 14, 36, 50, 60, C.pillow]] : [[0, -d / 2 + 30, w - 24, 36, 50, 60, C.pillow]];
-    return [[0, 0, w, d, 8, 28, C.wood], ...legs(w / 2 - 5, d / 2 - 5, 8, C.woodD), [0, 2, w - 4, d - 8, 28, 50, C.white], [0, -d / 2 + 3, w, 6, 0, 100, C.woodD], [0, d * 0.16, w - 1, d * 0.66, 50, 54, C.duvet], ...pil];
+    return [[0, 0, w, d, 8, 28, C.wood], ...legs(w / 2 - 5, d / 2 - 5, 8, C.woodD), [0, 2, w - 4, d - 8, 28, 50, C.white], [0, -d / 2 + 3, w, 6, 0, 100, C.woodD], [0, d * 0.16, w - 1, d * 0.66, 50, 54, duvet || C.duvet], ...pil];
   }
   if (it.t === 'chevet') return [[0, 0, w, d, 0, h, C.wood], [0, d / 2 + 0.5, w - 8, 1, h - 18, h - 16, C.woodD], [0, 0, 6, 6, h, h + 16, C.metal], [0, 0, 18, 18, h + 16, h + 34, C.lamp]];
   if (it.t === 'bureau') return [[0, 0, w, d, h - 4, h, C.wood], ...legs(w / 2 - 4, d / 2 - 4, h - 4, C.dark)];
@@ -299,23 +307,32 @@ function trParts(it) {
 function trScene(roomId, p) {
   const d = trData(roomId), { W, D, H } = trWDH(d), cm = 0.01, B = [], sh = [], walls = [];
   const box = (x0, y0, z0, x1, y1, z1, c, extra) => ({ t: [((x0 + x1) / 2 - W / 2) * cm, ((z0 + z1) / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], s: [Math.max(0.2, x1 - x0) * cm, Math.max(0.2, z1 - z0) * cm, Math.max(0.2, y1 - y0) * cm], c, ...(extra || {}) });
-  const fl = TR_FLOOR[d.sol] || TR_FLOOR.parquet;
+  const deco = p.deco || {}, dsol = trDecoOf(TR_DECO_SOL, deco.sol), fl = dsol ? [dsol[2], dsol[3]] : (TR_FLOOR[d.sol] || TR_FLOOR.parquet);
   B.push(box(-8, -8, -6, W + 8, D + 8, 0, fl[0], { stripe: fl[1] }));
-  const T = 8, wc = d.murs === 'papier' ? [0.93, 0.90, 0.84] : TR_COL.wall;
+  const dmur = trDecoOf(TR_DECO_MUR, deco.mur), dacc = trDecoOf(TR_DECO_ACCENT, deco.accent), bed0 = p.items.find(trIsBed);
+  const accWall = dacc && dacc[2] && bed0 ? ((bed0.r || 0) / 90) % 4 : -1; // le mur d'accent est celui de la tête de lit
+  const T = 8, wc = dmur ? dmur[2] : (d.murs === 'papier' ? [0.93, 0.90, 0.84] : TR_COL.wall);
   const wdef = [[-T, -T, W + T, 0, [0, -1]], [W, -T, W + T, D + T, [1, 0]], [-T, D, W + T, D + T, [0, 1]], [-T, -T, 0, D + T, [-1, 0]]];
-  wdef.forEach(([x0, y0, x1, y1, n], i) => walls.push({ i, n, c: [((x0 + x1) / 2 - W / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], boxes: [box(x0, y0, 0, x1, y1, H, wc)] }));
+  wdef.forEach(([x0, y0, x1, y1, n], i) => walls.push({ i, n, c: [((x0 + x1) / 2 - W / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], glass: [], boxes: [box(x0, y0, 0, x1, y1, H, i === accWall ? dacc[2] : wc)] }));
   // Fenêtre et porte : plaquées sur la face intérieure de leur mur, elles disparaissent avec lui.
   const onWall = (o, width, z0, z1, deep, c) => { const z = trOpening(o, width, W, D, deep); return box(z.x0, z.y0, z0, z.x1, z.y1, z1, c); };
   const fw = trNum(d.fen_w) || 120, fh = trNum(d.fen_h) || 120, al = trNum(d.fen_allege) || 90;
   walls[p.win.wall].boxes.push(onWall(p.win, fw + 12, al - 6, Math.min(H - 5, al + fh + 6), 2, TR_COL.frame), onWall(p.win, fw, al, Math.min(H - 11, al + fh), 3, TR_COL.glass), onWall(p.win, 3, al, Math.min(H - 11, al + fh), 3.6, TR_COL.frame));
+  if (deco.rideau && deco.rideau !== 'aucun') {
+    const tis = trDecoOf(TR_DECO_TISSU, deco.tissu) || TR_DECO_TISSU[0], top = Math.min(H - 4, al + fh + 20), pw = Math.max(30, fw * 0.3), wl = walls[p.win.wall];
+    wl.boxes.push(onWall(p.win, fw + 2 * pw, top, top + 3, 8, TR_COL.metal));
+    if (deco.rideau !== 'voilage') [-1, 1].forEach((sg) => { const z = trOpening({ wall: p.win.wall, pos: p.win.pos + sg * (fw / 2 + pw / 2 - 8) }, pw, W, D, 9); wl.boxes.push(box(z.x0, z.y0, 4, z.x1, z.y1, top, tis[2])); });
+    if (deco.rideau !== 'occultant') wl.glass.push(onWall(p.win, fw + 14, 4, top, 5.5, [1, 1, 1]));
+  }
   const dh = Math.min(204, H - 10);
   walls[p.door.wall].boxes.push(onWall(p.door, TR_DOOR_W + 10, 0, dh + 5, 2, TR_COL.frame), onWall(p.door, TR_DOOR_W, 0, dh, 3.2, TR_COL.door));
   const sdb = trSdbRect(d, p, W, D);
   const glass = sdb ? [box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, Math.min(H, 215), [0.62, 0.74, 0.86])] : [];
+  const dl = trDecoOf(TR_DECO_TISSU, deco.linge), duvet = dl ? dl[2] : null;
   p.items.forEach((it) => {
     const r = trRect(it); if (it.t !== 'tv') sh.push(box(r.x0 - 3, r.y0 - 3, 0.3, r.x1 + 3, r.y1 + 3, 0.6, [0, 0, 0]));
     const dest = it.t === 'tv' ? walls[((it.r || 0) / 90) % 4].boxes : B;
-    trParts(it).forEach(([lx, ly, sx, sy, z0, z1, c]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c)); });
+    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c)); });
   });
   return { W: W * cm, D: D * cm, H: H * cm, B, sh, glass, walls, Wc: W, Dc: D, Hc: H };
 }
@@ -374,7 +391,7 @@ function trGlStart() {
     sc.sh.forEach((b) => drawBox(b, 0.13));
     gl.disable(gl.BLEND); gl.depthMask(true);
     for (let i = 1; i < sc.B.length; i++) drawBox(sc.B[i]);
-    if (sc.glass.length) { gl.enable(gl.BLEND); gl.depthMask(false); sc.glass.forEach((b) => drawBox(b, 0.38)); gl.depthMask(true); gl.disable(gl.BLEND); }
+    gl.enable(gl.BLEND); gl.depthMask(false); sc.glass.forEach((b) => drawBox(b, 0.38)); sc.walls.forEach((wl, i) => { if (!hidden[i]) wl.glass.forEach((b) => drawBox(b, 0.5)); }); gl.depthMask(true); gl.disable(gl.BLEND);
     // Cotes : longueur, largeur et hauteur, posées sur les arêtes visibles.
     const lab = $('tr-lab');
     if (lab) {
@@ -402,7 +419,108 @@ function trGlStart() {
   TR_GL.ask = ask; ask();
 }
 
+/* ---------- finitions : quantités à prévoir ---------- */
+function trDecoQty(roomId, p) {
+  const d = trData(roomId), { W, D, H } = trWDH(d), fw = trNum(d.fen_w) || 120, fh = trNum(d.fen_h) || 120, al = trNum(d.fen_allege) || 90, n = trNum(d.fen_n) || 1;
+  const murs = Math.max(0, (2 * (W + D) * H - n * fw * fh - TR_DOOR_W * 204) / 10000), bed0 = p.items.find(trIsBed);
+  const accLen = bed0 ? trWallLen(((bed0.r || 0) / 90) % 4, W, D) : 0;
+  return { murs, sol: (W * D) / 10000, accent: (accLen * H) / 10000, tringle: Math.round((fw + 60) / 10) * 10, tombee: Math.round(Math.min(H - 8, al + fh + 20)), fen: n };
+}
+function trDecoLines(roomId, p) {
+  const deco = p.deco || {}, q = trDecoQty(roomId, p), out = [];
+  const mur = trDecoOf(TR_DECO_MUR, deco.mur), acc = trDecoOf(TR_DECO_ACCENT, deco.accent), sol = trDecoOf(TR_DECO_SOL, deco.sol), tis = trDecoOf(TR_DECO_TISSU, deco.tissu) || TR_DECO_TISSU[0], lin = trDecoOf(TR_DECO_TISSU, deco.linge);
+  if (mur) out.push({ label: `Peinture murs ${mur[1].toLowerCase()}`, qty: 1, note: `${trFr(acc && acc[2] ? Math.max(0, q.murs - q.accent) : q.murs)} m² à peindre, 2 couches` });
+  if (acc && acc[2] && q.accent) out.push({ label: `Mur de tête de lit ${acc[1].toLowerCase()}`, qty: 1, note: `${trFr(q.accent)} m², peinture ou papier peint` });
+  if (sol) out.push({ label: sol[1], qty: 1, note: `${trFr(q.sol)} m² au sol, prévoir 10 % de chutes soit ${trFr(q.sol * 1.1)} m²` });
+  if (deco.rideau && deco.rideau !== 'aucun') {
+    out.push({ label: `Tringle à rideaux ${q.tringle} cm`, qty: q.fen, note: deco.rideau === 'double' ? 'Tringle double (voilage + occultants)' : '' });
+    if (deco.rideau !== 'voilage') out.push({ label: `Rideau occultant ${tis[1].toLowerCase()}, hauteur ${q.tombee} cm`, qty: 2 * q.fen, note: '2 panneaux par fenêtre ; tissu classé non feu, classement à confirmer pour un hôtel' });
+    if (deco.rideau !== 'occultant') out.push({ label: `Voilage blanc, hauteur ${q.tombee} cm`, qty: q.fen, note: 'Tissu classé non feu, classement à confirmer pour un hôtel' });
+  }
+  if (lin) { const beds = p.items.filter(trIsBed); if (beds.length) out.push({ label: `Dessus de lit ${lin[1].toLowerCase()}`, qty: beds.length, note: beds.map((b) => `${trDim(b).w} × ${trDim(b).d} cm`).join(', ') }); }
+  return out;
+}
+
+/* ---------- import d'un scan de pièce (iPhone avec LiDAR, appli OpenPlan3D : « Export Editable Plan (JSON) ») ---------- */
+// Le fichier suit le format RoomPlan d'Apple : murs, portes, fenêtres et objets reconnus, en mètres, avec une matrice 4×4 par élément.
+const TR_SCAN_FR = { bed: 'Lit', chair: 'Chaise', sofa: 'Canapé / fauteuil', table: 'Table', storage: 'Rangement', television: 'Télévision', toilet: 'WC', sink: 'Lavabo', bathtub: 'Baignoire / douche', refrigerator: 'Réfrigérateur', stove: 'Plaque de cuisson', oven: 'Four', dishwasher: 'Lave-vaisselle', washerDryer: 'Lave-linge', fireplace: 'Cheminée', stairs: 'Escalier' };
+function trScanParse(j) {
+  const num = (v) => typeof v === 'number' && isFinite(v);
+  const okEl = (e) => e && Array.isArray(e.dimensions) && Array.isArray(e.transform) && e.transform.length === 16 && e.dimensions.every(num) && e.transform.every(num);
+  if (!j || !Array.isArray(j.walls)) throw new Error('format');
+  const walls = j.walls.filter((w) => okEl(w) && w.dimensions[0] > 0.05).map((w) => { const t = w.transform, l = Math.hypot(t[0], t[2]) || 1; return { x: t[12], y: t[13], z: t[14], dx: t[0] / l, dz: t[2] / l, len: w.dimensions[0], h: w.dimensions[1] }; });
+  if (walls.length < 3) throw new Error('murs');
+  // Direction dominante des murs (à 90° près), pour remettre la pièce droite.
+  let sn = 0, cs = 0; walls.forEach((w) => { const a = Math.atan2(w.dz, w.dx) * 4; sn += Math.sin(a) * w.len; cs += Math.cos(a) * w.len; });
+  const th = Math.atan2(sn, cs) / 4, c = Math.cos(-th), s = Math.sin(-th), rot = (x, z) => [x * c - z * s, x * s + z * c];
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  walls.forEach((w) => [-1, 1].forEach((sg) => { const [rx, rz] = rot(w.x + sg * w.dx * w.len / 2, w.z + sg * w.dz * w.len / 2); x0 = Math.min(x0, rx); x1 = Math.max(x1, rx); z0 = Math.min(z0, rz); z1 = Math.max(z1, rz); }));
+  const W0 = (x1 - x0) * 100, D0 = (z1 - z0) * 100, swap = D0 > W0, W = Math.round(swap ? D0 : W0), D = Math.round(swap ? W0 : D0);
+  // Coordonnées du plan (cm) et cap (degrés, sens horaire) : la longueur de la pièce est toujours à l'horizontale.
+  const P = (x, z) => { const [rx, rz] = rot(x, z), px = (rx - x0) * 100, py = (rz - z0) * 100; return swap ? [py, W0 - px] : [px, py]; };
+  const head = (t) => { let a = (Math.atan2(t[2], t[0]) - th) * 180 / Math.PI - (swap ? 90 : 0); a = ((a % 360) + 360) % 360; return a; };
+  const med = (a) => { const b = [...a].sort((p, q) => p - q); return b[Math.floor(b.length / 2)]; };
+  const H = Math.round(med(walls.map((w) => w.h)) * 100), floorY = med(walls.map((w) => w.y - w.h / 2));
+  const onEdge = (e) => { const [px, py] = P(e.transform[12], e.transform[14]), ds = [py, W - px, D - py, px], dist = Math.min(...ds), wall = ds.indexOf(dist), L = wall % 2 ? D : W, width = e.dimensions[0] * 100; return { wall, dist, width, height: e.dimensions[1] * 100, pos: Math.min(L - Math.min(width, L) / 2, Math.max(Math.min(width, L) / 2, wall % 2 ? py : px)), y: e.transform[13] }; };
+  const doors = [...(j.doors || []), ...(j.openings || [])].filter(okEl).map(onEdge), wins = (j.windows || []).filter(okEl).map((e) => ({ ...onEdge(e), sill: num(e.sillHeight) ? e.sillHeight * 100 : (e.transform[13] - e.dimensions[1] / 2 - floorY) * 100 }));
+  const outer = doors.filter((d) => d.dist <= 60).sort((a, b) => a.dist - b.dist), door = outer[0] || [...doors].sort((a, b) => a.dist - b.dist)[0] || null;
+  const owins = wins.filter((w) => w.dist <= 60).sort((a, b) => b.width - a.width), win = owins[0] || null;
+  const counts = {}, items = [];
+  (j.objects || []).filter(okEl).forEach((o) => {
+    const cat = Object.keys(o.category || {})[0] || 'autre'; counts[cat] = (counts[cat] || 0) + 1;
+    let w = Math.round(o.dimensions[0] * 100), h = Math.round(o.dimensions[1] * 100), dp = Math.round(o.dimensions[2] * 100), r = (Math.round(head(o.transform) / 90) * 90) % 360;
+    const [px, py] = P(o.transform[12], o.transform[14]);
+    if (w < 5 || dp < 2) return;
+    let it;
+    if (cat === 'television') {
+      const ds = [py, W - px, D - py, px], wall = ds.indexOf(Math.min(...ds)), L = wall % 2 ? D : W, ww = Math.max(w, dp);
+      it = trAtWall('tv', wall, Math.min(L - ww / 2, Math.max(ww / 2, wall % 2 ? py : px)), W, D, { w: ww });
+    } else {
+      let t = 'meuble', n = TR_SCAN_FR[cat] || 'Meuble';
+      if (cat === 'bed') { if (dp < w) { const k = w; w = dp; dp = k; r = (r + 90) % 360; } t = w >= 120 ? 'lit_d' : 'lit_s'; n = null; }
+      else if (cat === 'chair') { t = 'chaise'; n = null; }
+      else if (cat === 'sofa') { t = 'fauteuil'; n = w > 110 ? 'Canapé' : null; }
+      else if (cat === 'table') { t = 'bureau'; n = 'Table'; }
+      else if (cat === 'storage') { if (h >= 120) { t = 'armoire'; n = null; } else if (Math.max(w, dp) <= 65) { t = 'chevet'; n = null; } else n = 'Commode'; }
+      it = { id: trPid(), t, r, x: px, y: py, w, d: dp, h };
+      if (n) it.n = n;
+      // Dos (ou tête de lit) tourné vers le mur le plus proche dans son axe.
+      const back = (rr) => { const [bx, by] = trRot(0, -1, rr); return bx > 0 ? W - px : bx < 0 ? px : by > 0 ? D - py : py; };
+      if (back((r + 180) % 360) < back(r)) it.r = (r + 180) % 360;
+      const rc = trRect(it), hw = (rc.x1 - rc.x0) / 2, hh = (rc.y1 - rc.y0) / 2;
+      it.x = Math.round(2 * hw >= W ? W / 2 : Math.min(W - hw, Math.max(hw, px))); it.y = Math.round(2 * hh >= D ? D / 2 : Math.min(D - hh, Math.max(hh, py)));
+    }
+    it.scan = 1; items.push(it);
+  });
+  return { W, D, H, door: door ? { wall: door.wall, pos: Math.round(door.pos) } : null, win: win ? { wall: win.wall, pos: Math.round(win.pos) } : null,
+    fen: win ? { w: Math.round(win.width), h: Math.round(win.height), allege: Math.max(0, Math.round(win.sill)), n: owins.length } : null,
+    items, counts, nWalls: walls.length, nDoors: doors.length, nRooms: Array.isArray(j.sections) ? j.sections.length : 0 };
+}
+function trScanSheet(roomId) {
+  const sc = S.trScan, r = S.rooms[roomId]; if (!sc || !r) { closeSheet(); return; }
+  const lst = Object.entries(sc.counts).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${n} × ${(TR_SCAN_FR[k] || k).toLowerCase()}`);
+  openSheet('trscan', `<div class="row between"><h2>Scan lu · ${esc(placeName(r))}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">Annuler</button></div>
+    <div class="card"><h3>📏 ${trM(sc.W)} × ${trM(sc.D)} · hauteur ${trM(sc.H)}</h3>
+      <p class="muted">${sc.nWalls} murs, ${sc.nDoors} porte${sc.nDoors > 1 ? 's' : ''}${sc.fen ? `, ${sc.fen.n} fenêtre${sc.fen.n > 1 ? 's' : ''} (la plus grande : ${sc.fen.w} × ${sc.fen.h} cm, à ${sc.fen.allege} cm du sol)` : ', pas de fenêtre vue'}.</p>
+      ${lst.length ? `<p><b>Reconnu :</b> ${esc(lst.join(', '))}.</p>` : '<p class="muted">Aucun meuble reconnu dans ce scan.</p>'}
+      ${sc.nWalls > 4 || sc.nRooms > 1 ? '<p class="banner sm c-slate">Le scan compte plus de 4 murs : la pièce est ramenée au rectangle qui l’entoure. Si elle a un recoin ou contient la salle de bain, la surface réelle est un peu plus petite ; corrige-la dans la fiche.</p>' : ''}</div>
+    <p class="muted">Les mesures de la fiche, la fenêtre et le plan de cette chambre seront remplacés par le scan. Les photos, l’état et les notes ne bougent pas.</p>
+    <button class="btn big pri" data-a="trScanApply" data-id="${esc(roomId)}">Utiliser ce scan</button>`);
+}
+
 /* ---------- l'écran « Plan et 3D » d'une chambre ---------- */
+function trDecoCard(roomId) {
+  const P = S.trP, deco = P.p.deco || {}, can = trCan(), q = trDecoQty(roomId, P.p), lines = trDecoLines(roomId, P.p);
+  const sw = (key, list, cur) => `<div class="tr-sws">${list.map(([k, l, c]) => `<button class="tr-sw" ${can ? '' : 'disabled'} data-a="trDeco" data-k="${key}" data-v="${k}" aria-pressed="${(cur || '') === k}">${c ? `<i style="background:${trCss(c)}"></i>` : ''}${l}</button>`).join('')}</div>`;
+  return `<div class="card"><h3>🎨 Finitions du projet</h3><p class="muted">Choisis, puis regarde le résultat en vue 3D. Rien n’est acheté tant que ce n’est pas dans la liste.</p>
+    <p class="tr-cap">Murs · ${trFr(q.murs)} m²</p>${sw('mur', TR_DECO_MUR, deco.mur)}
+    <p class="tr-cap">Mur de la tête de lit${q.accent ? ` · ${trFr(q.accent)} m²` : ''}</p>${sw('accent', TR_DECO_ACCENT, deco.accent)}
+    <p class="tr-cap">Sol · ${trFr(q.sol)} m²</p>${sw('sol', TR_DECO_SOL, deco.sol)}
+    <p class="tr-cap">Rideaux · fenêtre de ${trNum(trData(roomId).fen_w) || 120} cm</p>${sw('rideau', TR_DECO_RIDEAU, deco.rideau || 'aucun')}
+    ${deco.rideau && deco.rideau !== 'aucun' && deco.rideau !== 'voilage' ? `<p class="tr-cap">Tissu des rideaux</p>${sw('tissu', TR_DECO_TISSU, deco.tissu || 'lin')}` : ''}
+    <p class="tr-cap">Dessus de lit</p>${sw('linge', TR_DECO_TISSU, deco.linge)}
+    ${lines.length ? `<p class="tr-cap">À prévoir</p><ul class="tr-gaps">${lines.map((l) => `<li>${l.qty > 1 ? l.qty + ' × ' : ''}${esc(l.label)}${l.note ? ` <span class="muted sm">· ${esc(l.note)}</span>` : ''}</li>`).join('')}</ul>${can ? '<button class="btn small soft" data-a="trDecoList">＋ Mettre ces finitions dans la liste</button>' : ''}` : ''}</div>`;
+}
 function trPlanSheet(roomId, keep) {
   const r = S.rooms[roomId], d = trData(roomId); if (!r || !S.tr || !trHasPlan(d)) { closeSheet(); return; }
   const { W, D } = trWDH(d);
@@ -427,6 +545,7 @@ function trPlanSheet(roomId, keep) {
       <div class="segc five" role="group">${[['', 'À part'], ['no', '↖ coin'], ['ne', '↗ coin'], ['so', '↙ coin'], ['se', '↘ coin']].map(([k, l]) => `<button ${can ? '' : 'disabled'} data-a="trPlanSdb" data-k="${k}" aria-pressed="${(P.p.sdb.c || '') === k}">${l}</button>`).join('')}</div>
       ${P.p.sdb.c && can ? '<button class="btn small" data-a="trPlanSdbRot">⟳ Tourner la salle de bain</button>' : ''}
       <p class="muted sm">${P.p.sdb.c ? 'Dans un coin : elle est comprise dans la longueur × largeur de la chambre.' : 'À part : sa surface s’ajoute à celle de la chambre.'}</p></div>` : ''}
+    ${trDecoCard(roomId)}
     ${can && P.p.items.length ? '<button class="btn ghost bad-t" data-a="trPlanClear">Vider le plan</button>' : ''}`, 'trfull');
   if (P.view === 'plan') { trPlanBind(); trPlanDraw(); } else { trPlanBar(); trGlStart(); }
 }
@@ -445,6 +564,31 @@ Object.assign(A, {
   },
   trPlanSdb(d) { const P = S.trP; if (!P || !trCan()) return; P.p.sdb = { c: d.k, rot: !!P.p.sdb.rot }; trPlanSave(); trPlanSheet(P.rid, true); },
   trPlanSdbRot() { const P = S.trP; if (!P || !trCan()) return; P.p.sdb.rot = !P.p.sdb.rot; trPlanSave(); trPlanSheet(P.rid, true); },
+  trDeco(d) { const P = S.trP; if (!P || !trCan()) return; const deco = { ...(P.p.deco || {}) }; if (!d.v || deco[d.k] === d.v) delete deco[d.k]; else deco[d.k] = d.v; P.p.deco = deco; trPlanSave(); trPlanSheet(P.rid, true); },
+  async trDecoList() {
+    const P = S.trP; if (!P || !trCan()) return; const lines = trDecoLines(P.rid, P.p); if (!lines.length) return;
+    const have = (l) => S.tr.todo.some((t) => t.room_id === P.rid && t.statut !== 'fait' && t.label === l);
+    let n = 0;
+    try { for (const l of lines) { if (have(l.label)) continue; const x = await api('tr_todo_save', { kind: 'achat', label: l.label, qty: l.qty, room_id: P.rid, niveau: 'confort', note: l.note }); S.tr.todo.push(x.todo); n++; } }
+    catch (e) { toast(errMsg(e)); return; }
+    toast(n ? `${n} ligne${n > 1 ? 's' : ''} ajoutée${n > 1 ? 's' : ''} à la liste ✓` : 'Déjà dans la liste');
+  },
+  async trScanPick(d) {
+    if (!trCan()) return;
+    const f = await pickFile('.json,application/json,text/plain'); if (!f) return;
+    try { S.trScan = trScanParse(JSON.parse(await f.text())); }
+    catch (e) { toast('Ce fichier n’est pas un scan lisible. Dans OpenPlan3D : Export → Editable Plan (JSON).', 7000); return; }
+    trScanSheet(d.id);
+  },
+  trScanApply(d) {
+    const sc = S.trScan; if (!sc || !trCan()) return;
+    const old = trPlanOf(d.id), plan = { items: sc.items, door: sc.door || old.door, win: sc.win || old.win, sdb: { c: '' }, deco: old.deco };
+    if (!sc.door) plan.door = { wall: 2, pos: Math.min(sc.W - TR_DOOR_W / 2, 75) }; if (!sc.win) plan.win = { wall: 0, pos: sc.W / 2 };
+    const patch = { len: sc.W, wid: sc.D, hei: sc.H, surf: null, plan, scan_at: new Date().toISOString() };
+    if (sc.fen) Object.assign(patch, { fen_w: sc.fen.w, fen_h: sc.fen.h, fen_allege: sc.fen.allege, fen_n: sc.fen.n });
+    trPatch(d.id, patch); S.trScan = null; S.trP = null; toast('Scan intégré ✓');
+    trPlanSheet(d.id); S.trP.view = '3d'; trPlanSheet(d.id, true);
+  },
 });
 Object.assign(C, {
   trPlanBank(el) {
