@@ -284,139 +284,200 @@ function trPlanBind() {
 
 /* ---------- vue 3D (WebGL, sans bibliothèque) ---------- */
 const TR_COL = {
-  wood: [0.72, 0.56, 0.40], woodD: [0.52, 0.38, 0.26], white: [0.97, 0.96, 0.94], pillow: [1, 1, 1], duvet: [0.60, 0.69, 0.62], dark: [0.20, 0.20, 0.22],
-  wall: [0.99, 0.97, 0.93], glass: [0.72, 0.87, 0.97], frame: [1, 1, 1], door: [0.62, 0.45, 0.28], lamp: [1.0, 0.90, 0.62], textile: [0.50, 0.58, 0.68], sdb: [0.88, 0.92, 0.95], metal: [0.75, 0.75, 0.78],
+  wood: [0.74, 0.58, 0.42], woodD: [0.50, 0.37, 0.26], white: [0.97, 0.96, 0.94], pillow: [1, 1, 1], duvet: [0.60, 0.69, 0.62], dark: [0.20, 0.20, 0.22],
+  wall: [0.99, 0.97, 0.93], glass: [0.84, 0.92, 0.99], frame: [1, 1, 1], door: [0.66, 0.49, 0.32], lamp: [1.0, 0.93, 0.74], textile: [0.50, 0.58, 0.68], metal: [0.72, 0.72, 0.75], rug: [0.88, 0.84, 0.77],
 };
-const TR_FLOOR = { parquet: [[0.80, 0.64, 0.46], 1], pvc: [[0.74, 0.70, 0.64], 1], moquette: [[0.56, 0.60, 0.68], 0], carrelage: [[0.86, 0.85, 0.82], 2], autre: [[0.78, 0.74, 0.68], 0] };
-// Les pièces d'un meuble : [centre x, centre y (repère du meuble), largeur, profondeur, bas, haut, couleur], en cm.
+const TR_FLOOR = { parquet: [[0.80, 0.64, 0.46], 1], pvc: [[0.74, 0.70, 0.64], 1], moquette: [[0.56, 0.60, 0.68], 4], carrelage: [[0.86, 0.85, 0.82], 2], autre: [[0.78, 0.74, 0.68], 0] };
+// Matières (dernier champ d'une pièce) : 0 uni, 1 parquet, 2 carrelage, 3 bois veiné, 4 tissu, 5 mur, 6 lumineux (vitre, abat-jour).
+// Les pièces d'un meuble : [centre x, centre y (repère du meuble), largeur, profondeur, bas, haut, couleur, matière], en cm.
 function trParts(it, duvet) {
-  const m = trDim(it), w = m.w, d = m.d, h = m.h, C = TR_COL, legs = (ix, iy, top, c) => [[-ix, -iy], [ix, -iy], [-ix, iy], [ix, iy]].map(([x, y]) => [x, y, 4, 4, 0, top, c]);
+  const m = trDim(it), w = m.w, d = m.d, h = m.h, C = TR_COL, legs = (ix, iy, top, c, k) => [[-ix, -iy], [ix, -iy], [-ix, iy], [ix, iy]].map(([x, y]) => [x, y, 4, 4, 0, top, c, k || 0]);
+  const dark = (c, f) => [c[0] * f, c[1] * f, c[2] * f];
   if (trIsBed(it)) {
-    const pil = it.t === 'lit_d' ? [[-w / 4, -d / 2 + 30, w / 2 - 14, 36, 50, 60, C.pillow], [w / 4, -d / 2 + 30, w / 2 - 14, 36, 50, 60, C.pillow]] : [[0, -d / 2 + 30, w - 24, 36, 50, 60, C.pillow]];
-    return [[0, 0, w, d, 8, 28, C.wood], ...legs(w / 2 - 5, d / 2 - 5, 8, C.woodD), [0, 2, w - 4, d - 8, 28, 50, C.white], [0, -d / 2 + 3, w, 6, 0, 100, C.woodD], [0, d * 0.16, w - 1, d * 0.66, 50, 54, duvet || C.duvet], ...pil];
+    const dv = duvet || C.duvet, pw = it.t === 'lit_d' ? w / 2 - 14 : w - 26, px = it.t === 'lit_d' ? [-w / 4, w / 4] : [0];
+    const pil = px.flatMap((x) => [[x, -d / 2 + 30, pw, 36, 50, 59, C.pillow, 4], [x, -d / 2 + 31, pw - 6, 30, 59, 62, C.pillow, 4]]);
+    return [[0, 0, w, d, 10, 28, C.wood, 3], ...legs(w / 2 - 5, d / 2 - 5, 10, C.woodD, 3), [0, 2, w - 4, d - 8, 28, 50, C.white, 4],
+      [0, -d / 2 + 4, w + 6, 8, 0, 108, C.woodD, 3], [0, -d / 2 + 8.5, w - 10, 1, 58, 102, dark(C.woodD, 1.18), 3],
+      [0, d * 0.17, w, d * 0.64, 50, 55, dv, 4], [0, -d * 0.145, w, 9, 50, 56, C.white, 4], [0, d / 2 - 24, w + 0.6, 34, 50, 55.6, dark(dv, 0.78), 4], ...pil];
   }
-  if (it.t === 'chevet') return [[0, 0, w, d, 0, h, C.wood], [0, d / 2 + 0.5, w - 8, 1, h - 18, h - 16, C.woodD], [0, 0, 6, 6, h, h + 16, C.metal], [0, 0, 18, 18, h + 16, h + 34, C.lamp]];
-  if (it.t === 'bureau') return [[0, 0, w, d, h - 4, h, C.wood], ...legs(w / 2 - 4, d / 2 - 4, h - 4, C.dark)];
-  if (it.t === 'chaise') return [[0, 0, w - 4, d - 4, 42, 46, C.dark], [0, -d / 2 + 4, w - 4, 4, 46, h, C.dark], ...legs(w / 2 - 5, d / 2 - 5, 42, C.dark)];
-  if (it.t === 'fauteuil') return [[0, 2, w, d - 4, 12, 40, C.textile], [0, -d / 2 + 9, w, 18, 40, h, C.textile], [-w / 2 + 7, 4, 14, d - 10, 40, 58, C.textile], [w / 2 - 7, 4, 14, d - 10, 40, 58, C.textile], ...legs(w / 2 - 6, d / 2 - 6, 12, C.woodD)];
-  if (it.t === 'armoire') return [[0, 0, w, d, 0, h, C.wood], [0, d / 2 + 0.4, 1.2, 0.8, 6, h - 6, C.woodD], [-6, d / 2 + 1.5, 2, 3, h / 2 - 8, h / 2 + 8, C.metal], [6, d / 2 + 1.5, 2, 3, h / 2 - 8, h / 2 + 8, C.metal]];
-  if (it.t === 'tv') return [[0, 0, w, 5, 100, 100 + h, C.dark], [0, 2.8, w - 5, 0.6, 102.5, 97.5 + h, [0.10, 0.12, 0.16]]];
-  if (it.t === 'bagages') return [[0, 0, w, d, 40, 44, C.wood], ...legs(w / 2 - 4, d / 2 - 4, 40, C.woodD)];
-  return [[0, 0, w, d, 0, h, C.wood]];
+  if (it.t === 'chevet') return [[0, 0, w, d, 4, h, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, 4, C.woodD, 3), [0, d / 2 + 0.4, w - 8, 0.8, h - 17, h - 15.5, C.woodD, 0], [0, 0, 11, 11, h, h + 2, C.metal, 0], [0, 0, 3, 3, h + 2, h + 20, C.metal, 0], [0, 0, 20, 20, h + 20, h + 38, C.lamp, 6]];
+  if (it.t === 'bureau') return [[0, 0, w, d, h - 4, h, C.wood, 3], [0, -d / 2 + 2, w - 12, 2, h - 16, h - 4, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, h - 4, C.dark)];
+  if (it.t === 'chaise') return [[0, 1, w - 4, d - 6, 42, 47, C.textile, 4], [0, -d / 2 + 4, w - 6, 4, 52, h, C.textile, 4], [-w / 2 + 5, -d / 2 + 4, 3, 3, 42, 52, C.dark, 0], [w / 2 - 5, -d / 2 + 4, 3, 3, 42, 52, C.dark, 0], ...legs(w / 2 - 5, d / 2 - 5, 42, C.dark)];
+  if (it.t === 'fauteuil') return [[0, 2, w, d - 4, 12, 38, C.textile, 4], [0, 6, w - 30, d - 26, 38, 46, dark(C.textile, 1.08), 4], [0, -d / 2 + 9, w, 18, 38, h, C.textile, 4], [-w / 2 + 7, 4, 14, d - 10, 38, 58, C.textile, 4], [w / 2 - 7, 4, 14, d - 10, 38, 58, C.textile, 4], ...legs(w / 2 - 6, d / 2 - 6, 12, C.woodD, 3)];
+  if (it.t === 'armoire') return [[0, 0, w, d, 6, h, C.wood, 3], [0, 0, w - 6, d - 6, 0, 6, C.woodD, 0], [0, d / 2 + 0.3, 0.8, 0.6, 10, h - 4, C.woodD, 0], [-5, d / 2 + 1.5, 1.6, 3, h / 2 - 9, h / 2 + 9, C.metal, 0], [5, d / 2 + 1.5, 1.6, 3, h / 2 - 9, h / 2 + 9, C.metal, 0]];
+  if (it.t === 'tv') return [[0, 0, w, 5, 100, 100 + h, C.dark, 0], [0, 2.8, w - 4, 0.6, 102, 98 + h, [0.07, 0.08, 0.11], 0]];
+  if (it.t === 'bagages') return [[0, 0, w, d, 40, 44, C.wood, 3], [0, -d / 2 + 2, w, 3, 44, 52, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, 40, C.woodD, 3)];
+  return [[0, 0, w, d, 0, h, C.wood, 3]];
 }
 function trScene(roomId, p) {
-  const d = trData(roomId), { W, D, H } = trWDH(d), cm = 0.01, B = [], sh = [], walls = [];
-  const box = (x0, y0, z0, x1, y1, z1, c, extra) => ({ t: [((x0 + x1) / 2 - W / 2) * cm, ((z0 + z1) / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], s: [Math.max(0.2, x1 - x0) * cm, Math.max(0.2, z1 - z0) * cm, Math.max(0.2, y1 - y0) * cm], c, ...(extra || {}) });
-  const deco = p.deco || {}, dsol = trDecoOf(TR_DECO_SOL, deco.sol), fl = dsol ? [dsol[2], dsol[3]] : (TR_FLOOR[d.sol] || TR_FLOOR.parquet);
-  B.push(box(-8, -8, -6, W + 8, D + 8, 0, fl[0], { stripe: fl[1] }));
+  const d = trData(roomId), { W, D, H } = trWDH(d), cm = 0.01, B = [], walls = [];
+  const box = (x0, y0, z0, x1, y1, z1, c, k, extra) => ({ t: [((x0 + x1) / 2 - W / 2) * cm, ((z0 + z1) / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], s: [Math.max(0.2, x1 - x0) * cm, Math.max(0.2, z1 - z0) * cm, Math.max(0.2, y1 - y0) * cm], c, k: k || 0, ...(extra || {}) });
+  const deco = p.deco || {}, dsol = trDecoOf(TR_DECO_SOL, deco.sol), fl = dsol ? [dsol[2], dsol[3] === 0 ? 4 : dsol[3]] : (TR_FLOOR[d.sol] || TR_FLOOR.parquet);
+  B.push(box(-8, -8, -6, W + 8, D + 8, 0, fl[0], fl[1]));
   const dmur = trDecoOf(TR_DECO_MUR, deco.mur), dacc = trDecoOf(TR_DECO_ACCENT, deco.accent), bed0 = p.items.find(trIsBed);
-  const accWall = dacc && dacc[2] && bed0 ? ((bed0.r || 0) / 90) % 4 : -1; // le mur d'accent est celui de la tête de lit
+  const headWall = bed0 ? ((bed0.r || 0) / 90) % 4 : -1, accWall = dacc && dacc[2] ? headWall : -1; // le mur d'accent est celui de la tête de lit
   const T = 8, wc = dmur ? dmur[2] : (d.murs === 'papier' ? [0.93, 0.90, 0.84] : TR_COL.wall);
   const wdef = [[-T, -T, W + T, 0, [0, -1]], [W, -T, W + T, D + T, [1, 0]], [-T, D, W + T, D + T, [0, 1]], [-T, -T, 0, D + T, [-1, 0]]];
-  wdef.forEach(([x0, y0, x1, y1, n], i) => walls.push({ i, n, c: [((x0 + x1) / 2 - W / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], glass: [], boxes: [box(x0, y0, 0, x1, y1, H, i === accWall ? dacc[2] : wc)] }));
-  // Fenêtre et porte : plaquées sur la face intérieure de leur mur, elles disparaissent avec lui.
-  const onWall = (o, width, z0, z1, deep, c) => { const z = trOpening(o, width, W, D, deep); return box(z.x0, z.y0, z0, z.x1, z.y1, z1, c); };
-  const fw = trNum(d.fen_w) || 120, fh = trNum(d.fen_h) || 120, al = trNum(d.fen_allege) || 90;
-  walls[p.win.wall].boxes.push(onWall(p.win, fw + 12, al - 6, Math.min(H - 5, al + fh + 6), 2, TR_COL.frame), onWall(p.win, fw, al, Math.min(H - 11, al + fh), 3, TR_COL.glass), onWall(p.win, 3, al, Math.min(H - 11, al + fh), 3.6, TR_COL.frame));
+  wdef.forEach(([x0, y0, x1, y1, n], i) => walls.push({ i, n, c: [((x0 + x1) / 2 - W / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], glass: [], boxes: [box(x0, y0, 0, x1, y1, H, i === accWall ? dacc[2] : wc, 5)] }));
+  // Tout ce qui est plaqué sur un mur (plinthe, porte, fenêtre, rideaux, cadre, télé) disparaît avec lui.
+  const onWall = (o, width, z0, z1, deep, c, k) => { const z = trOpening(o, width, W, D, deep); return box(z.x0, z.y0, z0, z.x1, z.y1, z1, c, k); };
+  walls.forEach((wl, i) => { const L = trWallLen(i, W, D); wl.boxes.push(onWall({ wall: i, pos: L / 2 }, L, 0, 8, 1.4, [0.97, 0.97, 0.96])); });
+  const fw = trNum(d.fen_w) || 120, fh = trNum(d.fen_h) || 120, al = trNum(d.fen_allege) || 90, ft = Math.min(H - 11, al + fh), wwl = walls[p.win.wall];
+  wwl.boxes.push(onWall(p.win, fw + 14, al - 7, Math.min(H - 4, ft + 7), 2.2, TR_COL.frame), onWall(p.win, fw, al, ft, 3, TR_COL.glass, 6), onWall(p.win, 4, al, ft, 4, TR_COL.frame), onWall(p.win, fw + 20, al - 9, al - 6, 7, TR_COL.frame));
   if (deco.rideau && deco.rideau !== 'aucun') {
-    const tis = trDecoOf(TR_DECO_TISSU, deco.tissu) || TR_DECO_TISSU[0], top = Math.min(H - 4, al + fh + 20), pw = Math.max(30, fw * 0.3), wl = walls[p.win.wall];
-    wl.boxes.push(onWall(p.win, fw + 2 * pw, top, top + 3, 8, TR_COL.metal));
-    if (deco.rideau !== 'voilage') [-1, 1].forEach((sg) => { const z = trOpening({ wall: p.win.wall, pos: p.win.pos + sg * (fw / 2 + pw / 2 - 8) }, pw, W, D, 9); wl.boxes.push(box(z.x0, z.y0, 4, z.x1, z.y1, top, tis[2])); });
-    if (deco.rideau !== 'occultant') wl.glass.push(onWall(p.win, fw + 14, 4, top, 5.5, [1, 1, 1]));
+    const tis = trDecoOf(TR_DECO_TISSU, deco.tissu) || TR_DECO_TISSU[0], top = Math.min(H - 4, al + fh + 22), pw = Math.max(34, fw * 0.32), n = Math.max(4, Math.round(pw / 7)), sw = pw / n;
+    wwl.boxes.push(onWall(p.win, fw + 2 * pw - 6, top, top + 2.5, 9, TR_COL.metal));
+    // Rideaux à plis : des bandes de profondeur et de teinte alternées.
+    if (deco.rideau !== 'voilage') [-1, 1].forEach((sg) => { for (let i = 0; i < n; i++) { const c = p.win.pos + sg * (fw / 2 - 10 + sw * (i + 0.5)), f = i % 2 ? 0.90 : 1; wwl.boxes.push(onWall({ wall: p.win.wall, pos: c }, sw + 0.3, 3, top, i % 2 ? 7.5 : 10.5, [tis[2][0] * f, tis[2][1] * f, tis[2][2] * f], 4)); } });
+    if (deco.rideau !== 'occultant') wwl.glass.push(onWall(p.win, fw + 16, 3, top, 5.5, [1, 1, 1]));
   }
-  const dh = Math.min(204, H - 10);
-  walls[p.door.wall].boxes.push(onWall(p.door, TR_DOOR_W + 10, 0, dh + 5, 2, TR_COL.frame), onWall(p.door, TR_DOOR_W, 0, dh, 3.2, TR_COL.door));
+  const dh = Math.min(204, H - 10), dwl = walls[p.door.wall], dL = trWallLen(p.door.wall, W, D);
+  dwl.boxes.push(onWall(p.door, TR_DOOR_W + 12, 0, dh + 6, 2, TR_COL.frame), onWall(p.door, TR_DOOR_W, 0, dh, 3.4, TR_COL.door, 3), onWall({ wall: p.door.wall, pos: Math.min(dL - 6, p.door.pos + TR_DOOR_W / 2 - 9) }, 3, 98, 102, 9, TR_COL.metal), onWall({ wall: p.door.wall, pos: Math.min(dL - 10, p.door.pos + TR_DOOR_W / 2 - 14) }, 12, 99, 101, 9.5, TR_COL.metal));
+  // Un cadre au-dessus de la tête de lit, s'il n'y a pas de fenêtre à cet endroit.
+  if (bed0 && H >= 225) {
+    const pos = headWall % 2 ? bed0.y : bed0.x, clear = p.win.wall !== headWall || Math.abs(p.win.pos - pos) > fw / 2 + 50;
+    if (clear) walls[headWall].boxes.push(onWall({ wall: headWall, pos }, 74, 138, 190, 2.4, [0.16, 0.15, 0.14]), onWall({ wall: headWall, pos }, 66, 142, 186, 2.9, [0.94, 0.92, 0.87]), onWall({ wall: headWall, pos: pos - 6 }, 26, 152, 176, 3.2, dacc && dacc[2] ? dacc[2] : [0.60, 0.69, 0.62]));
+  }
   const sdb = trSdbRect(d, p, W, D);
   const glass = sdb ? [box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, Math.min(H, 215), [0.62, 0.74, 0.86])] : [];
+  // Un tapis au pied du lit, s'il tient dans la pièce.
+  if (bed0) {
+    const m = trDim(bed0), q = trLocal(bed0, 0, m.d / 2 - 25, m.w + 90, 150), r = { x0: Math.max(6, q.x0), y0: Math.max(6, q.y0), x1: Math.min(W - 6, q.x1), y1: Math.min(D - 6, q.y1) };
+    if (r.x1 - r.x0 > 90 && r.y1 - r.y0 > 90 && !(sdb && trHit(r, sdb))) B.push(box(r.x0, r.y0, 0, r.x1, r.y1, 1.2, TR_COL.rug, 4));
+  }
   const dl = trDecoOf(TR_DECO_TISSU, deco.linge), duvet = dl ? dl[2] : null;
   p.items.forEach((it) => {
-    const r = trRect(it); if (it.t !== 'tv') sh.push(box(r.x0 - 3, r.y0 - 3, 0.3, r.x1 + 3, r.y1 + 3, 0.6, [0, 0, 0]));
     const dest = it.t === 'tv' ? walls[((it.r || 0) / 90) % 4].boxes : B;
-    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c)); });
+    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv' })); });
   });
-  return { W: W * cm, D: D * cm, H: H * cm, B, sh, glass, walls, Wc: W, Dc: D, Hc: H };
+  // Point de vue « depuis la porte » : à 50 cm à l'intérieur, à hauteur des yeux, tourné vers le milieu de la pièce.
+  const dz = trOpening(p.door, 10, W, D, 50), de = [(((dz.x0 + dz.x1) / 2) - W / 2) * cm, 1.55, (((dz.y0 + dz.y1) / 2) - D / 2) * cm];
+  const inward = [[0, 1], [-1, 0], [0, -1], [1, 0]][p.door.wall], dEye = [de[0] + inward[0] * 0.25, 1.55, de[2] + inward[1] * 0.25];
+  return { W: W * cm, D: D * cm, H: H * cm, B, glass, walls, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: sdb ? box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, H, wc, 5) : null, Wc: W, Dc: D, Hc: H, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
 }
-const TR_GL = { gl: null, raf: 0, ask: null };
+const TR_GL = { gl: null, raf: 0, ask: null, snap: null };
 window.addEventListener('resize', () => { if (TR_GL.gl && TR_GL.ask) TR_GL.ask(); });
-function trGlStop() { if (TR_GL.raf) cancelAnimationFrame(TR_GL.raf); TR_GL.raf = 0; if (TR_GL.gl) { const x = TR_GL.gl.getExtension('WEBGL_lose_context'); if (x) x.loseContext(); } TR_GL.gl = null; }
-function trMat(yaw, pitch, dist, ty, aspect) {
-  const cp = Math.cos(pitch), eye = [dist * cp * Math.sin(yaw), ty + dist * Math.sin(pitch), dist * cp * Math.cos(yaw)], tg = [0, ty, 0];
-  const nrm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }, cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-  const f = nrm([tg[0] - eye[0], tg[1] - eye[1], tg[2] - eye[2]]), s = nrm(cr(f, [0, 1, 0])), u = cr(s, f);
-  const V = [s[0], u[0], -f[0], 0, s[1], u[1], -f[1], 0, s[2], u[2], -f[2], 0, -dot(s, eye), -dot(u, eye), dot(f, eye), 1];
-  const fo = 1 / Math.tan((42 * Math.PI / 180) / 2), n = 0.1, fa = 60, Pm = [fo / aspect, 0, 0, 0, 0, fo, 0, 0, 0, 0, (fa + n) / (n - fa), -1, 0, 0, (2 * fa * n) / (n - fa), 0];
-  const M = new Float32Array(16);
-  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) M[c * 4 + r] = Pm[r] * V[c * 4] + Pm[4 + r] * V[c * 4 + 1] + Pm[8 + r] * V[c * 4 + 2] + Pm[12 + r] * V[c * 4 + 3];
-  return { M, eye };
-}
+function trGlStop() { if (TR_GL.raf) cancelAnimationFrame(TR_GL.raf); TR_GL.raf = 0; if (TR_GL.gl) { const x = TR_GL.gl.getExtension('WEBGL_lose_context'); if (x) x.loseContext(); } TR_GL.gl = null; TR_GL.ask = null; TR_GL.snap = null; }
+// Petites matrices 4×4 (colonnes d'abord), juste ce qu'il faut pour une caméra et une lampe.
+const trM4 = {
+  mul(a, b) { const o = new Float32Array(16); for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; return o; },
+  look(eye, tg, up) {
+    const nrm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; }, cr = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]], dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const f = nrm([tg[0] - eye[0], tg[1] - eye[1], tg[2] - eye[2]]), s = nrm(cr(f, up)), u = cr(s, f);
+    return [s[0], u[0], -f[0], 0, s[1], u[1], -f[1], 0, s[2], u[2], -f[2], 0, -dot(s, eye), -dot(u, eye), dot(f, eye), 1];
+  },
+  persp(fovDeg, aspect, n, f) { const t = 1 / Math.tan((fovDeg * Math.PI / 180) / 2); return [t / aspect, 0, 0, 0, 0, t, 0, 0, 0, 0, (f + n) / (n - f), -1, 0, 0, (2 * f * n) / (n - f), 0]; },
+  ortho(r, t, n, f) { return [1 / r, 0, 0, 0, 0, 1 / t, 0, 0, 0, 0, -2 / (f - n), 0, 0, 0, -(f + n) / (f - n), 1]; },
+};
+const TR_VS = 'attribute vec3 p;attribute vec3 n;uniform mat4 uM;uniform mat4 uL;uniform vec3 uT;uniform vec3 uS;varying vec3 vN;varying vec3 vW;varying vec4 vL;void main(){vec3 w=p*uS+uT;vW=w;vN=n;vL=uL*vec4(w,1.0);gl_Position=uM*vec4(w,1.0);}';
+const TR_HP = '#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n';
+const TR_FS = TR_HP + 'uniform vec4 uC;uniform float uK;uniform sampler2D uSh;uniform vec3 uLd;uniform vec2 uR;uniform float uTx;varying vec3 vN;varying vec3 vW;varying vec4 vL;'
+  + 'float unp(vec4 c){return dot(c,vec4(1.0,1.0/255.0,1.0/65025.0,1.0/16581375.0));}'
+  + 'float hash(vec2 q){return fract(sin(dot(q,vec2(127.1,311.7)))*43758.5453);}'
+  // Ombre portée adoucie : 25 lectures autour du point dans la carte de profondeur de la lampe.
+  + 'float shadow(float nl){vec3 q=vL.xyz/vL.w*0.5+0.5;if(q.x<0.0||q.x>1.0||q.y<0.0||q.y>1.0||q.z>1.0)return 1.0;float bias=mix(0.0045,0.0018,nl);float s=0.0;for(int i=-2;i<=2;i++){for(int j=-2;j<=2;j++){float d=unp(texture2D(uSh,q.xy+vec2(float(i),float(j))*uTx*1.4));s+=(q.z-bias>d)?0.0:1.0;}}return s/25.0;}'
+  + 'void main(){vec3 N=normalize(vN);vec3 c=uC.rgb;'
+  + 'if(uK>5.5){gl_FragColor=vec4(c,uC.a);return;}'
+  + 'if(uK>0.5&&uK<1.5&&N.y>0.5){float u=vW.x/0.13;float pl=floor(u);float v=vW.z/1.15+hash(vec2(pl,3.0));float tone=hash(vec2(pl,floor(v)));c*=0.89+0.17*tone;float g=sin(vW.z*52.0+tone*31.0+sin(vW.x*33.0)*1.6)*0.5+0.5;c*=0.975+0.025*g;float a=smoothstep(0.455,0.5,abs(fract(u)-0.5));float b=smoothstep(0.989,1.0,fract(v));c*=1.0-0.24*max(a,b);}'
+  + 'if(uK>1.5&&uK<2.5&&N.y>0.5){vec2 t=vW.xz/0.6;c*=0.96+0.05*hash(floor(t));float a=smoothstep(0.478,0.5,abs(fract(t.x)-0.5));float b=smoothstep(0.478,0.5,abs(fract(t.y)-0.5));c*=1.0-0.20*max(a,b);}'
+  + 'if(uK>2.5&&uK<3.5){float along=abs(N.y)>0.5?vW.x:vW.y;float across=abs(N.x)>0.5?vW.z:(abs(N.y)>0.5?vW.z:vW.x);float g=sin(across*38.0+sin(along*5.0)*2.6+sin(along*1.7)*4.0)*0.5+0.5;c*=0.955+0.045*g;}'
+  + 'if(uK>3.5&&uK<4.5){vec3 f=floor(vW*260.0);c*=0.955+0.045*hash(f.xz+f.y*1.7);}'
+  + 'float nl=max(dot(N,uLd),0.0);float sh=shadow(nl);'
+  + 'vec3 lit=c*(vec3(0.745,0.74,0.75)+0.095*N.y+vec3(0.33,0.315,0.29)*nl*sh);'
+  // Assombrissement doux dans les angles et au pied des murs : ce qui donne du relief à une pièce.
+  + 'float dx=uR.x-abs(vW.x);float dz=uR.y-abs(vW.z);'
+  + 'if(uK>4.5&&uK<5.5){lit*=0.85+0.15*smoothstep(0.0,0.55,max(dx,dz));lit*=0.91+0.09*smoothstep(0.0,0.4,vW.y);}'
+  + 'else if(N.y>0.5&&vW.y<0.03){lit*=0.82+0.18*smoothstep(0.0,0.5,min(dx,dz));}'
+  + 'gl_FragColor=vec4(lit,uC.a);}';
+const TR_DVS = 'attribute vec3 p;attribute vec3 n;uniform mat4 uL;uniform vec3 uT;uniform vec3 uS;void main(){gl_Position=uL*vec4(p*uS+uT,1.0);}';
+const TR_DFS = TR_HP + 'void main(){float z=gl_FragCoord.z;vec4 e=fract(vec4(1.0,255.0,65025.0,16581375.0)*z);e-=e.yzww*vec4(1.0/255.0,1.0/255.0,1.0/255.0,0.0);gl_FragColor=e;}';
 function trGlStart() {
   const cv = $('tr-gl'), P = S.trP; if (!cv || !P) return;
   trGlStop();
-  const gl = cv.getContext('webgl', { antialias: true, alpha: true, premultipliedAlpha: false });
+  const gl = cv.getContext('webgl', { antialias: true, alpha: true, premultipliedAlpha: false, preserveDrawingBuffer: true });
   if (!gl) { const l = $('tr-lab'); if (l) l.innerHTML = '<span style="left:50%;top:50%">La 3D n’est pas disponible sur cet appareil</span>'; return; }
   TR_GL.gl = gl;
   const sc = trScene(P.rid, P.p);
-  const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
-  const prog = gl.createProgram();
-  gl.attachShader(prog, sh(gl.VERTEX_SHADER, 'attribute vec3 p;attribute vec3 n;uniform mat4 uM;uniform vec3 uT;uniform vec3 uS;varying vec3 vN;varying vec3 vW;void main(){vec3 w=p*uS+uT;vW=w;vN=n;gl_Position=uM*vec4(w,1.0);}'));
-  gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, 'precision mediump float;uniform vec4 uC;uniform float uK;varying vec3 vN;varying vec3 vW;void main(){vec3 L=normalize(vec3(0.42,0.82,0.38));float l=0.74+0.26*max(dot(normalize(vN),L),0.0);vec3 c=uC.rgb*l;'
-    + 'if(vN.y>0.5&&uK>0.5&&uK<1.5){float u=vW.x/0.14;float a=smoothstep(0.46,0.5,abs(fract(u)-0.5));float v=fract(vW.z/1.3+floor(u)*0.37);float b=smoothstep(0.985,1.0,v);c*=1.0-0.16*max(a,b);}'
-    + 'if(vN.y>0.5&&uK>1.5){float a=smoothstep(0.47,0.5,abs(fract(vW.x/0.6)-0.5));float b=smoothstep(0.47,0.5,abs(fract(vW.z/0.6)-0.5));c*=1.0-0.14*max(a,b);}'
-    + 'gl_FragColor=vec4(c,uC.a);}'));
-  gl.linkProgram(prog); gl.useProgram(prog);
+  const mk = (vs, fs) => { const pr = gl.createProgram(); [[gl.VERTEX_SHADER, vs], [gl.FRAGMENT_SHADER, fs]].forEach(([t, src]) => { const s = gl.createShader(t); gl.shaderSource(s, src); gl.compileShader(s); if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) console.warn('shader', gl.getShaderInfoLog(s)); gl.attachShader(pr, s); }); gl.bindAttribLocation(pr, 0, 'p'); gl.bindAttribLocation(pr, 1, 'n'); gl.linkProgram(pr); return pr; };
+  const prog = mk(TR_VS, TR_FS), dprog = mk(TR_DVS, TR_DFS);
   // Cube unité : 6 faces, 4 sommets chacune, avec leur normale.
   const F = [[0, 0, 1, [-1, -1, 1, 1, -1, 1, 1, 1, 1, -1, 1, 1]], [0, 0, -1, [1, -1, -1, -1, -1, -1, -1, 1, -1, 1, 1, -1]], [1, 0, 0, [1, -1, 1, 1, -1, -1, 1, 1, -1, 1, 1, 1]], [-1, 0, 0, [-1, -1, -1, -1, -1, 1, -1, 1, 1, -1, 1, -1]], [0, 1, 0, [-1, 1, 1, 1, 1, 1, 1, 1, -1, -1, 1, -1]], [0, -1, 0, [-1, -1, -1, 1, -1, -1, 1, -1, 1, -1, -1, 1]]];
   const vb = [], ib = [];
   F.forEach(([nx, ny, nz, q], f) => { for (let i = 0; i < 4; i++) vb.push(q[i * 3] / 2, q[i * 3 + 1] / 2, q[i * 3 + 2] / 2, nx, ny, nz); ib.push(f * 4, f * 4 + 1, f * 4 + 2, f * 4, f * 4 + 2, f * 4 + 3); });
   gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(vb), gl.STATIC_DRAW);
   gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, gl.createBuffer()); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(ib), gl.STATIC_DRAW);
-  const aP = gl.getAttribLocation(prog, 'p'), aN = gl.getAttribLocation(prog, 'n');
-  gl.enableVertexAttribArray(aP); gl.vertexAttribPointer(aP, 3, gl.FLOAT, false, 24, 0); gl.enableVertexAttribArray(aN); gl.vertexAttribPointer(aN, 3, gl.FLOAT, false, 24, 12);
-  const U = {}; ['uM', 'uT', 'uS', 'uC', 'uK'].forEach((k) => U[k] = gl.getUniformLocation(prog, k));
-  const cam = P.cam || (P.cam = { yaw: 0.65, pitch: 0.62, dist: Math.max(sc.W, sc.D) * 1.3 + sc.H * 0.75 + 0.9 });
-  const drawBox = (b, a) => { gl.uniform3fv(U.uT, b.t); gl.uniform3fv(U.uS, b.s); gl.uniform4f(U.uC, b.c[0], b.c[1], b.c[2], a == null ? 1 : a); gl.uniform1f(U.uK, b.stripe || 0); gl.drawElements(gl.TRIANGLES, 36, gl.UNSIGNED_SHORT, 0); };
-  function frame() {
+  gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 3, gl.FLOAT, false, 24, 0); gl.enableVertexAttribArray(1); gl.vertexAttribPointer(1, 3, gl.FLOAT, false, 24, 12);
+  const uni = (pr, names) => { const o = {}; names.forEach((k) => o[k] = gl.getUniformLocation(pr, k)); return o; };
+  const U = uni(prog, ['uM', 'uL', 'uT', 'uS', 'uC', 'uK', 'uSh', 'uLd', 'uR', 'uTx']), DU = uni(dprog, ['uL', 'uT', 'uS']);
+  // La lampe : une lumière douce qui tombe du plafond, légèrement de biais. Seuls les meubles portent une ombre.
+  const ld = [-0.42, 0.86, 0.29], half = Math.hypot(sc.W, sc.D) / 2 + 0.7, reach = half + sc.H / 2 + 0.6, SZ = 1024;
+  const LM = trM4.mul(trM4.ortho(half, half, 14 - reach, 14 + reach), trM4.look([ld[0] * 14, sc.H / 2 + ld[1] * 14, ld[2] * 14], [0, sc.H / 2, 0], [0, 0, -1]));
+  const tex = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, SZ, SZ, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+  [[gl.TEXTURE_MIN_FILTER, gl.NEAREST], [gl.TEXTURE_MAG_FILTER, gl.NEAREST], [gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]].forEach(([k, v]) => gl.texParameteri(gl.TEXTURE_2D, k, v));
+  const fbo = gl.createFramebuffer(), rb = gl.createRenderbuffer(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+  gl.bindRenderbuffer(gl.RENDERBUFFER, rb); gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, SZ, SZ); gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb);
+  gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
+  gl.useProgram(dprog); gl.viewport(0, 0, SZ, SZ); gl.clearColor(1, 1, 1, 1); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.uniformMatrix4fv(DU.uL, false, LM);
+  sc.B.forEach((b) => { if (!b.cast) return; gl.uniform3fv(DU.uT, b.t); gl.uniform3fv(DU.uS, b.s); gl.drawElements(gl.TRIANGLES, 36, gl.UNSIGNED_SHORT, 0); });
+  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+  gl.useProgram(prog); gl.uniformMatrix4fv(U.uL, false, LM); gl.uniform3fv(U.uLd, ld); gl.uniform2f(U.uR, sc.W / 2, sc.D / 2); gl.uniform1f(U.uTx, 1 / SZ); gl.uniform1i(U.uSh, 0);
+  if (!P.cam) P.cam = { mode: 'orbit', yaw: 0.65, pitch: 0.58, dist: Math.max(sc.W, sc.D) * 1.3 + sc.H * 0.75 + 0.9, ly: 0, lp: -0.1 };
+  const cam = P.cam;
+  const drawBox = (b, a) => { gl.uniform3fv(U.uT, b.t); gl.uniform3fv(U.uS, b.s); gl.uniform4f(U.uC, b.c[0], b.c[1], b.c[2], a == null ? 1 : a); gl.uniform1f(U.uK, a == null ? b.k : 6); gl.drawElements(gl.TRIANGLES, 36, gl.UNSIGNED_SHORT, 0); };
+  function frame(hi) {
     TR_GL.raf = 0; if (TR_GL.gl !== gl || !cv.isConnected) return;
-    const dpr = Math.min(2, window.devicePixelRatio || 1), w = Math.max(1, Math.round(cv.clientWidth * dpr)), h = Math.max(1, Math.round(cv.clientHeight * dpr));
+    const dpr = hi === true ? 3 : Math.min(2, window.devicePixelRatio || 1), w = Math.max(1, Math.round(cv.clientWidth * dpr)), h = Math.max(1, Math.round(cv.clientHeight * dpr));
     if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
-    gl.viewport(0, 0, w, h); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT); gl.enable(gl.DEPTH_TEST); gl.enable(gl.CULL_FACE);
-    const { M, eye } = trMat(cam.yaw, cam.pitch, cam.dist, sc.H * 0.32, w / h);
+    gl.viewport(0, 0, w, h); gl.clearColor(0, 0, 0, 0); gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    const inside = cam.mode === 'porte';
+    let eye, tg, fov = 42;
+    if (inside) { const yaw = sc.dYaw + cam.ly, cp = Math.cos(cam.lp); eye = sc.dEye; tg = [eye[0] + cp * Math.sin(yaw), eye[1] + Math.sin(cam.lp), eye[2] + cp * Math.cos(yaw)]; fov = Math.min(100, Math.max(50, 2 * Math.atan(Math.tan(36 * Math.PI / 180) / (w / h)) * 180 / Math.PI)); }
+    else { const cp = Math.cos(cam.pitch), ty = sc.H * 0.32; eye = [cam.dist * cp * Math.sin(cam.yaw), ty + cam.dist * Math.sin(cam.pitch), cam.dist * cp * Math.cos(cam.yaw)]; tg = [0, ty, 0]; }
+    const M = trM4.mul(trM4.persp(fov, w / h, inside ? 0.05 : 0.1, 60), trM4.look(eye, tg, [0, 1, 0]));
     gl.uniformMatrix4fv(U.uM, false, M);
     gl.disable(gl.BLEND); gl.depthMask(true);
     drawBox(sc.B[0]);
-    // Les murs entre l'œil et la pièce s'effacent, comme une maison de poupée.
-    const hidden = sc.walls.map((wl) => (eye[0] - wl.c[0]) * wl.n[0] + (eye[2] - wl.c[1]) * wl.n[1] > 0);
+    // Vue d'ensemble : les murs entre l'œil et la pièce s'effacent, comme une maison de poupée. De l'intérieur : tout est là, plafond compris.
+    const hidden = sc.walls.map((wl) => !inside && (eye[0] - wl.c[0]) * wl.n[0] + (eye[2] - wl.c[1]) * wl.n[1] > 0);
     sc.walls.forEach((wl, i) => { if (!hidden[i]) wl.boxes.forEach((b) => drawBox(b)); });
-    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
-    sc.sh.forEach((b) => drawBox(b, 0.13));
-    gl.disable(gl.BLEND); gl.depthMask(true);
+    if (inside) { drawBox(sc.ceil); if (sc.sdbWall) drawBox(sc.sdbWall); }
     for (let i = 1; i < sc.B.length; i++) drawBox(sc.B[i]);
-    gl.enable(gl.BLEND); gl.depthMask(false); sc.glass.forEach((b) => drawBox(b, 0.38)); sc.walls.forEach((wl, i) => { if (!hidden[i]) wl.glass.forEach((b) => drawBox(b, 0.5)); }); gl.depthMask(true); gl.disable(gl.BLEND);
-    // Cotes : longueur, largeur et hauteur, posées sur les arêtes visibles.
+    gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+    if (!inside) sc.glass.forEach((b) => drawBox(b, 0.38)); sc.walls.forEach((wl, i) => { if (!hidden[i]) wl.glass.forEach((b) => drawBox(b, 0.5)); });
+    gl.depthMask(true); gl.disable(gl.BLEND);
+    // Cotes : longueur, largeur et hauteur, posées sur les arêtes visibles (vue d'ensemble seulement).
     const lab = $('tr-lab');
     if (lab) {
-      const pr = (x, y, z) => { const cw = M[3] * x + M[7] * y + M[11] * z + M[15]; if (cw <= 0) return null; return [((M[0] * x + M[4] * y + M[8] * z + M[12]) / cw * 0.5 + 0.5) * cv.clientWidth, (1 - ((M[1] * x + M[5] * y + M[9] * z + M[13]) / cw * 0.5 + 0.5)) * cv.clientHeight]; };
-      const hw = sc.W / 2, hd = sc.D / 2, out = [];
-      const edge = [[0, 0.02, -hd, trM(sc.Wc)], [hw, 0.02, 0, trM(sc.Dc)], [0, 0.02, hd, trM(sc.Wc)], [-hw, 0.02, 0, trM(sc.Dc)]];
-      [eye[2] > 0 ? 2 : 0, eye[0] > 0 ? 1 : 3].forEach((i) => { const q = pr(edge[i][0], edge[i][1], edge[i][2]); if (q) out.push([q, edge[i][3]]); });
-      const cx = eye[0] > 0 ? -hw : hw, cz = eye[2] > 0 ? -hd : hd, q = pr(cx, sc.H / 2, cz); if (q) out.push([q, 'h ' + trM(sc.Hc)]);
+      const out = [];
+      if (!inside && P.cotes !== false) {
+        const pr = (x, y, z) => { const cw = M[3] * x + M[7] * y + M[11] * z + M[15]; if (cw <= 0) return null; return [((M[0] * x + M[4] * y + M[8] * z + M[12]) / cw * 0.5 + 0.5) * cv.clientWidth, (1 - ((M[1] * x + M[5] * y + M[9] * z + M[13]) / cw * 0.5 + 0.5)) * cv.clientHeight]; };
+        const hw = sc.W / 2, hd = sc.D / 2, edge = [[0, 0.02, -hd, trM(sc.Wc)], [hw, 0.02, 0, trM(sc.Dc)], [0, 0.02, hd, trM(sc.Wc)], [-hw, 0.02, 0, trM(sc.Dc)]];
+        [eye[2] > 0 ? 2 : 0, eye[0] > 0 ? 1 : 3].forEach((i) => { const q = pr(edge[i][0], edge[i][1], edge[i][2]); if (q) out.push([q, edge[i][3]]); });
+        const q = pr(eye[0] > 0 ? -hw : hw, sc.H / 2, eye[2] > 0 ? -hd : hd); if (q) out.push([q, 'h ' + trM(sc.Hc)]);
+      }
       lab.innerHTML = out.map(([q2, t]) => `<span style="left:${q2[0].toFixed(1)}px;top:${q2[1].toFixed(1)}px">${t}</span>`).join('');
     }
   }
   const ask = () => { if (!TR_GL.raf) TR_GL.raf = requestAnimationFrame(frame); };
-  // Un doigt pour tourner autour de la chambre, deux doigts (ou la molette) pour s'approcher.
+  // Un doigt pour tourner autour de la chambre (ou regarder autour de soi depuis la porte), deux doigts ou la molette pour s'approcher.
   const pts = new Map(); let pinch = 0;
   cv.addEventListener('pointerdown', (e) => { pts.set(e.pointerId, [e.clientX, e.clientY]); try { cv.setPointerCapture(e.pointerId); } catch (_) {} pinch = 0; e.preventDefault(); });
   cv.addEventListener('pointermove', (e) => {
     const o = pts.get(e.pointerId); if (!o) return; pts.set(e.pointerId, [e.clientX, e.clientY]);
-    if (pts.size === 1) { cam.yaw -= (e.clientX - o[0]) * 0.008; cam.pitch = Math.min(1.5, Math.max(0.12, cam.pitch + (e.clientY - o[1]) * 0.006)); }
-    else if (pts.size === 2) { const [a, b] = [...pts.values()], dd = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) cam.dist = Math.min(30, Math.max(1.5, cam.dist * pinch / dd)); pinch = dd; }
+    const dx = e.clientX - o[0], dy = e.clientY - o[1];
+    if (pts.size === 1) {
+      if (cam.mode === 'porte') { cam.ly += dx * 0.005; cam.lp = Math.min(0.7, Math.max(-0.8, cam.lp + dy * 0.004)); }
+      else { cam.yaw -= dx * 0.008; cam.pitch = Math.min(1.5, Math.max(0.12, cam.pitch + dy * 0.006)); }
+    } else if (pts.size === 2 && cam.mode !== 'porte') { const [a, b] = [...pts.values()], dd = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) cam.dist = Math.min(30, Math.max(1.5, cam.dist * pinch / dd)); pinch = dd; }
     ask();
   });
   const up = (e) => { pts.delete(e.pointerId); pinch = 0; };
   cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
-  cv.addEventListener('wheel', (e) => { cam.dist = Math.min(30, Math.max(1.5, cam.dist * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); ask(); }, { passive: false });
-  TR_GL.ask = ask; ask();
+  cv.addEventListener('wheel', (e) => { if (cam.mode !== 'porte') cam.dist = Math.min(30, Math.max(1.5, cam.dist * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); ask(); }, { passive: false });
+  TR_GL.ask = ask;
+  // Image en haute définition de la vue en cours, pour la montrer ou l'envoyer.
+  TR_GL.snap = () => new Promise((res) => { if (TR_GL.raf) { cancelAnimationFrame(TR_GL.raf); TR_GL.raf = 0; } frame(true); cv.toBlob((b) => { ask(); res(b); }, 'image/jpeg', 0.92); });
+  ask();
 }
 
 /* ---------- finitions : quantités à prévoir ---------- */
@@ -555,8 +616,9 @@ function trPlanSheet(roomId, keep) {
     <div class="segc" role="group"><button data-a="trPlanView" data-k="plan" aria-pressed="${P.view === 'plan'}">Plan</button><button data-a="trPlanView" data-k="3d" aria-pressed="${P.view === '3d'}">Vue 3D</button></div>
     <div class="tr-stage">${P.view === 'plan'
       ? `<svg id="tr-svg" viewBox="${-pad} ${-pad} ${W + pad * 1.4} ${D + pad * 1.4}" preserveAspectRatio="xMidYMid meet"><g id="tr-plan-g"></g></svg>`
-      : '<div class="tr-3d"><canvas id="tr-gl"></canvas><div id="tr-lab"></div></div>'}</div>
-    ${P.view === '3d' ? '<p class="muted sm">Un doigt pour tourner autour de la chambre, deux doigts pour s’approcher.</p>' : ''}
+      : `<div class="tr-3d"><canvas id="tr-gl"></canvas><div id="tr-lab"></div><div class="tr-tools"><button data-a="trFull" aria-label="Plein écran">⤢</button><button data-a="trSnap" aria-label="Enregistrer l’image">📸</button></div></div>`}</div>
+    ${P.view === '3d' ? `<div class="segc" role="group" aria-label="Point de vue">${[['orbit', 'Vue d’ensemble'], ['porte', 'Depuis la porte'], ['dessus', 'Du dessus']].map(([k, l]) => `<button data-a="trCam" data-k="${k}" aria-pressed="${((P.cam && P.cam.mode) || 'orbit') === k}">${l}</button>`).join('')}</div>
+    <p class="muted sm">Un doigt pour tourner (ou regarder autour de soi depuis la porte), deux doigts pour s’approcher. ⤢ pour le plein écran, 📸 pour garder l’image.</p>` : ''}
     <div id="tr-plan-bar"></div>
     <div class="card"><h3>Est-ce que ça tient ?</h3><div id="tr-plan-chk"></div></div>
     <div class="card"><h3>💡 Dispositions proposées</h3><p class="muted">Calculées avec la place de la porte et de la fenêtre. Touche une proposition pour la voir${can ? ' ; elle remplace les meubles du plan' : ''}.</p>
@@ -574,6 +636,22 @@ function trPlanSheet(roomId, keep) {
 Object.assign(A, {
   trPlan(d) { trPlanSheet(d.id); },
   trPlanView(d) { if (!S.trP) return; S.trP.view = d.k; S.trP.sel = null; trPlanSheet(S.trP.rid, true); },
+  trCam(d) {
+    const P = S.trP; if (!P || !P.cam) return; const c = P.cam;
+    if (d.k === 'porte') { c.mode = 'porte'; c.ly = 0; c.lp = -0.1; }
+    else if (d.k === 'dessus') { c.mode = 'dessus'; c.yaw = 0; c.pitch = 1.5; }
+    else { c.mode = 'orbit'; c.yaw = 0.65; c.pitch = 0.58; }
+    document.querySelectorAll('[data-a="trCam"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === d.k)));
+    if (TR_GL.ask) TR_GL.ask();
+  },
+  trFull() { const st = document.querySelector('.tr-stage'); if (!st) return; st.classList.toggle('big'); if (TR_GL.ask) { TR_GL.ask(); setTimeout(() => TR_GL.ask && TR_GL.ask(), 60); } },
+  async trSnap() {
+    const P = S.trP; if (!P || !TR_GL.snap) return;
+    const blob = await TR_GL.snap(); if (!blob) { toast('L’image n’a pas pu être créée.'); return; }
+    const r = trRoomGet(P.rid), name = `${r ? trPlace(r) : 'Chambre'} - vue 3D.jpg`.replace(/[\\/:*?"<>|]/g, ' '), file = new File([blob], name, { type: 'image/jpeg' });
+    try { if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: name }); return; } } catch (e) { if (e && e.name === 'AbortError') return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 5000); toast('Image enregistrée ✓');
+  },
   trPlanAdd(d) { const P = S.trP; if (!P || !trCan()) return; const { W, D } = trWDH(trData(P.rid)); const it = { id: trPid(), t: d.k, r: 0, x: Math.round(W / 2), y: Math.round(D / 2) }; if (d.k === 'tv') Object.assign(it, trAtWall('tv', 0, W / 2, W, D), { id: it.id }); P.p.items.push(it); P.sel = it.id; trPlanSave(); trPlanSheet(P.rid, true); },
   trPlanRot() { const P = S.trP; if (!P) return; const it = P.p.items.find((i) => i.id === P.sel); if (!it || it.t === 'tv') return; it.r = ((it.r || 0) + 90) % 360; { const { W, D } = trWDH(trData(P.rid)), r = trRect(it), hw = (r.x1 - r.x0) / 2, hh = (r.y1 - r.y0) / 2; it.x = 2 * hw >= W ? W / 2 : Math.min(W - hw, Math.max(hw, it.x)); it.y = 2 * hh >= D ? D / 2 : Math.min(D - hh, Math.max(hh, it.y)); } trPlanSave(); if (P.view === 'plan') trPlanDraw(); else trPlanSheet(P.rid, true); },
   trPlanDel() { const P = S.trP; if (!P) return; P.p.items = P.p.items.filter((i) => i.id !== P.sel); P.sel = null; trPlanSave(); trPlanSheet(P.rid, true); },
