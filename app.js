@@ -588,7 +588,7 @@ const fdate = (iso) => iso ? String(iso).slice(0, 10).split('-').reverse().join(
 const presentOcc = () => S.reg.occ.filter((o) => o.statut !== 'sorti');
 // Accès au registre : gérants toujours ; intendant selon ce que le propriétaire lui a donné.
 const canReg = (p) => !!S.me && (isMgr() || (S.me.role === 'bricoleur' && (S.me.perms || []).some((x) => x === p || (p === 'reg_pec' && x === 'reg_full'))));
-const PERM_L = [['reg_pec', 'Répartir les prises en charge reçues', 'Voir qui dort où, loger ou rattacher les PEC reçues, les écarter'], ['reg_full', 'Gérer tout le registre', 'En plus : fiches, arrivées, départs, prises en charge'], ['contacts', 'Voir les prestataires', 'Électricité, alarme, travaux, contrôle : numéros et notes']];
+const PERM_L = [['reg_pec', 'Répartir les prises en charge reçues', 'Voir qui dort où, loger ou rattacher les PEC reçues, les écarter'], ['reg_full', 'Gérer tout le registre', 'En plus : modifier les fiches et les prises en charge, les rattacher à une autre personne, arrivées, départs. Tout est signé de son nom.'], ['contacts', 'Voir les prestataires', 'Électricité, alarme, travaux, contrôle : numéros et notes']];
 // Prestataires : l'intendant les voit seulement si le propriétaire lui a ouvert l'accès (vue intendant d'un gérant = mêmes droits que l'intendant).
 const PRESTA = ['Électricité', 'Alarme / SSI', 'Travaux', 'Contrôle & sécurité'];
 const bricoPerms = () => S.me.role === 'bricoleur' ? (S.me.perms || []) : ((S.staff.find((s) => s.role === 'bricoleur' && s.active !== false) || {}).perms || []);
@@ -609,7 +609,11 @@ const regBadge = () => scoped(inboxTodo()).length + scoped(presentOcc()).filter(
 // Restauration : repas seuls, toujours facturés sur l'Hôtel de Paris.
 const isResto = (o) => o.formule === 'restauration';
 // Compte « logés » et « restauration » séparément : on ne les additionne jamais.
-const occCount = (L) => { const r = L.filter(isResto).length, h = L.length - r; return `${h} logé${h > 1 ? 's' : ''}${r ? ` · ${r} resto` : ''}`; };
+// Logé qui mange aussi au restaurant sur place (case « Repas sur place » de la fiche).
+const eats = (o) => !isResto(o) && !!o.resto;
+const occCount = (L) => { const r = L.filter(isResto).length, h = L.length - r, m = L.filter(eats).length; return `${h} logé${h > 1 ? 's' : ''}${m ? ` (dont ${m} avec repas)` : ''}${r ? ` · ${r} repas seul${r > 1 ? 's' : ''}` : ''}`; };
+const occHist = (id) => (S.reg.log || []).filter((l) => l.occupant_id === id);
+const activePecs = (id) => { const t = todayISO(); return pecsOf(id).filter((p) => (!p.debut || p.debut <= t) && (!p.fin || p.fin >= t)); };
 const occPlace = (o) => { if (isResto(o)) return 'restauration'; const r = o.room_id && S.rooms[o.room_id]; return r ? placeShort(r) : 'sans chambre'; };
 // Fins de PEC : orange à moins d'une semaine, rouge une fois dépassée ; un brouillon de relance est préparé dans Gmail.
 const lastPec = (o) => pecsOf(o.id).filter((p) => p.fin).sort((a, b) => String(b.fin).localeCompare(String(a.fin)))[0] || null;
@@ -647,7 +651,7 @@ function viewRegistre() {
   const body = { chambres: regRooms, personnes: regPeople, atraiter: regInbox, fins: regFins, journal: regJournal }[S.rsub] || regRooms;
   return `<div class="segc" role="group" aria-label="Registre">${subs.map(([k, l, n]) => `<button data-a="rsub" data-k="${k}" aria-pressed="${S.rsub === k}">${l}${n ? ` <span class="badge sm">${n}</span>` : ''}</button>`).join('')}</div>${body()}`;
 }
-function occLine(o) { const ps = pecState(o); return `<span class="ol"><span>${esc(occName(o))}${o.categorie ? ` <span class="muted">· ${esc(o.categorie)}</span>` : ''}</span><span class="pill p-${ps.c}">${ps.t}</span></span>`; }
+function occLine(o) { const ps = pecState(o); return `<span class="ol"><span>${esc(occName(o))}${eats(o) ? ' <span title="Repas sur place" aria-label="repas sur place">🍽️</span>' : ''}${o.categorie ? ` <span class="muted">· ${esc(o.categorie)}</span>` : ''}</span><span class="pill p-${ps.c}">${ps.t}</span></span>`; }
 function regRooms() {
   const rooms = roomsOf(S.hotel), occ = presentOcc().filter((o) => o.hotel === S.hotel);
   const free = rooms.filter((r) => !occOfRoom(r.id).length && !r.blocked).length;
@@ -655,9 +659,9 @@ function regRooms() {
   const lite = (o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}${o.notes ? `<span class="muted">${esc(o.notes)}</span>` : ''}</span></button>`;
   const row = (r) => { const os = occOfRoom(r.id);
     return `<button class="prow" data-a="regRoom" data-id="${r.id}"><span class="pr-t"><b>${esc(placeName(r))}</b>${os.length ? os.map(occLine).join('') : (r.blocked ? `<span class="muted">⛔ ${esc(r.blockReason || '')}</span>` : '')}</span>${os.length ? '' : `<span class="pill ${r.blocked ? 'p-plain' : 'p-slate'}">${r.blocked ? 'Bloquée' : 'Libre'}</span>`}</button>`; };
-  return `${hotelSeg()}<div class="chips"><span class="chip c-accent">Logés <b>${occ.length - resto.length}</b></span><span class="chip c-slate">Chambres libres <b>${free}</b></span>${S.hotel === 'par' ? `<span class="chip c-amber">Restauration <b>${resto.length}</b></span>` : ''}</div>
+  return `${hotelSeg()}<div class="chips"><span class="chip c-accent">Logés <b>${occ.length - resto.length}</b></span>${occ.some(eats) ? `<span class="chip c-green">🍽️ dont repas sur place <b>${occ.filter(eats).length}</b></span>` : ''}<span class="chip c-slate">Chambres libres <b>${free}</b></span>${S.hotel === 'par' ? `<span class="chip c-amber">Repas seuls <b>${resto.length}</b></span>` : ''}</div>
     <div class="group">${rooms.map(row).join('')}</div>
-    ${S.hotel === 'par' ? `<h2 class="sec">Restauration</h2><p class="muted">Repas seuls, sans chambre. Facturés sur l’Hôtel de Paris.</p>${resto.length ? `<div class="group">${resto.map(lite).join('')}</div>` : '<p class="muted">Personne pour l’instant.</p>'}` : ''}
+    ${S.hotel === 'par' ? `<h2 class="sec">Restauration seule</h2><p class="muted">Repas sans chambre, facturés sur l’Hôtel de Paris. Les personnes logées qui mangent aussi sur place ont un 🍽️ à côté de leur nom.</p>${resto.length ? `<div class="group">${resto.map(lite).join('')}</div>` : '<p class="muted">Personne pour l’instant.</p>'}` : ''}
     ${none.length ? `<h2 class="sec">Sans chambre</h2><p class="muted">À replacer dans une chambre.</p><div class="group">${none.map(lite).join('')}</div>` : ''}`;
 }
 // Filtre d'hôtel visible (le même que celui de l'accueil), avec le nombre par hôtel.
@@ -669,14 +673,16 @@ function regPeople() {
   const q = S.rq.trim().toLowerCase();
   let list = (S.rSortis ? S.reg.occ : presentOcc()).filter(inScope);
   if (q) list = list.filter((o) => (occName(o) + ' ' + (o.categorie || '')).toLowerCase().includes(q));
+  const nEat = list.filter(eats).length, nSeul = list.filter(isResto).length;
+  if (S.rEat) list = list.filter((o) => eats(o) || isResto(o));
   list.sort((a, b) => (a.statut === 'sorti') - (b.statut === 'sorti') || String(a.nom || '').localeCompare(String(b.nom || ''), 'fr'));
   return `${scopeSeg(S.rSortis ? S.reg.occ : presentOcc())}<input id="regQ" type="search" placeholder="Chercher un nom" value="${esc(S.rq)}" data-input="regQ" style="width:100%">
-    <div class="row between"><span class="muted">${list.length} personne${list.length > 1 ? 's' : ''}</span><button class="toggle" data-a="rSortis" aria-pressed="${S.rSortis}">${S.rSortis ? '✓ ' : ''}Afficher les départs</button></div>
-    <div class="group">${list.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}<span class="muted">${esc(hotelName(o.hotel))} · ${esc(occPlace(o))}${o.statut === 'sorti' ? ' · parti le ' + fdate(o.sortie) : ' · depuis le ' + fdate(o.entree)}</span></span></button>`).join('') || '<p class="muted" style="padding:14px">Personne.</p>'}</div>`;
+    <div class="row between" style="flex-wrap:wrap;gap:6px"><span class="muted">${S.rEat ? `🍽️ ${nEat} logé${nEat > 1 ? 's' : ''} avec repas · ${nSeul} repas seul${nSeul > 1 ? 's' : ''}` : `${list.length} personne${list.length > 1 ? 's' : ''}`}</span><button class="toggle" data-a="rEat" aria-pressed="${!!S.rEat}">${S.rEat ? '✓ ' : ''}🍽️ Qui mange sur place</button><button class="toggle" data-a="rSortis" aria-pressed="${S.rSortis}">${S.rSortis ? '✓ ' : ''}Afficher les départs</button></div>
+    <div class="group">${list.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}<span class="muted">${esc(hotelName(o.hotel))} · ${esc(occPlace(o))}${eats(o) ? ' · repas sur place' : ''}${o.statut === 'sorti' ? ' · parti le ' + fdate(o.sortie) : ' · depuis le ' + fdate(o.entree)}</span></span></button>`).join('') || '<p class="muted" style="padding:14px">Personne.</p>'}</div>`;
 }
 // PDF des prises en charge : gardés dans Ma Réception (ou dans le Drive pour ceux relevés automatiquement).
-const docLink = (d) => S.docUrls[d.id] ? `<a class="doc" href="${S.docUrls[d.id]}" target="_blank" rel="noopener" download="${esc(d.name || 'document.pdf')}">📄 ${esc(d.name || 'Document')} · Ouvrir</a>`
-  : `<button class="doc" data-a="docOpen" data-id="${esc(d.id)}" data-n="${esc(d.name || 'document.pdf')}">📄 ${esc(d.name || 'Document')}</button>`;
+// Les documents s'ouvrent dans l'appli (pages affichées en images) : rien n'est téléchargé sur le téléphone.
+const docLink = (d) => `<button class="doc" data-a="docOpen" data-id="${esc(d.id)}" data-n="${esc(d.name || 'document.pdf')}">📄 ${esc(d.name || 'Document')}</button>`;
 const docsHtml = (docs, drive) => ((docs || []).length || drive) ? `<div class="docs">${(docs || []).map((d) => `<span class="docr">${docLink(d)}${printBtn({ f: d.id, n: d.name })}</span>`).join('')}${drive ? `<a class="doc" href="https://drive.google.com/file/d/${encodeURIComponent(drive.id)}/view" target="_blank" rel="noopener">📄 ${esc(drive.name || 'PDF dans le Drive')}</a>` : ''}</div>` : '';
 function pecInCard(i) {
   return `<div class="card"><div class="row between"><h3>${esc([i.nom, i.prenom].filter(Boolean).join(' '))}</h3><span class="pill p-plain">${esc(i.categorie || '')}</span></div>
@@ -690,8 +696,9 @@ function regInbox() {
   return `${scopeSeg(inboxTodo())}${todo.length ? `<p class="muted">Prises en charge reçues, pas encore rattachées à une personne du registre.</p><div class="col">${todo.map(pecInCard).join('')}</div>` : '<div class="card empty"><div class="e">✅</div><h3>Rien à traiter</h3></div>'}
     ${done.length ? `<button class="btn ghost" data-a="rDone">${S.rDone ? 'Masquer' : 'Voir'} les ${done.length} déjà traitées</button>${S.rDone ? `<div class="col">${done.map(pecInCard).join('')}</div>` : ''}` : ''}`;
 }
+const logRow = (l) => `<div class="prow ro"><span class="pr-t"><b>${esc(l.action || '')}</b><span>${esc(l.cible || '')}</span>${l.details ? `<span class="sm">${esc(l.details)}</span>` : ''}<span class="muted">✍️ ${esc(l.by_label || '?')} · ${when(l.ts)}${l.raison ? ' · « ' + esc(l.raison) + ' »' : ''}</span></span></div>`;
 function regJournal() {
-  return `<p class="muted">Qui a fait quoi, quand et pourquoi.</p><div class="group">${S.reg.log.map((l) => `<div class="prow ro"><span class="pr-t"><b>${esc(l.action || '')}</b><span>${esc(l.cible || '')}</span><span class="muted">${esc(l.by_label || '?')} · ${when(l.ts)}${l.raison ? ' · « ' + esc(l.raison) + ' »' : ''}${l.details ? ' · ' + esc(l.details) : ''}</span></span></div>`).join('') || '<p class="muted" style="padding:14px">Vide.</p>'}</div>`;
+  return `<p class="muted">Qui a fait quoi, quand et pourquoi.</p><div class="group">${S.reg.log.map(logRow).join('') || '<p class="muted" style="padding:14px">Vide.</p>'}</div>`;
 }
 const opt = (v, cur, l) => `<option value="${esc(v)}" ${String(cur ?? '') === String(v) ? 'selected' : ''}>${esc(l ?? v)}</option>`;
 const roomOpts = (hotel, cur) => `${opt('resto', cur, 'Restauration (repas seuls)')}${opt('', cur, 'Sans chambre (à replacer)')}${roomsOf(hotel).map((r) => opt(r.id, cur, placeName(r) + (occOfRoom(r.id).filter((o) => o.room_id !== cur).length ? ' · occupée' : ''))).join('')}`;
@@ -705,21 +712,27 @@ function occSheet(id, preset) {
     <fieldset class="card form" ${ro ? 'disabled' : ''}>
       <div class="two"><label>Prénom<input id="o-prenom" value="${esc(o.prenom || '')}"></label><label>Nom<input id="o-nom" value="${esc(o.nom || '')}"></label></div>
       <div class="two"><label>Naissance<input id="o-naissance" type="date" value="${esc(o.naissance || '')}"></label><label>Catégorie<select id="o-cat"><option value="">—</option>${CATS.map((c) => opt(c, o.categorie)).join('')}</select></label></div>
-      <div class="two"><label>Hôtel<select id="o-hotel" data-change="oHotel">${hs}</select></label><label>Chambre<select id="o-room">${roomOpts(o.hotel, isResto(o) ? 'resto' : (o.room_id || ''))}</select></label></div>
+      <div class="two"><label>Hôtel<select id="o-hotel" data-change="oHotel">${hs}</select></label><label>Chambre<select id="o-room" data-change="oRoom">${roomOpts(o.hotel, isResto(o) ? 'resto' : (o.room_id || ''))}</select></label></div>
       <div class="two"><label>Arrivée<input id="o-entree" type="date" value="${esc(o.entree || '')}"></label><label>Téléphone<input id="o-tel" inputmode="tel" value="${esc(o.telephone || '')}"></label></div>
+      <label class="check big" id="o-resto-l" ${isResto(o) ? 'hidden' : ''}><input type="checkbox" id="o-resto" ${o.resto && !isResto(o) ? 'checked' : ''}><span><b>🍽️ Repas sur place</b><br><span class="muted sm">Logé(e) et mange aussi au restaurant. Pour des repas sans chambre, choisis « Restauration (repas seuls) » dans Chambre.</span></span></label>
+      ${id && eats(o) && activePecs(id).length && !activePecs(id).some((p) => p.repas === 'Oui') ? '<p class="sm rel-amber">⚠️ Aucune prise en charge en cours ne prévoit les repas : à vérifier avant de facturer.</p>' : ''}
+      ${id && !isResto(o) && !o.resto && o.statut !== 'sorti' && activePecs(id).some((p) => p.repas === 'Oui') ? '<p class="sm rel-amber">ℹ️ La prise en charge en cours prévoit les repas, mais la case n’est pas cochée.</p>' : ''}
       <label>Notes<textarea id="o-notes">${esc(o.notes || '')}</textarea></label>
       ${ro ? '' : `<label>Pourquoi ce changement ?${id ? ' (facultatif)' : ''}<input id="o-raison" placeholder="${id ? 'Ex. : correction du prénom' : 'Ex. : arrivée envoyée par l’ASE'}"></label>
       <button class="btn pri" data-a="occSave" data-id="${id || ''}">${id ? 'Enregistrer' : 'Ajouter au registre'}</button>`}</fieldset>
     ${id ? `<div class="card"><div class="row between"><h3>Prises en charge</h3>${ro ? '' : `<button class="btn small soft" data-a="pecNew" data-id="${id}">＋ Ajouter</button>`}</div>
       ${pecs.length ? `<div class="group">${pecs.map((p) => { const t = todayISO(), on = (!p.debut || p.debut <= t) && (!p.fin || p.fin >= t);
         return `<button class="prow" data-a="pecOpen" data-id="${p.id}"><span class="pr-t"><b>${esc(p.financeur || 'Financeur ?')}${p.reference ? ' · réf. ' + esc(p.reference) : ''}</b><span class="muted">${fdate(p.debut)} → ${fdate(p.fin)}${p.tarif ? ' · ' + esc(p.tarif) + ' €' : ''}${p.repas ? ' · repas : ' + esc(p.repas) : ''}</span></span><span class="pill ${on ? 'p-green' : 'p-plain'}">${on ? 'En cours' : (p.fin && p.fin < t ? 'Terminée' : 'À venir')}</span></button>`; }).join('')}</div>` : '<p class="muted">Aucune pour l’instant.</p>'}</div>
-      ${ro ? '' : (o.statut === 'sorti' ? `<button class="btn" data-a="occReturn" data-id="${id}">Annuler le départ</button>` : `<button class="btn bad" data-a="occExit" data-id="${id}">Départ</button>`)}` : ''}`);
+      ${ro ? '' : (o.statut === 'sorti' ? `<button class="btn" data-a="occReturn" data-id="${id}">Annuler le départ</button>` : `<button class="btn bad" data-a="occExit" data-id="${id}">Départ</button>`)}
+      ${(() => { const H = occHist(id); if (!H.length) return ''; const show = S.occHistAll === id ? H : H.slice(0, 4);
+        return `<div class="card"><h3>Historique</h3><p class="muted sm">Qui a modifié quoi sur cette fiche, quand et pourquoi.</p><div class="group flat">${show.map(logRow).join('')}</div>${H.length > show.length ? `<button class="btn small ghost" data-a="occHistAll" data-id="${id}">Voir les ${H.length} lignes</button>` : ''}</div>`; })()}` : ''}`);
 }
 function pecSheet(occId, pecId) {
   const p = pecId ? S.reg.pecs.find((x) => x.id === pecId) : { financeur: FINANCEURS[0], debut: todayISO(), repas: 'Non' };
   const o = occById(occId || p.occupant_id), ro = !canReg('reg_full');
   openSheet('pec', `${sheetHead(pecId ? 'Prise en charge' : 'Nouvelle prise en charge')}<p class="muted">${esc(occName(o))}</p>
     <fieldset class="card form" ${ro ? 'disabled' : ''}>
+      ${pecId ? `<label>Rattachée à<select id="p-occ">${S.reg.occ.slice().sort((a, b) => (a.statut === 'sorti') - (b.statut === 'sorti') || String(a.nom || '').localeCompare(String(b.nom || ''), 'fr')).map((x) => opt(x.id, o.id, `${occName(x)} · ${hotelName(x.hotel)} · ${occPlace(x)}${x.statut === 'sorti' ? ' · parti' : ''}`)).join('')}</select><span class="muted sm">Pour corriger une prise en charge mise sur la mauvaise personne. Le changement est noté dans l’historique des deux fiches.</span></label>` : ''}
       <div class="two"><label>Financeur<select id="p-fin">${FINANCEURS.map((f) => opt(f, p.financeur)).join('')}</select></label><label>Référence<input id="p-ref" value="${esc(p.reference || '')}"></label></div>
       <div class="two"><label>Début<input id="p-debut" type="date" value="${esc(p.debut || '')}"></label><label>Fin<input id="p-finD" type="date" value="${esc(p.fin || '')}"></label></div>
       <div class="two"><label>Tarif par nuit (€)<input id="p-tarif" inputmode="decimal" value="${esc(p.tarif || '')}"></label><label>Repas<select id="p-repas">${REPAS.map((r) => opt(r, p.repas)).join('')}</select></label></div>
@@ -1193,6 +1206,22 @@ async function pdfToImages(blob) {
     await page.render({ canvasContext: x, viewport: vp }).promise; out.push(c.toDataURL('image/jpeg', 0.9)); page.cleanup();
   }
   pdf.destroy(); return out;
+}
+// Visionneuse : le document s'affiche par-dessus l'appli, sans rien enregistrer sur le téléphone.
+function closeViewer() { const v = $('viewer'); if (v) v.remove(); document.body.style.overflow = ''; }
+async function viewDoc(d, el) {
+  if (S.viewing) return; S.viewing = true;
+  const old = el ? el.textContent : ''; if (el) { el.disabled = true; el.textContent = '⏳ ' + (d.n || 'Document'); }
+  try {
+    const blob = await docBlob(d);
+    const pages = /pdf/i.test(blob.type) ? await pdfToImages(blob) : [S.docUrls[d.f] || URL.createObjectURL(blob)];
+    closeViewer();
+    const v = document.createElement('div'); v.id = 'viewer'; v.setAttribute('role', 'dialog'); v.setAttribute('aria-modal', 'true');
+    v.innerHTML = `<div class="vw-bar"><button class="vw-x" data-a="docClose" aria-label="Fermer">✕ Fermer</button><span class="vw-t">${esc(d.n || 'Document')}${pages.length > 1 ? ` · ${pages.length} pages` : ''}</span>${printBtn({ f: d.f, n: d.n })}${d.f ? `<button class="vw-dl" data-a="docSave" data-id="${esc(d.f)}" data-n="${esc(d.n || 'document.pdf')}" title="Enregistrer sur le téléphone" aria-label="Enregistrer sur le téléphone">⬇︎</button>` : ''}</div>
+      <div class="vw-pages">${pages.map((u, i) => `<img src="${u}" alt="Page ${i + 1}" loading="lazy">`).join('')}</div>`;
+    document.body.appendChild(v); document.body.style.overflow = 'hidden';
+  } catch (e) { toast(e && e.message === 'pdfjs' ? 'Pas de connexion pour afficher le document. Réessaie.' : errMsg(e)); }
+  finally { S.viewing = false; if (el && el.isConnected) { el.disabled = false; el.textContent = old; } }
 }
 async function printDoc(d, el) {
   if (S.printing) return; S.printing = true;
@@ -2496,14 +2525,16 @@ const A = {
     if (await act(() => api('verif_add', r), 'Ajouté et validé ✓')) closeSheet();
   },
   rSortis() { S.rSortis = !S.rSortis; render(); },
+  rEat() { S.rEat = !S.rEat; render(); },
   rDone() { S.rDone = !S.rDone; render(); },
   regRoom(d) { const os = occOfRoom(d.id); if (os.length === 1) occSheet(os[0].id); else if (!os.length) { if (canReg('reg_full')) occSheet(null, { hotel: S.rooms[d.id].hotel, room_id: d.id }); } else openSheet('roomocc', `${sheetHead(esc(placeName(S.rooms[d.id])))}<div class="group">${os.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}</span></button>`).join('')}</div>${canReg('reg_full') ? `<button class="btn" data-a="occNewRoom" data-id="${d.id}">＋ Ajouter quelqu’un dans cette chambre</button>` : ''}`); },
   occNew() { occSheet(null, { hotel: S.scope !== 'all' ? S.scope : S.hotel }); },
   occNewRoom(d) { occSheet(null, { hotel: S.rooms[d.id].hotel, room_id: d.id }); },
   occOpen(d) { occSheet(d.id); },
+  occHistAll(d) { S.occHistAll = d.id; occSheet(d.id); },
   async occSave(d) {
     const v = (id) => ($(id) && $(id).value || '').trim();
-    const body = { id: d.id || undefined, prenom: v('o-prenom'), nom: v('o-nom'), naissance: v('o-naissance'), categorie: v('o-cat'), hotel: v('o-hotel'), room_id: v('o-room') || null, entree: v('o-entree'), telephone: v('o-tel'), notes: v('o-notes'), raison: v('o-raison') };
+    const body = { id: d.id || undefined, prenom: v('o-prenom'), nom: v('o-nom'), naissance: v('o-naissance'), categorie: v('o-cat'), hotel: v('o-hotel'), room_id: v('o-room') || null, entree: v('o-entree'), telephone: v('o-tel'), notes: v('o-notes'), raison: v('o-raison'), resto: !!($('o-resto') && $('o-resto').checked) };
     if (!body.nom && !body.prenom) { toast('Écris au moins un nom.'); return; }
     if (!d.id && !body.raison) { toast('Indique pourquoi (ex. : arrivée envoyée par l’ASE).'); return; }
     let id = d.id; if (await act(async () => { const r = await api('reg_occ_save', body); id = r.id; }, d.id ? 'Fiche enregistrée' : 'Ajouté au registre')) occSheet(id);
@@ -2519,9 +2550,12 @@ const A = {
   pecOpen(d) { const p = S.reg.pecs.find((x) => x.id === d.id); pecSheet(p.occupant_id, d.id); },
   async pecSave(d) {
     const v = (id) => ($(id) && $(id).value || '').trim();
-    const body = { id: d.id || undefined, occupant_id: d.occ, financeur: v('p-fin'), reference: v('p-ref'), debut: v('p-debut'), fin: v('p-finD'), tarif: v('p-tarif'), repas: v('p-repas'), notes: v('p-notes'), raison: v('p-raison') };
+    const to = (d.id && v('p-occ')) || d.occ;
+    if (to !== d.occ && !v('p-raison')) { toast('Écris pourquoi tu la rattaches à une autre personne.'); return; }
+    if (to !== d.occ && S.confirmMove !== d.id + to) { S.confirmMove = d.id + to; toast(`Touche encore « Enregistrer » pour la rattacher à ${occName(occById(to))}.`); setTimeout(() => S.confirmMove = null, 6000); return; }
+    const body = { id: d.id || undefined, occupant_id: to, financeur: v('p-fin'), reference: v('p-ref'), debut: v('p-debut'), fin: v('p-finD'), tarif: v('p-tarif'), repas: v('p-repas'), notes: v('p-notes'), raison: v('p-raison') };
     if (body.debut && body.fin && body.fin < body.debut) { toast('La fin est avant le début.'); return; }
-    if (await act(() => api('reg_pec_save', body), 'Prise en charge enregistrée')) occSheet(d.occ);
+    if (await act(() => api('reg_pec_save', body), to !== d.occ ? 'Prise en charge rattachée' : 'Prise en charge enregistrée')) occSheet(to);
   },
   async pecDel(d) {
     const raison = ($('p-raison').value || '').trim(); if (!raison) { toast('Écris d’abord pourquoi tu la supprimes.'); return; }
@@ -2548,15 +2582,9 @@ const A = {
     finally { S.applying = false; }
   },
   inDiscard(d) { discardSheet(d.id); },
-  async docOpen(d, el) {
-    if (el) { el.disabled = true; el.textContent = '⏳ ' + d.n; }
-    try {
-      const r = await api('doc_get', { id: d.id });
-      const bin = atob(r.b64), u8 = new Uint8Array(bin.length); for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-      S.docUrls[d.id] = URL.createObjectURL(new Blob([u8], { type: r.type || 'application/pdf' }));
-      if (el) { const a = document.createElement('div'); a.innerHTML = docLink({ id: d.id, name: d.n }); const link = a.firstChild; el.replaceWith(link); try { link.click(); } catch (e) { /* l'utilisateur touchera le lien */ } }
-    } catch (e) { toast(errMsg(e)); if (el) { el.disabled = false; el.textContent = '📄 ' + d.n; } }
-  },
+  async docOpen(d, el) { await viewDoc({ f: d.id, n: d.n }, el); },
+  docClose() { closeViewer(); },
+  docSave(d) { const u = S.docUrls[d.id]; if (!u) return; const a = document.createElement('a'); a.href = u; a.download = d.n || 'document.pdf'; document.body.appendChild(a); a.click(); a.remove(); },
   async discardGo(d) { const note = ($('d-note').value || '').trim(); if (!note) { toast('Indique pourquoi.'); return; } if (await act(() => api('reg_inbox_set', { id: d.id, status: 'ecarte', note }), 'Écartée')) closeSheet(); },
   async inReopen(d) { await act(() => api('reg_inbox_set', { id: d.id, status: 'a_traiter', note: null, raison: 'Rouverte' }), 'Rouverte'); },
   soon(d) { toast(`${SECTIONS[d.k].t} arrive à l’${SECTIONS[d.k].soon.toLowerCase()}.`); },
@@ -3006,7 +3034,8 @@ const C = {
   sdHotel(el) { const f = S.sd; if (!f) return; f.hotel = el.value; if (f.check) { const n = el.value + '-' + f.check.split('-').slice(1).join('-'); f.check = secChecks().some((x) => x.id === n) ? n : ''; } sdRedraw(); },
   sdCheck(el) { if (!S.sd) return; S.sd.check = el.value; S.sd.guess = false; sdRedraw(); },
   assignTo(el) { S.assignTo = el.value; },
-  oHotel(el) { $('o-room').innerHTML = roomOpts(el.value, ''); },
+  oHotel(el) { $('o-room').innerHTML = roomOpts(el.value, ''); const l = $('o-resto-l'); if (l) l.hidden = false; },
+  oRoom(el) { const l = $('o-resto-l'); if (l) l.hidden = el.value === 'resto'; },
   aHotel(el) { $('a-room').innerHTML = roomOpts(el.value, ''); },
   async freq(el) { await act(() => roomsPatch([el.dataset.id], { freqDays: parseInt(el.value, 10) || null }), 'Fréquence enregistrée'); },
   repHotel(el) { S.rep.hotel = el.value; S.rep.room = ''; drawReport(); },

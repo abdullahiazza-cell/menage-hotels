@@ -361,7 +361,7 @@ async function regState() {
     sb.from("occupants").select("*").or(`statut.eq.present,sortie.gte.${since}`).order("nom"),
     sb.from("pecs").select("*").order("debut", { ascending: false }),
     sb.from("pec_inbox").select("*").order("received_at", { ascending: false }).limit(300),
-    sb.from("registre_log").select("*").order("ts", { ascending: false }).limit(300),
+    sb.from("registre_log").select("*").order("ts", { ascending: false }).limit(600),
     sb.from("pec_relances").select("*"),
   ]);
   await attachMailDocs((inbox || []).filter((i: any) => i.status === "a_traiter")).catch(() => {});
@@ -379,6 +379,11 @@ async function placeLabel(roomId: string | null, hotel: string, formule?: string
 async function regLog(me: any, action: string, occId: string | null, cible: string, raison: string | null, details = "") {
   await sb.from("registre_log").insert({ by_staff: me.id, by_label: String(me.label).split(" ")[0], action, occupant_id: occId, cible, raison: raison || "", details });
 }
+// Traçabilité : chaque modification note l'ancienne et la nouvelle valeur, champ par champ.
+const OCC_L: Record<string, string> = { nom: "nom", prenom: "prénom", naissance: "naissance", categorie: "catégorie", telephone: "téléphone", entree: "arrivée", notes: "notes", resto: "repas sur place" };
+const PEC_L: Record<string, string> = { financeur: "financeur", reference: "référence", debut: "début", fin: "fin", tarif: "tarif", repas: "repas", notes: "notes" };
+const showV = (v: any) => v === true ? "oui" : v === false ? "non" : (v === null || v === undefined || v === "") ? "vide" : (/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? frD(String(v)) : (String(v).length > 40 ? String(v).slice(0, 40) + "…" : String(v)));
+const diffTxt = (old: any, row: any, L: Record<string, string>) => Object.keys(L).filter((k) => k in row && String(old[k] ?? "") !== String(row[k] ?? "")).map((k) => `${L[k]} : ${showV(old[k])} → ${showV(row[k])}`);
 // Lieu choisi : une chambre, « resto » (repas seuls, toujours sur l'Hôtel de Paris) ou rien.
 async function placeOf(roomId: any, hotel: string) {
   if (roomId === "resto") return { hotel: "par", room_id: null, formule: "restauration" };
@@ -408,17 +413,24 @@ async function regAction(me: any, a: string, body: any) {
     const h0 = HOTELS.includes(body.hotel) ? body.hotel : null; if (!h0) throw new E("bad");
     const { hotel, room_id, formule } = await placeOf(body.room_id, h0);
     const row: any = { hotel, room_id, formule, nom: S_(body.nom, 80), prenom: S_(body.prenom, 80), naissance: D_(body.naissance), categorie: S_(body.categorie, 40), telephone: S_(body.telephone, 25), entree: D_(body.entree), notes: S_(body.notes, 1000) || "", updated_at: now, updated_by: me.id };
+    // Repas sur place : toujours vrai pour les repas seuls ; sinon selon la case de la fiche (une ancienne version de l'appli ne l'envoie pas : on ne touche à rien).
+    if (formule === "restauration") row.resto = true; else if (typeof body.resto === "boolean") row.resto = body.resto;
     if (!row.nom && !row.prenom) throw new E("bad");
     if (body.id) {
       const { data: old } = await sb.from("occupants").select("*").eq("id", body.id).single(); if (!old) throw new E("bad");
-      await sb.from("occupants").update(row).eq("id", body.id);
-      const ch = Object.keys(row).filter((k) => !["updated_at", "updated_by"].includes(k) && String(old[k] ?? "") !== String(row[k] ?? ""));
-      await regLog(me, (old.room_id !== room_id || old.formule !== formule) ? "Changement de chambre" : "Fiche modifiée", body.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, ch.join(", "));
+      if (formule !== "restauration" && old.formule === "restauration" && typeof body.resto !== "boolean") row.resto = false;
+      const moved = old.room_id !== room_id || old.formule !== formule || old.hotel !== hotel;
+      const ch = diffTxt(old, row, OCC_L);
+      if (!moved && !ch.length) return { ok: true, id: body.id };
+      const { error: e1 } = await sb.from("occupants").update(row).eq("id", body.id); if (e1) throw new E("db");
+      if (moved) ch.unshift(`${await placeLabel(old.room_id, old.hotel, old.formule)} → ${await placeLabel(room_id, hotel, formule)}`);
+      const onlyResto = !moved && ch.length === 1 && "resto" in row && old.resto !== row.resto;
+      await regLog(me, moved ? "Changement de chambre" : (onlyResto ? (row.resto ? "Repas sur place : oui" : "Repas sur place : non") : "Fiche modifiée"), body.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, ch.join(" · "));
       return { ok: true, id: body.id };
     }
     row.created_by = me.id; row.statut = "present"; if (!row.entree) row.entree = now.slice(0, 10);
     const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
-    await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, row.categorie || "");
+    await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, [row.categorie || "", formule !== "restauration" && row.resto ? "avec repas sur place" : ""].filter(Boolean).join(" · "));
     return { ok: true, id: data.id };
   }
   if (a === "reg_occ_exit") {
@@ -439,7 +451,23 @@ async function regAction(me: any, a: string, body: any) {
   if (a === "reg_pec_save") {
     const { data: o } = await sb.from("occupants").select("id,nom,prenom").eq("id", body.occupant_id).single(); if (!o) throw new E("bad");
     const row: any = { occupant_id: o.id, financeur: S_(body.financeur, 80), reference: S_(body.reference, 40) || "", debut: D_(body.debut), fin: D_(body.fin), tarif: S_(body.tarif, 20) || "", repas: S_(body.repas, 40), notes: S_(body.notes, 1000) || "", updated_at: now, updated_by: me.id };
-    if (body.id) { await sb.from("pecs").update(row).eq("id", body.id); await regLog(me, "PEC modifiée", o.id, `${fullName(o)} · ${row.financeur || ""}`, raison, `${row.debut || "?"} → ${row.fin || "?"}`); return { ok: true }; }
+    if (body.id) {
+      const { data: old } = await sb.from("pecs").select("*").eq("id", body.id).single(); if (!old) throw new E("bad");
+      const movedTo = old.occupant_id !== o.id;
+      if (movedTo && !raison) throw new E("reason");
+      const ch = diffTxt(old, row, PEC_L);
+      if (!movedTo && !ch.length) return { ok: true };
+      const { error: e1 } = await sb.from("pecs").update(row).eq("id", body.id); if (e1) throw new E("db");
+      const span = `${frD(row.debut)} → ${frD(row.fin)}`, lab = `${row.financeur || ""}${row.reference ? " · réf. " + row.reference : ""}`;
+      if (movedTo) {
+        const { data: prev } = await sb.from("occupants").select("id,nom,prenom").eq("id", old.occupant_id).maybeSingle();
+        const from = prev ? fullName(prev) : "personne supprimée";
+        // Deux lignes : une sur chaque fiche, pour que l'historique des deux personnes soit complet.
+        if (prev) await regLog(me, "PEC retirée", prev.id, `${from} · ${lab}`, raison, `${span} · rattachée à ${fullName(o)}`);
+        await regLog(me, "PEC rattachée", o.id, `${fullName(o)} · ${lab}`, raison, [`${span} · venant de ${from}`, ...ch].join(" · "));
+      } else await regLog(me, "PEC modifiée", o.id, `${fullName(o)} · ${lab}`, raison, ch.join(" · "));
+      return { ok: true };
+    }
     row.created_by = me.id; if (Array.isArray(body.docs)) row.docs = body.docs.slice(0, 10);
     const { error } = await sb.from("pecs").insert(row); if (error) throw new E("db");
     await regLog(me, "PEC ajoutée", o.id, `${fullName(o)} · ${row.financeur || ""}`, raison, `${row.debut || "?"} → ${row.fin || "?"}`);
