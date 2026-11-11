@@ -318,7 +318,7 @@ function trScene(roomId, p) {
   const headWall = bed0 ? ((bed0.r || 0) / 90) % 4 : -1, accWall = dacc && dacc[2] ? headWall : -1; // le mur d'accent est celui de la tête de lit
   const T = 8, wc = dmur ? dmur[2] : (d.murs === 'papier' ? [0.93, 0.90, 0.84] : TR_COL.wall);
   const wdef = [[-T, -T, W + T, 0, [0, -1]], [W, -T, W + T, D + T, [1, 0]], [-T, D, W + T, D + T, [0, 1]], [-T, -T, 0, D + T, [-1, 0]]];
-  wdef.forEach(([x0, y0, x1, y1, n], i) => walls.push({ i, n, c: [((x0 + x1) / 2 - W / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], glass: [], boxes: [box(x0, y0, 0, x1, y1, H, i === accWall ? dacc[2] : wc, 5)] }));
+  wdef.forEach(([x0, y0, x1, y1, n], i) => walls.push({ i, n, c: [((x0 + x1) / 2 - W / 2) * cm, ((y0 + y1) / 2 - D / 2) * cm], glass: [], curt: [], boxes: [box(x0, y0, 0, x1, y1, H, i === accWall ? dacc[2] : wc, 5)] }));
   // Tout ce qui est plaqué sur un mur (plinthe, porte, fenêtre, rideaux, cadre, télé) disparaît avec lui.
   const onWall = (o, width, z0, z1, deep, c, k) => { const z = trOpening(o, width, W, D, deep); return box(z.x0, z.y0, z0, z.x1, z.y1, z1, c, k); };
   walls.forEach((wl, i) => { const L = trWallLen(i, W, D); wl.boxes.push(onWall({ wall: i, pos: L / 2 }, L, 0, 8, 1.4, [0.97, 0.97, 0.96])); });
@@ -328,7 +328,9 @@ function trScene(roomId, p) {
     const tis = trDecoOf(TR_DECO_TISSU, deco.tissu) || TR_DECO_TISSU[0], top = Math.min(H - 4, al + fh + 22), pw = Math.max(34, fw * 0.32), n = Math.max(4, Math.round(pw / 7)), sw = pw / n;
     wwl.boxes.push(onWall(p.win, fw + 2 * pw - 6, top, top + 2.5, 9, TR_COL.metal));
     // Rideaux à plis : des bandes de profondeur et de teinte alternées.
-    if (deco.rideau !== 'voilage') [-1, 1].forEach((sg) => { for (let i = 0; i < n; i++) { const c = p.win.pos + sg * (fw / 2 - 10 + sw * (i + 0.5)), f = i % 2 ? 0.90 : 1; wwl.boxes.push(onWall({ wall: p.win.wall, pos: c }, sw + 0.3, 3, top, i % 2 ? 7.5 : 10.5, [tis[2][0] * f, tis[2][1] * f, tis[2][2] * f], 4)); } });
+    if (deco.rideau !== 'voilage') [-1, 1].forEach((sg) => { for (let i = 0; i < n; i++) { const c = p.win.pos + sg * (fw / 2 - 10 + sw * (i + 0.5)), f = i % 2 ? 0.90 : 1; const bx = onWall({ wall: p.win.wall, pos: c }, sw + 0.3, 3, top, i % 2 ? 7.5 : 10.5, [tis[2][0] * f, tis[2][1] * f, tis[2][2] * f], 4); bx.cur = 1; wwl.boxes.push(bx); }
+      // Pour le rendu soigné : un vrai panneau plissé à la place des bandes.
+      wwl.curt.push(onWall({ wall: p.win.wall, pos: p.win.pos + sg * (fw / 2 - 10 + pw / 2) }, pw, 3, top, 14, tis[2], 4)); });
     if (deco.rideau !== 'occultant') wwl.glass.push(onWall(p.win, fw + 16, 3, top, 5.5, [1, 1, 1]));
   }
   const dh = Math.min(204, H - 10), dwl = walls[p.door.wall], dL = trWallLen(p.door.wall, W, D);
@@ -348,12 +350,20 @@ function trScene(roomId, p) {
   const dl = trDecoOf(TR_DECO_TISSU, deco.linge), duvet = dl ? dl[2] : null;
   p.items.forEach((it) => {
     const dest = it.t === 'tv' ? walls[((it.r || 0) / 90) % 4].boxes : B;
-    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp })); });
+    trParts(it, duvet).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp, soft: c === TR_COL.pillow })); });
   });
+  // Une plante verte dans un coin libre (rendu soigné seulement) : jamais devant la porte, la fenêtre ou un meuble.
+  const plants = [];
+  if (bed0) {
+    const obs = p.items.filter((it) => it.t !== 'tv').map(trRect).concat(sdb ? [sdb] : [], [trOpening(p.door, TR_DOOR_W + 30, W, D, 110), trOpening(p.win, fw + 110, W, D, 45)]);
+    p.items.filter((it) => it.t === 'tv').forEach((it) => obs.push(trLocal(it, 0, 0, trDim(it).w, 40)));
+    const cs = [[30, 30], [W - 30, 30], [W - 30, D - 30], [30, D - 30]].filter(([x, y]) => trFree({ x0: x - 24, y0: y - 24, x1: x + 24, y1: y + 24 }, obs, W, D));
+    if (cs.length) { const far = (q) => Math.hypot(q[0] - bed0.x, q[1] - bed0.y); cs.sort((a, b) => far(a) - far(b)); const q = cs[cs.length - 1]; plants.push([(q[0] - W / 2) * cm, (q[1] - D / 2) * cm]); }
+  }
   // Point de vue « depuis la porte » : à 50 cm à l'intérieur, à hauteur des yeux, tourné vers le milieu de la pièce.
   const dz = trOpening(p.door, 10, W, D, 50), de = [(((dz.x0 + dz.x1) / 2) - W / 2) * cm, 1.55, (((dz.y0 + dz.y1) / 2) - D / 2) * cm];
   const inward = [[0, 1], [-1, 0], [0, -1], [1, 0]][p.door.wall], dEye = [de[0] + inward[0] * 0.25, 1.55, de[2] + inward[1] * 0.25];
-  return { W: W * cm, D: D * cm, H: H * cm, B, glass, walls, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: sdb ? box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, H, wc, 5) : null, Wc: W, Dc: D, Hc: H, win: { wall: p.win.wall, pos: p.win.pos, w: fw, z0: al, z1: ft }, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
+  return { W: W * cm, D: D * cm, H: H * cm, B, glass, walls, plants, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: sdb ? box(sdb.x0, sdb.y0, 0, sdb.x1, sdb.y1, H, wc, 5) : null, Wc: W, Dc: D, Hc: H, win: { wall: p.win.wall, pos: p.win.pos, w: fw, z0: al, z1: ft }, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
 }
 const TR_GL = { gl: null, raf: 0, ask: null, snap: null, three: null, token: null };
 window.addEventListener('resize', () => { if (TR_GL.gl && TR_GL.ask) TR_GL.ask(); });
@@ -400,7 +410,7 @@ function trGlStart() {
   const basic = () => { if (TR_GL.token !== token) return; const old = $('tr-gl'); if (!old) return; const fresh = old.cloneNode(false); old.replaceWith(fresh); trGlStartBasic(); };
   import('./travaux-rendu.js?v=' + APP_V).then((mod) => {
     if (TR_GL.token !== token || !cv.isConnected) return;
-    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false }); TR_GL.three = h; TR_GL.ask = h.ask; TR_GL.snap = h.snap; }
+    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false, soir: () => !!P.soir }); TR_GL.three = h; TR_GL.ask = h.ask; TR_GL.snap = h.snap; }
     catch (e) { console.warn('rendu', e); basic(); }
   }).catch((e) => { console.warn('rendu', e); basic(); });
 }
@@ -620,7 +630,7 @@ function trDecoCard(roomId) {
 function trPlanSheet(roomId, keep) {
   const r = trRoomGet(roomId), d = trData(roomId); if (!r || !S.tr || !trHasPlan(d)) { closeSheet(); return; }
   const { W, D } = trWDH(d);
-  if (!keep || !S.trP || S.trP.rid !== roomId) S.trP = { rid: roomId, view: (S.trP && S.trP.rid === roomId && S.trP.view) || 'plan', sel: null, p: trPlanOf(roomId), cam: null };
+  if (!keep || !S.trP || S.trP.rid !== roomId) S.trP = { rid: roomId, view: (S.trP && S.trP.rid === roomId && S.trP.view) || 'plan', sel: null, p: trPlanOf(roomId), cam: null, soir: !!(S.trP && S.trP.rid === roomId && S.trP.soir) };
   const P = S.trP, can = trCan(), hasSdb = trNum(d.sdb_len) && trNum(d.sdb_wid), fs = Math.max(11, Math.round(Math.max(W, D) / 26)), pad = fs * 2.2;
   const cfgs = TR_CFG.map(([k, l, beds]) => { const a = trAuto(roomId, beds, P.p); return { k, l, a, ok: a.bedsOk && a.surfOk }; });
   const bank = S.tr.items.filter((i) => i.etat !== 'a_jeter' && i.w_cm && i.d_cm);
@@ -631,6 +641,7 @@ function trPlanSheet(roomId, keep) {
       ? `<svg id="tr-svg" viewBox="${-pad} ${-pad} ${W + pad * 1.4} ${D + pad * 1.4}" preserveAspectRatio="xMidYMid meet"><g id="tr-plan-g"></g></svg>`
       : `<div class="tr-3d"><canvas id="tr-gl"></canvas><div id="tr-lab"></div><div class="tr-tools"><button data-a="trFull" aria-label="Plein écran">⤢</button><button data-a="trSnap" aria-label="Enregistrer l’image">📸</button></div></div>`}</div>
     ${P.view === '3d' ? `<div class="segc" role="group" aria-label="Point de vue">${[['orbit', 'Vue d’ensemble'], ['porte', 'Depuis la porte'], ['dessus', 'Du dessus']].map(([k, l]) => `<button data-a="trCam" data-k="${k}" aria-pressed="${((P.cam && P.cam.mode) || 'orbit') === k}">${l}</button>`).join('')}</div>
+    <div class="segc" role="group" aria-label="Ambiance">${[['', '☀️ Jour'], ['1', '🌙 Soir']].map(([k, l]) => `<button data-a="trAmb" data-k="${k}" aria-pressed="${!!P.soir === !!k}">${l}</button>`).join('')}</div>
     <p class="muted sm">Un doigt pour tourner (ou regarder autour de soi depuis la porte), deux doigts pour s’approcher. ⤢ pour le plein écran, 📸 pour garder l’image.</p>` : ''}
     <div id="tr-plan-bar"></div>
     <div class="card"><h3>Est-ce que ça tient ?</h3><div id="tr-plan-chk"></div></div>
@@ -657,6 +668,7 @@ Object.assign(A, {
     document.querySelectorAll('[data-a="trCam"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === d.k)));
     if (TR_GL.ask) TR_GL.ask();
   },
+  trAmb(d) { const P = S.trP; if (!P) return; P.soir = !!d.k; document.querySelectorAll('[data-a="trAmb"]').forEach((b) => b.setAttribute('aria-pressed', String(!!b.dataset.k === P.soir))); if (TR_GL.ask) TR_GL.ask(); },
   trFull() { const st = document.querySelector('.tr-stage'); if (!st) return; st.classList.toggle('big'); if (TR_GL.ask) { TR_GL.ask(); setTimeout(() => TR_GL.ask && TR_GL.ask(), 60); } },
   async trSnap() {
     const P = S.trP; if (!P || !TR_GL.snap) return;
