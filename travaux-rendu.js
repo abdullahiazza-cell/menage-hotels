@@ -165,7 +165,37 @@ export function trRendu(o) {
       olds.forEach((m) => { if (m !== g && !m.isLight) m.visible = false; }); ask();
     }).catch((e) => console.warn('modèle', f, e));
   }
-  (sc.models || []).forEach((it, i) => { it.mi = i; it.cx = it.x; it.cz = it.z; byItem[i] = byItem[i] || []; if (MODELES[it.t]) later.push(() => poser(MODELES[it.t], it, byItem[i])); });
+  const bills = [];
+  (sc.models || []).forEach((it, i) => { it.mi = i; it.cx = it.x; it.cz = it.z; byItem[i] = byItem[i] || [];
+    if (it.img) later.push(() => photo(it, byItem[i]));
+    else if (MODELES[it.t]) later.push(() => poser(MODELES[it.t], it.t === 'plante' ? Object.assign(it, { fitH: true }) : it, byItem[i])); });
+  // Un meuble du catalogue : sa vraie photo IKEA, détourée (le fond blanc devient transparent), à sa taille réelle.
+  // Debout dans la pièce, elle se tourne vers l'œil ; un tableau ou un miroir est plaqué sur son mur. Vue du dessus : on revient aux blocs.
+  function photo(it, olds) {
+    fetch(it.img).then((r) => { if (!r.ok) throw new Error('img ' + r.status); return r.blob(); }).then((b) => createImageBitmap(b)).then((bmp) => {
+      if (dead) return;
+      const cw = bmp.width, ch = bmp.height, cv = document.createElement('canvas'); cv.width = cw; cv.height = ch; const cx = cv.getContext('2d'); cx.drawImage(bmp, 0, 0);
+      const im = cx.getImageData(0, 0, cw, ch), px = im.data, bg = (k) => { const r = px[k], g = px[k + 1], b2 = px[k + 2]; return r > 228 && g > 228 && b2 > 228 && Math.max(r, g, b2) - Math.min(r, g, b2) < 14; };
+      if (!it.tv) { // détourage : on part des bords et on efface le fond clair qui les touche (le blanc du meuble lui-même reste)
+        const seen = new Uint8Array(cw * ch), st = []; for (let x = 0; x < cw; x++) st.push(x, (ch - 1) * cw + x); for (let y = 0; y < ch; y++) st.push(y * cw, y * cw + cw - 1);
+        while (st.length) { const q = st.pop(); if (seen[q]) continue; seen[q] = 1; if (!bg(q * 4)) continue; px[q * 4 + 3] = 0; const x = q % cw, y = (q - x) / cw; if (x > 0) st.push(q - 1); if (x < cw - 1) st.push(q + 1); if (y > 0) st.push(q - cw); if (y < ch - 1) st.push(q + cw); }
+      }
+      let x0 = cw, y0 = ch, x1 = -1, y1 = -1; for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (px[(y * cw + x) * 4 + 3] > 20 && !(it.tv && bg((y * cw + x) * 4))) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+      if (x1 < x0) return; cx.putImageData(im, 0, 0);
+      const ow = x1 - x0 + 1, oh = y1 - y0 + 1, out = document.createElement('canvas'); out.width = ow; out.height = oh; out.getContext('2d').drawImage(cv, x0, y0, ow, oh, 0, 0, ow, oh);
+      const tex = new THREE.CanvasTexture(out); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4; trash.push(tex);
+      const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, alphaTest: 0.35, side: THREE.DoubleSide, toneMapped: false }); trash.push(mat);
+      const asp = ow / oh; let pw, ph;
+      if (it.tv) { pw = it.w; ph = Math.min(it.h * 1.15, pw / asp); }
+      else { ph = it.h; pw = ph * asp; const mx = Math.max(it.w, it.d) * 1.35; if (pw > mx) { pw = mx; ph = pw / asp; } }
+      const g = new THREE.PlaneGeometry(pw, ph); geos.push(g); const m = new THREE.Mesh(g, mat); m.userData.mi = it.mi; m.castShadow = !it.tv;
+      m.customDepthMaterial = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking, map: tex, alphaTest: 0.35 }); trash.push(m.customDepthMaterial);
+      if (it.tv) { const a = (it.r || 0) * Math.PI / 180, nx = Math.sin(a), nz = Math.cos(a); m.rotation.y = -a; m.position.set(it.cx + nx * 0.02, (it.wz || 1.2) + ph / 2, it.cz + nz * 0.02);
+        const grp = olds.length && olds[0].parent ? olds[0].parent : scene; grp.add(m); olds.forEach((o) => { if (!o.isLight) o.visible = false; }); olds.push(m); }
+      else { m.position.set(it.cx, (it.zb || 0) + ph / 2, it.cz); scene.add(m); const boxes = olds.filter((o) => !o.isLight); olds.push(m); bills.push({ m, boxes }); }
+      ask();
+    }).catch((e) => console.warn('photo', it.img, e));
+  }
   // Meuble choisi : une plaque de couleur au sol, sous lui.
   const selMat = new THREE.MeshBasicMaterial({ color: 0xff7a1a, transparent: true, opacity: 0.38, depthWrite: false }); trash.push(selMat);
   const selGeo = new THREE.PlaneGeometry(1, 1); geos.push(selGeo);
@@ -257,6 +287,7 @@ export function trRendu(o) {
     camera.fov = fov; camera.aspect = w / h; camera.position.set(eye[0], eye[1], eye[2]); camera.up.set(0, 1, 0); camera.lookAt(tg[0], tg[1], tg[2]); camera.updateProjectionMatrix();
     // Vue d'ensemble : les murs entre l'œil et la pièce s'effacent. De l'intérieur : tout est là, plafond compris.
     sc.walls.forEach((wl, i) => { wallGroups[i].visible = inside || !((eye[0] - wl.c[0]) * wl.n[0] + (eye[2] - wl.c[1]) * wl.n[1] > 0); });
+    { const top = !inside && cam.pitch > 1.1; bills.forEach((bb) => { bb.m.visible = !top; bb.boxes.forEach((x) => { x.visible = top; }); if (!top) bb.m.rotation.y = Math.atan2(eye[0] - bb.m.position.x, eye[2] - bb.m.position.z); }); }
     ceil.visible = inside; plaf.visible = inside && L.plaf; ceilLights.forEach((m) => { m.visible = inside; }); sdbGlass.forEach((m) => { m.visible = !inside; }); if (sdbWall) sdbWall.visible = inside; sdbLow.forEach((m) => { m.visible = !inside; }); sdbHigh.forEach((m) => { m.visible = inside; });
     { const id = o.sel ? o.sel() : null, it = id ? (sc.models || []).find((m) => m.id === id) : null;
       if (grab && grab.door && grab.f) { selMesh.visible = true; selMesh.scale.set(0.6, 0.6, 1); selMesh.position.set(grab.f[0], 0.02, grab.f[1]); }

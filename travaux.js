@@ -155,11 +155,11 @@ function trButton() { return `<button class="ptbtn" data-a="trEnter" aria-label=
 // [clé, rayon, type posable dans le plan (ou null), groupe]
 const TR_IK_CATS = [
   ['lit_d', 'Lits doubles', 'lit_d', 'Dormir'], ['lit_s', 'Lits simples', 'lit_s', 'Dormir'], ['tete', 'Têtes de lit', null, 'Dormir'], ['matelas', 'Matelas', null, 'Dormir'], ['linge', 'Housses de couette', null, 'Dormir'], ['plaid', 'Plaids', null, 'Dormir'], ['coussin', 'Coussins', null, 'Dormir'],
-  ['chevet', 'Chevets', 'chevet', 'Ranger'], ['commode', 'Commodes', 'meuble', 'Ranger'], ['armoire', 'Armoires', 'armoire', 'Ranger'], ['bagages', 'Bancs porte-bagages', 'bagages', 'Ranger'], ['entree', 'Portemanteaux et patères', null, 'Ranger'],
+  ['chevet', 'Chevets', 'chevet', 'Ranger'], ['commode', 'Commodes', 'meuble', 'Ranger'], ['armoire', 'Armoires', 'armoire', 'Ranger'], ['bagages', 'Bancs porte-bagages', 'bagages', 'Ranger'], ['portant', 'Portants et penderies ouvertes', 'penderie', 'Ranger'], ['entree', 'Portemanteaux et patères', null, 'Ranger'],
   ['bureau', 'Bureaux', 'bureau', 'S’asseoir'], ['chaise', 'Chaises', 'chaise', 'S’asseoir'], ['fauteuil', 'Fauteuils', 'fauteuil', 'S’asseoir'], ['tabouret', 'Tabourets', 'chaise', 'S’asseoir'], ['table', 'Tables (petit déjeuner)', 'bureau', 'S’asseoir'],
-  ['applique', 'Appliques', null, 'Lumière'], ['lampe', 'Lampes de chevet', null, 'Lumière'], ['lampadaire', 'Lampadaires', null, 'Lumière'], ['suspension', 'Suspensions', null, 'Lumière'], ['plafonnier', 'Plafonniers', null, 'Lumière'],
+  ['applique', 'Appliques', null, 'Lumière'], ['lampe', 'Lampes de chevet', 'deco', 'Lumière'], ['lampadaire', 'Lampadaires', 'deco', 'Lumière'], ['suspension', 'Suspensions', null, 'Lumière'], ['plafonnier', 'Plafonniers', null, 'Lumière'],
   ['rideau', 'Rideaux occultants', null, 'Fenêtre et sol'], ['voilage', 'Voilages', null, 'Fenêtre et sol'], ['tapis', 'Tapis', null, 'Fenêtre et sol'],
-  ['miroir', 'Miroirs', null, 'Décorer'], ['cadre', 'Cadres et tableaux', null, 'Décorer'], ['vase', 'Vases', null, 'Décorer'], ['plante', 'Plantes', null, 'Décorer'], ['objet', 'Objets déco', null, 'Décorer'],
+  ['tableau', 'Tableaux et posters', 'tableau', 'Décorer'], ['cadre', 'Cadres', 'tableau', 'Décorer'], ['miroir', 'Miroirs', 'tableau', 'Décorer'], ['vase', 'Vases', 'deco', 'Décorer'], ['plante', 'Plantes', 'plante', 'Décorer'], ['objet', 'Objets déco', 'deco', 'Décorer'],
   ['sdb', 'Miroirs et porte-serviettes', null, 'Salle de bain'], ['poubelle', 'Poubelles', null, 'Salle de bain']];
 const trIkUrl = (c) => 'https://www.ikea.com/fr/fr/p/' + c.slug + '/';
 // La vignette passe par notre serveur (certains téléphones n'affichent pas les images prises directement chez le marchand) ; en secours, l'adresse directe.
@@ -168,7 +168,13 @@ const trIkImg2 = (c) => c.img ? 'https://www.ikea.com/fr/fr/images/products/' + 
 // Dimensions lues dans la description : « 40x50x53 cm » (largeur × profondeur × hauteur) ou « 140x200 cm » pour un lit.
 function trIkDims(c) {
   const d = c.descr || '', m = /(\d+)(?:\/\d+)?x(\d+)(?:x(\d+))?\s*cm/.exec(d), cat = TR_IK_CATS.find((x) => x[0] === c.cat), t = cat && cat[2];
+  // Accroché au mur : « 50x70 cm » = largeur × hauteur. Portant « 99x152 » = largeur × hauteur aussi.
+  if (m && t === 'tableau') return { w: +m[1], d: 3, h: +m[2] };
+  if (m && t === 'penderie' && !m[3]) return { w: +m[1], d: 45, h: +m[2] };
+  if (m && t === 'penderie') return { w: +m[1], d: +m[2], h: +m[3] };
   if (m) { const o = { w: +m[1], d: +m[2] }; if (m[3]) o.h = +m[3]; else if (c.cat === 'armoire') { o.h = o.d; o.d = 58; } return o; }
+  // Objets, vases, plantes, lampes : souvent une seule mesure, la hauteur.
+  if (t === 'deco' || t === 'plante') { const one = /(\d+)\s*cm/.exec(d), h = one ? +one[1] : (t === 'plante' ? 60 : 25); return { w: Math.max(12, Math.round(h * (c.cat === 'lampadaire' ? 0.3 : 0.55))), d: Math.max(12, Math.round(h * (c.cat === 'lampadaire' ? 0.3 : 0.55))), h, approx: !one }; }
   // Pas de dimensions sur la fiche : celles d'un meuble courant de ce type, signalées comme approximatives.
   if (!t || typeof TR_FURN === 'undefined' || !TR_FURN[t]) return null;
   const f = TR_FURN[t], one = /(\d+)\s*cm/.exec(d), o = { w: f.w, d: f.d, h: f.h, approx: true };
