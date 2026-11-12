@@ -160,7 +160,7 @@ const ERR = {
   not_yours: 'Cette chambre n’est plus à toi.', not_started: 'Touche d’abord « Je commence ».', photos_missing: 'Il manque des photos.',
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
   readonly: 'Lecture seule : vous pouvez tout regarder, mais rien n’est modifié. Demandez à Abdullah.',
-  reason: 'Indique la raison.', type: 'Choisis d’abord : client hôtel ou confié par le Département.', client: 'C’est un client hôtel : il paie lui-même, il ne peut pas avoir de prise en charge ni être facturé au Département.', client_champs: 'Pour un client hôtel : téléphone, chambre, date d’arrivée et nombre de nuits sont obligatoires.', piece: 'Prends en photo la pièce d’identité, recto et verso (ou coche « Passeport »).', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
+  reason: 'Indique la raison.', chambre_prise: 'Cette chambre est déjà occupée. Choisis une chambre libre.', categorie: 'Choisis la catégorie (MNA, ASE…).', type: 'Choisis d’abord : client hôtel ou confié par le Département.', client: 'C’est un client hôtel : il paie lui-même, il ne peut pas avoir de prise en charge ni être facturé au Département.', client_champs: 'Pour un client hôtel : téléphone, chambre, date d’arrivée et nombre de nuits sont obligatoires.', piece: 'Prends en photo la pièce d’identité, recto et verso (ou coche « Passeport »).', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
   chorus_fail: 'Chorus ne répond pas. Réessaie dans quelques minutes.', chorus_changed: 'La facture a changé entre-temps. Rouvre l’écran et revérifie.', chorus_depot_fail: 'Le dépôt a échoué. Le détail est affiché sur la facture ; rien n’a été déposé.',
   courrier_incomplet: 'Il manque quelque chose dans cette réponse : confirmez pour l’envoyer quand même.', courrier_etat: 'Ce mail a déjà été traité. Rouvrez Courrier.', courrier_vide: 'La réponse est vide.',
   deja: 'Cette prise en charge est déjà dans le registre.', too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
@@ -203,7 +203,7 @@ async function refresh(force) {
       S.me = d.me; S.device = d.device; S.cfg = d.cfg || DEFAULT_CFG; S.vapid = d.vapid; S.urls = d.urls || {};
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
-      S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] };
+      S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] }; S.occRooms = d.occRooms || [];
       S.verif = d.verif || { lignes: [], log: [], mois: [] };
       S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || []; S.banque = d.banque || null; S.chorus = d.chorus || null; S.courrier = d.courrier || null;
       S.loaded = true;
@@ -225,7 +225,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 // Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
 // Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
-const APP_V = 'v68';
+const APP_V = 'v69';
 async function onlineVersion() {
   const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
   const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
@@ -855,6 +855,32 @@ function idViewSheet(id, urls) {
     ${['piece_recto', 'piece_verso', 'signature'].filter((k) => urls[k]).map((k) => `<div class="card"><h3>${{ piece_recto: 'Recto', piece_verso: 'Verso', signature: 'Signature' }[k]}</h3><img src="${esc(urls[k])}" alt="" style="width:100%;border-radius:10px;background:#fff"></div>`).join('')}
     <p class="muted sm">Chaque consultation est notée dans l’historique de la fiche.</p>
     <button class="btn ghost" data-a="occOpen" data-id="${id}">← Retour à la fiche</button>`);
+}
+// Tuile « Nouveau client » (femmes de ménage, intendant) : on crée la fiche, on ne voit ni ne modifie le registre.
+function arrTypeSheet() {
+  S.arr = { hotel: (S.me.hotels && S.me.hotels[0]) || S.hotel || 'arc', entree: todayISO() };
+  openSheet('arrtype', `${sheetHead('Nouveau client')}<p><b>Qui arrive ?</b></p>
+    <button class="btn big-choice" data-a="arrPick" data-k="client"><b>🛎️ Client de l’hôtel</b><br><span class="muted sm">Il paie lui-même. Photo de la pièce d’identité obligatoire.</span></button>
+    <button class="btn big-choice" data-a="arrPick" data-k="departement"><b>🏛️ MNA ou jeune du Département</b><br><span class="muted sm">Envoyé par le Département ou l’ASE. Pas de pièce d’identité à prendre.</span></button>`);
+}
+const arrRooms = (hotel, cl, cur) => `${opt('', cur, 'Choisir la chambre…')}${roomsOf(hotel).filter((r) => !r.blocked && (!cl || !(S.occRooms || []).includes(r.id))).map((r) => opt(r.id, cur, placeName(r) + (!cl && (S.occRooms || []).includes(r.id) ? ' · occupée' : ''))).join('')}`;
+function arrSheet() {
+  const A = S.arr, cl = A.type === 'client';
+  openSheet('arr', `${sheetHead(cl ? '🛎️ Client de l’hôtel' : '🏛️ MNA / Département')}
+    <div class="card form">
+      <div class="two"><label>Prénom<input id="a-prenom"></label><label>Nom<input id="a-nom"></label></div>
+      ${cl ? '' : `<div class="two"><label>Catégorie<select id="a-cat"><option value="">Choisir…</option>${CATS_DEP.map((c) => opt(c, '')).join('')}</select></label><label>Naissance<input id="a-naissance" type="date"></label></div>`}
+      <label>Téléphone${cl ? ' (obligatoire)' : ''}<input id="a-tel" inputmode="tel"></label>
+      <div class="two"><label>Hôtel<select id="a-hotel" data-change="arrHotel">${HOTELS.map((h) => opt(h.id, A.hotel, h.name)).join('')}</select></label><label>Chambre<select id="a-room">${arrRooms(A.hotel, cl, '')}</select></label></div>
+      <div class="two"><label>Arrivée<input id="a-entree" type="date" value="${esc(A.entree)}" data-change="arrNuits"></label>${cl ? '<label>Nombre de nuits<input id="a-nuits" type="number" min="1" inputmode="numeric" data-change="arrNuits"></label>' : ''}</div>
+      ${cl ? `<p class="muted sm" id="a-depart">Le départ prévu se calcule avec le nombre de nuits.</p>
+      <div class="card sub"><h3>🪪 Pièce d’identité (obligatoire)</h3>
+        <div class="col"><button class="btn ${A.piece_recto ? 'soft' : ''}" data-a="arrShot" data-k="piece_recto">${A.piece_recto ? '✅ Recto · refaire' : '📷 Photo du recto'}</button>
+        ${A.passeport ? '' : `<button class="btn ${A.piece_verso ? 'soft' : ''}" data-a="arrShot" data-k="piece_verso">${A.piece_verso ? '✅ Verso · refaire' : '📷 Photo du verso'}</button>`}</div>
+        <label class="check"><input type="checkbox" id="a-pass" data-change="arrPass" ${A.passeport ? 'checked' : ''}> Passeport (pas de verso)</label></div>
+      <label>Nationalité<input id="a-nat" list="nat-l" placeholder="Ex. : française"><datalist id="nat-l"><option value="Française"></datalist></label>` : ''}
+      <label>Notes (facultatif)<textarea id="a-notes"></textarea></label>
+      <button class="btn pri" data-a="arrSave">Enregistrer l’arrivée</button></div>`);
 }
 function pecSheet(occId, pecId) {
   const p = pecId ? S.reg.pecs.find((x) => x.id === pecId) : { financeur: FINANCEURS[0], debut: todayISO(), repas: 'Non' };
@@ -2236,6 +2262,7 @@ function viewBrico() {
       <button class="tile" data-a="go" data-k="issues"><span class="ti-ic t-orange">${ico('tool')}</span>${open.length ? `<span class="badge">${open.length}</span>` : ''}<span class="ti-t">Réparations</span><span class="ti-s">${open.length ? open.length + ' en attente' : 'Rien à réparer'}</span></button>
       <button class="tile" data-a="go" data-k="securite"><span class="ti-ic t-red">${ico('shield')}</span>${secDueBrico().length ? `<span class="badge">${secDueBrico().length}</span>` : ''}<span class="ti-t">Sécurité</span><span class="ti-s">${secDueBrico().length ? secDueBrico().length + ' contrôle' + (secDueBrico().length > 1 ? 's' : '') + ' à faire' : 'Contrôles faits'}</span></button>
       <button class="tile" data-a="go" data-k="menage"><span class="ti-ic t-blue">${ico('menage')}</span><span class="ti-t">Ménage</span><span class="ti-s">Qui a nettoyé quoi</span></button>
+      <button class="tile" data-a="arrNew"><span class="ti-ic t-purple">${ico('plus')}</span><span class="ti-t">Nouveau client</span><span class="ti-s">Client de l’hôtel ou MNA</span></button>
       ${canReg('reg_pec') ? `<button class="tile" data-a="go" data-k="registre"><span class="ti-ic t-purple">${ico('book')}</span>${inboxTodo().length ? `<span class="badge">${inboxTodo().length}</span>` : ''}<span class="ti-t">Registre</span><span class="ti-s">${inboxTodo().length ? inboxTodo().length + ' PEC à traiter' : occCount(presentOcc())}</span></button>` : ''}
       ${vTile()}
       <button class="tile" data-a="convList"><span class="ti-ic t-green">${ico('chat')}</span>${un ? `<span class="badge">${un}</span>` : ''}<span class="ti-t">Messages</span><span class="ti-s">${un ? un + ' non lu' + (un > 1 ? 's' : '') : 'Tout est lu'}</span></button>
@@ -2497,6 +2524,7 @@ function viewCleanHome() {
     ${todo.length ? `<div class="col">${todo.map(card).join('')}</div>` : `<div class="card empty"><div class="e">${total ? '🎉' : '☕'}</div><h2>${total ? 'Tout est fait, bravo !' : 'Pas de chambre pour l’instant'}</h2><p class="muted">${total ? 'Le responsable va contrôler.' : 'Tu seras prévenue quand on te donne des chambres.'}</p></div>`}
     ${done.length ? `<h2>Terminées aujourd’hui</h2><div class="col">${done.map(card).join('')}</div>` : ''}
     ${holdBtn('boss', 'Garde appuyé pour parler au responsable', 'big soft')}
+    <button class="btn big" data-a="arrNew">🛎️ Nouveau client</button>
     <button class="btn big" data-a="report">🔧 Signaler un problème</button>
   </div>
   <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' nouveaux' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
@@ -2688,6 +2716,25 @@ const A = {
     if (await act(() => api('reg_occ_delete', { id: d.id, keep_id: keep, raison }), 'Fiche supprimée · visible dans le Journal')) { if (keep && occById(keep)) occSheet(keep); else closeSheet(); }
   },
   async occRestore(d) { await act(() => api('reg_occ_restore', { id: d.id }), 'Fiche rétablie'); },
+  arrNew() { arrTypeSheet(); },
+  arrPick(d) { S.arr.type = d.k; arrSheet(); },
+  async arrShot(d) {
+    const k = occKeep(); const f = await pickFile('image/*', null); if (!f) return;
+    toast('Envoi de la photo…', 8000);
+    try { const b = await shrink(f, null); S.arr[d.k] = await idUpload(b, 'jpg'); toast('Photo enregistrée ✓'); }
+    catch (e) { toast('La photo n’a pas pu partir. Vérifie la connexion et réessaie.'); return; }
+    arrSheet(); occRestore(k);
+  },
+  async arrSave() {
+    const v = (id) => ($(id) && $(id).value || '').trim(), A = S.arr, cl = A.type === 'client';
+    const body = { type: A.type, prenom: v('a-prenom'), nom: v('a-nom'), categorie: v('a-cat'), naissance: v('a-naissance'), telephone: v('a-tel'), hotel: v('a-hotel'), room_id: v('a-room'), entree: v('a-entree'), nuits: v('a-nuits'), nationalite: v('a-nat'), notes: v('a-notes'), piece_recto: A.piece_recto, piece_verso: A.piece_verso, passeport: !!A.passeport };
+    if (!body.nom && !body.prenom) { toast('Écris le nom.'); return; }
+    if (!body.room_id) { toast('Choisis la chambre.'); return; }
+    if (cl && (!body.telephone || !(+body.nuits > 0))) { toast('Téléphone et nombre de nuits sont obligatoires.'); return; }
+    if (cl && (!A.piece_recto || (!A.passeport && !A.piece_verso))) { toast('Prends en photo la pièce d’identité, recto et verso.'); return; }
+    if (!cl && !body.categorie) { toast('Choisis la catégorie (MNA, ASE…).'); return; }
+    if (await act(() => api('arrivee_new', body), 'Arrivée enregistrée ✓ Le responsable est prévenu.')) { S.arr = null; closeSheet(); }
+  },
   occPickType(d) { occSheet(null, { ...(S.occPreset || {}), type: d.k }); },
   async idShot(d) {
     const k = occKeep(); const f = await pickFile('image/*', null); if (!f) return;
@@ -3230,6 +3277,9 @@ const C = {
   sdHotel(el) { const f = S.sd; if (!f) return; f.hotel = el.value; if (f.check) { const n = el.value + '-' + f.check.split('-').slice(1).join('-'); f.check = secChecks().some((x) => x.id === n) ? n : ''; } sdRedraw(); },
   sdCheck(el) { if (!S.sd) return; S.sd.check = el.value; S.sd.guess = false; sdRedraw(); },
   assignTo(el) { S.assignTo = el.value; },
+  arrHotel(el) { S.arr.hotel = el.value; $('a-room').innerHTML = arrRooms(el.value, S.arr.type === 'client', ''); },
+  arrNuits() { const p = $('a-depart'); if (!p) return; const e = $('a-entree').value, n = +$('a-nuits').value; p.textContent = e && n > 0 ? 'Départ prévu le ' + fdate(addDaysISO(e, n)) : 'Le départ prévu se calcule avec le nombre de nuits.'; },
+  arrPass(el) { const k = occKeep(); S.arr.passeport = el.checked; arrSheet(); occRestore(k); },
   oHotelC(el) { $('o-room').innerHTML = freeRoomOpts(el.value, ''); },
   oNuits() { const e = $('o-entree').value, n = +$('o-nuits').value, p = $('o-depart'); if (p) p.textContent = e && n > 0 ? 'Départ prévu le ' + fdate(addDaysISO(e, n)) : 'Le départ prévu se calcule avec le nombre de nuits.'; },
   oNat(el) { const p = $('o-police'); if (p) { p.hidden = !el.value.trim() || /^fran/i.test(el.value.trim()); if (!p.hidden) setTimeout(initSig, 0); } },

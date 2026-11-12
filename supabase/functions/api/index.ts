@@ -287,6 +287,8 @@ async function actState(me: any, device: any) {
   if (mgr && me.only_hotel) rq = rq.eq("hotel", me.only_hotel);
   const { data: rooms } = await rq;
   const out: any = { me, cfg, rooms: rooms || [], vapid: (await vapid()).pub, day: parisDay(), device: device.id };
+  // Chambres occupées (sans les noms) : pour la tuile « Nouveau client » de l'équipe.
+  { const { data: oc } = await sb.from("occupants").select("room_id").eq("statut", "present").not("room_id", "is", null); out.occRooms = [...new Set((oc || []).map((x: any) => x.room_id))]; }
   const paths: string[] = [];
   (rooms || []).forEach((r: any) => {
     if (r.ref_photo) paths.push(r.ref_photo);
@@ -558,10 +560,41 @@ async function regAction(me: any, a: string, body: any) {
   }
   throw new E("unknown_action");
 }
+// Tuile « Nouveau client » des femmes de ménage et de l'intendant : création seulement, jamais de modification.
+// Client hôtel : téléphone, chambre libre, nuits et pièce d'identité recto verso obligatoires. Jeune du Département : pas de pièce.
+const CATS_DEP = ["MNA", "Mineur ASE", "Jeune majeur", "Adulte (PARI)", "Autre"];
+async function arriveeNew(me: any, body: any) {
+  const now = new Date().toISOString();
+  const type = TYPE_L[body.type] ? body.type : null; if (!type) throw new E("type");
+  const hotel = HOTELS.includes(body.hotel) ? body.hotel : null; if (!hotel) throw new E("bad");
+  const room_id = await roomCheck(body.room_id, hotel); if (!room_id) throw new E("client_champs");
+  const row: any = { type, hotel, room_id, formule: "hebergement", nom: S_(body.nom, 80), prenom: S_(body.prenom, 80), telephone: S_(body.telephone, 25), entree: D_(body.entree) || now.slice(0, 10), notes: S_(body.notes, 1000) || "", statut: "present", created_by: me.id, updated_by: me.id };
+  if (!row.nom && !row.prenom) throw new E("bad");
+  if (type === "client") {
+    const n = Number(body.nuits); row.nuits = Number.isInteger(n) && n > 0 && n < 400 ? n : null;
+    row.categorie = "Conventionnel"; row.nationalite = S_(body.nationalite, 80);
+    if (!row.telephone || !row.nuits) throw new E("client_champs");
+    row.piece_recto = idPath(body.piece_recto); row.piece_verso = idPath(body.piece_verso);
+    if (!row.piece_recto || (!row.piece_verso && !body.passeport)) throw new E("piece");
+    row.piece_le = now;
+    row.depart_prevu = new Date(Date.UTC(+row.entree.slice(0, 4), +row.entree.slice(5, 7) - 1, +row.entree.slice(8, 10) + row.nuits)).toISOString().slice(0, 10);
+    const { data: busy } = await sb.from("occupants").select("id").eq("room_id", room_id).eq("statut", "present").limit(1);
+    if (busy && busy.length) throw new E("chambre_prise");
+  } else {
+    row.categorie = CATS_DEP.includes(body.categorie) ? body.categorie : null; if (!row.categorie) throw new E("categorie");
+    row.naissance = D_(body.naissance);
+  }
+  const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
+  const place = await placeLabel(room_id, hotel, "hebergement");
+  await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${place}`, `Saisie par ${String(me.label).split(" ")[0]} (tuile Nouveau client)`, [TYPE_L[type], type === "client" ? `${row.nuits} nuit${row.nuits > 1 ? "s" : ""}, départ prévu le ${frD(row.depart_prevu)} · pièce d’identité photographiée` : row.categorie].join(" · "));
+  await pushTo((await managerIds(hotel)).filter((x) => x !== me.id), { title: type === "client" ? "🛎️ Nouveau client hôtel" : "🏛️ Nouvelle arrivée (Département)", body: `${fullName(row)} · ${place} · saisi par ${String(me.label).split(" ")[0]}${type === "departement" ? " · prise en charge à rattacher" : ""}`, tag: "arrivee" });
+  return { ok: true, id: data.id };
+}
 // Pièce d'identité des clients hôtel : stockage privé « identite », visible seulement de ceux qui gèrent tout le registre.
 // Elle est gardée jusqu'à ce qu'un gérant l'efface lui-même (choix du propriétaire, 12/11/2026).
 async function idAction(me: any, a: string, body: any) {
-  if (!can(me, "reg_full")) throw new E("forbidden", 403);
+  // Déposer une photo : toute l'équipe (tuile « Nouveau client ») ; la voir ou l'effacer : seulement « tout le registre ».
+  if (a !== "reg_id_upload" && !can(me, "reg_full")) throw new E("forbidden", 403);
   if (a === "reg_id_upload") {
     const ext = body.ext === "png" ? "png" : "jpg", path = `${crypto.randomUUID()}.${ext}`;
     const { data, error } = await sb.storage.from("identite").createSignedUploadUrl(path); if (error) throw new E("upload");
@@ -1421,6 +1454,9 @@ async function handle(req: Request) {
     }
 
     // --- registre ---
+    case "arrivee_new":
+      if (!isMgr(me) && !isBrico(me) && me.role !== "menage") throw new E("forbidden", 403);
+      return await arriveeNew(me, body);
     case "reg_id_upload": case "reg_id_urls": case "reg_id_delete":
       return await idAction(me, a, body);
     case "reg_occ_save": case "reg_occ_exit": case "reg_occ_return": case "reg_occ_delete": case "reg_occ_restore": case "reg_pec_save": case "reg_pec_delete": case "reg_inbox_set": case "reg_inbox_apply":
