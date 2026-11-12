@@ -38,8 +38,14 @@ async function signed(paths: string[]) {
 }
 // Pièce d'essai : hors hôtel, pour essayer le scan et le plan sans rien compter dans les travaux de l'Archange.
 const TEST_ID = /^test__[a-z0-9]{4,24}$/;
+// Pièce ajoutée à l'Archange depuis le mode travaux (réception, local technique, chambre en plus) : n'existe pas dans le ménage.
+const EXTRA_ID = /^arc__x_[a-z0-9]{4,24}$/;
 async function roomOk(id: any, allowTest = false) {
   if (typeof id !== "string" || !id) return null;
+  if (EXTRA_ID.test(id)) {
+    const { data } = await db.from("tr_rooms").select("room_id").eq("room_id", id).maybeSingle();
+    return { id, hotel: "arc", fresh: !data };
+  }
   if (TEST_ID.test(id)) {
     if (!allowTest) return null;
     const { data } = await db.from("tr_rooms").select("room_id,owner_id,shared").eq("room_id", id).maybeSingle();
@@ -52,7 +58,7 @@ async function roomOk(id: any, allowTest = false) {
 // Une pièce hors hôtel : son auteur la voit, et ceux avec qui il l'a partagée. Les anciens essais (sans auteur) restent visibles de tous.
 const seesTest = (me: any, r: any) => !r.owner_id || r.owner_id === me.id || (r.shared || []).includes(me.id);
 // Qui écrit dans la fiche d'une pièce : pour l'Archange et les anciens essais, le propriétaire et l'intendant ; pour un projet personnel, son auteur.
-const writesRoom = (me: any, room: any) => room.hotel !== "test" || !room.owner_id ? (room.fresh ? true : trCanEdit(me)) : room.owner_id === me.id;
+const writesRoom = (me: any, room: any) => room.hotel !== "test" ? trCanEdit(me) : !room.owner_id ? (room.fresh ? true : trCanEdit(me)) : room.owner_id === me.id;
 async function seesRoom(me: any, id: any) {
   const room = await roomOk(id, true); if (!room) return null;
   if (room.hotel === "test" && (room.fresh || !seesTest(me, room))) return null;
@@ -185,6 +191,20 @@ export async function travauxAction(me: any, a: string, body: any) {
   }
 
   needEdit(me); // tout ce qui suit touche l'inventaire et la liste de l'Archange
+
+  // Supprimer une pièce ajoutée depuis le mode travaux (jamais une chambre du ménage : celles-là, on les retire seulement des travaux).
+  if (a === "tr_space_del") {
+    const id = String(body.room_id || ""); if (!EXTRA_ID.test(id)) throw new TE("bad");
+    const { data: ph } = await db.from("tr_photos").select("path").eq("room_id", id);
+    await db.from("tr_photos").delete().eq("room_id", id);
+    await db.from("tr_plans").delete().eq("room_id", id);
+    await db.from("tr_todo").update({ room_id: null }).eq("room_id", id);
+    await db.from("tr_items").update({ room_id: null }).eq("room_id", id);
+    await db.from("tr_rooms").delete().eq("room_id", id);
+    const paths = (ph || []).map((p: any) => p.path);
+    if (paths.length) await db.storage.from("media").remove(paths).catch(() => {});
+    return { ok: true };
+  }
 
   if (a === "tr_item_save") {
     const row: Record<string, any> = {

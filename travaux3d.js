@@ -850,7 +850,7 @@ Object.assign(A, {
       <div class="card"><h3>📏 ${trM(sc.W)} × ${trM(sc.D)} · hauteur ${trM(sc.H)}</h3><p class="muted">${sc.items.length} meuble${sc.items.length > 1 ? 's' : ''} reconnu${sc.items.length > 1 ? 's' : ''}${sc.sdb ? ', salle de bain repérée' : ''}.</p></div>
       <h2 class="sec">Où ranger ce scan ?</h2>
       <div class="group"><button class="prow" data-a="trScanTo" data-id="new"><span class="pr-t"><b>＋ Nouvelle pièce d’essai</b><span class="muted sm">Ne compte pas dans les travaux de l’Archange</span></span><span class="chev">›</span></button></div>
-      ${S.tr.can_edit ? `<h2 class="sec">Chambres de l’Archange</h2><div class="group">${trRooms().map(row).join('')}</div>` : ''}
+      ${S.tr.can_edit ? `<h2 class="sec">Chambres de l’Archange</h2><div class="group">${trRooms().map(row).join('')}</div><h2 class="sec">Parties communes et locaux</h2><div class="group">${trCommuns().map(row).join('')}</div>` : ''}
       ${trTests().filter((r) => trMine(r.id)).length ? `<h2 class="sec">Mes projets</h2><div class="group">${trTests().filter((r) => trMine(r.id)).map(row).join('')}</div>` : ''}`);
   },
   trScanTo(d) {

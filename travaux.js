@@ -43,8 +43,15 @@ const trCan = () => { if (!S.tr || !S.me || S.me.readonly) return false; const r
 const trPrenom = (label) => String(label || '').trim().split(/\s+/)[0] || 'quelqu’un';
 const trDe = (label) => { const n = trPrenom(label); return (/^[aeiouyhàâéèêîôûAEIOUYHÀÂÉÈÊÎÔÛ]/.test(n) ? 'd’' : 'de ') + n; };
 const trWho = (id) => { const u = ((S.tr && S.tr.people) || []).find((x) => x.id === id); return u ? u.label : ''; };
-const trRooms = () => roomsOf(TR_HOTEL);
-const trCommuns = () => communsOf(TR_HOTEL);
+// Pièces de l'Archange dans le mode travaux : les chambres et communs du ménage, plus les pièces ajoutées ici (réception, locaux…),
+// moins celles qu'on a retirées des travaux (elles restent dans le ménage).
+const TR_GENRES = [['chambre', 'Chambre'], ['commun', 'Partie commune'], ['technique', 'Local technique']];
+const trIsExtra = (id) => /^arc__x_/.test(String(id || ''));
+const trMasque = (id) => !!(S.tr && S.tr.rooms[id] && (S.tr.rooms[id].data || {}).masque);
+const trExtras = () => (S.tr ? Object.keys(S.tr.rooms).filter(trIsExtra).map((id) => trRoomGet(id)).filter(Boolean) : []);
+const trRooms = () => [...roomsOf(TR_HOTEL), ...trExtras().filter((r) => r.kind !== 'commun')].filter((r) => !trMasque(r.id));
+const trCommuns = () => [...trExtras().filter((r) => r.kind === 'commun'), ...communsOf(TR_HOTEL)].filter((r) => !trMasque(r.id));
+const trRetirees = () => [...roomsOf(TR_HOTEL), ...communsOf(TR_HOTEL)].filter((r) => trMasque(r.id));
 const trData = (rid) => (S.tr && S.tr.rooms[rid] && S.tr.rooms[rid].data) || {};
 const trPhotosOf = (rid) => S.tr.photos.filter((p) => p.room_id === rid);
 const trItemPhotos = (id) => S.tr.photos.filter((p) => p.item_id === id);
@@ -54,8 +61,8 @@ const trFr = (n, d) => Number(n).toLocaleString('fr-FR', { maximumFractionDigits
 const trEur = (n) => Number(n).toLocaleString('fr-FR', { minimumFractionDigits: Number.isInteger(Number(n)) ? 0 : 2, maximumFractionDigits: 2 }) + ' €';
 // Pièces d'essai (hors hôtel) : elles vivent seulement dans le mode travaux et ne comptent dans aucun total de l'Archange.
 const trIsTest = (id) => /^test__/.test(String(id || ''));
-const trRoomGet = (id) => S.rooms[id] || (trIsTest(id) && S.tr && S.tr.rooms[id] ? { id, hotel: 'test', kind: 'chambre', test: true, num: [(S.tr.rooms[id].data || {}).dossier, (S.tr.rooms[id].data || {}).nom || 'Pièce'].filter(Boolean).join(' · '), order: 9999 } : undefined);
-const trPlace = (r) => r.test ? r.num : placeName(r);
+const trRoomGet = (id) => S.rooms[id] || (trIsExtra(id) && S.tr && S.tr.rooms[id] ? (() => { const d = S.tr.rooms[id].data || {}; return { id, hotel: 'arc', kind: d.genre === 'chambre' ? 'chambre' : 'commun', extra: true, genre: d.genre || 'commun', num: d.nom || 'Pièce', order: 9000 + (d.ordre || 0) }; })() : undefined) || (trIsTest(id) && S.tr && S.tr.rooms[id] ? { id, hotel: 'test', kind: 'chambre', test: true, num: [(S.tr.rooms[id].data || {}).dossier, (S.tr.rooms[id].data || {}).nom || 'Pièce'].filter(Boolean).join(' · '), order: 9999 } : undefined);
+const trPlace = (r) => r.test || r.extra ? r.num : placeName(r);
 const trShort = (r) => r.test ? r.num : placeShort(r);
 const trTests = () => Object.keys(S.tr.rooms).filter(trIsTest).map(trRoomGet).filter(Boolean).sort((a, b) => String(a.num).localeCompare(String(b.num), 'fr'));
 const trRoomName = (rid) => { const r = trRoomGet(rid); return r ? trPlace(r) : 'Tout l’hôtel'; };
@@ -196,7 +203,9 @@ function trViewRooms() {
       <button class="btn big pri" data-a="trScanDrop">Choisir le fichier du scan</button></div>` : ''}
     ${(() => { if (typeof trPmr !== 'function') return ''; const mes = rooms.filter((r) => trMeasured(trData(r.id))), ok = mes.filter((r) => trPmr(r.id).ok); return mes.length ? `<div class="card"><h3>♿ Chambres qui pourraient être adaptées</h3><p>${ok.length ? ok.map((r) => esc(trPlace(r))).join(', ') : 'Aucune parmi les chambres mesurées pour l’instant.'}</p><p class="muted sm">Calcul sur ${mes.length} chambre${mes.length > 1 ? 's' : ''} mesurée${mes.length > 1 ? 's' : ''} : un lit de 140, 90 cm libres le long du lit et un rond de 1,50 m pour tourner. Reste à vérifier sur place : accès sans marche ou par ascenseur, porte de 83 cm de passage, salle d’eau adaptée.</p></div>` : ''; })()}
     <h2 class="sec">Chambres</h2><div class="group">${rooms.map(trRoomRow).join('')}</div>
-    ${communs.length ? `<h2 class="sec">Parties communes</h2><div class="group">${communs.map(trRoomRow).join('')}</div>` : ''}
+    ${communs.length ? `<h2 class="sec">Parties communes et locaux</h2><div class="group">${communs.map(trRoomRow).join('')}</div>` : ''}
+    ${trCan() ? '<button class="btn" data-a="trSpaceNew">＋ Ajouter une pièce à l’Archange</button>' : ''}
+    ${trRetirees().length ? `<h2 class="sec">Retirées des travaux</h2><p class="muted sm">Elles restent dans l’appli du ménage. Touche pour les remettre.</p><div class="group">${trRetirees().map((r) => `<button class="prow" ${trCan() ? '' : 'disabled'} data-a="trUnhide" data-id="${esc(r.id)}"><span class="pr-t"><b>${esc(trPlace(r))}</b></span><span class="pill p-plain">Remettre</span></button>`).join('')}</div>` : ''}
     <h2 class="sec">Mes projets</h2><p class="muted">Des pièces hors de l’hôtel (un appartement, un local…), rangées dans des projets que tu nommes. Toi seul les vois, sauf si tu les partages. Elles ne comptent pas dans les travaux de l’Archange.</p>
     ${trTests().length ? `<div class="group">${trTests().map(trRoomRow).join('')}</div>` : ''}
     ${trPlanCan() ? '<button class="btn" data-a="trTestNew">＋ Nouvelle pièce dans un projet</button>' : ''}`;
@@ -284,6 +293,8 @@ function trRoomSheet(rid) {
     ${test ? `${row && row.owner_id && !trMine(rid) ? `<p class="banner sm c-slate">Projet partagé par ${esc(trPrenom(trWho(row.owner_id)))}. Tu peux le regarder et proposer ta version du plan.</p>` : ''}${trMine(rid) ? `<button class="btn" data-a="trShare" data-id="${esc(rid)}">👥 Partager ce projet${(row.shared || []).length ? ` · ${(row.shared || []).length}` : ''}</button>` : ''}${trCan() ? `<button class="btn ghost bad-t" data-a="trTestDel" data-id="${esc(rid)}">Supprimer cette pièce</button>` : ''}` : `<div class="card"><div class="row between"><h3>À faire et à acheter${todo.length ? ` · ${todo.length}` : ''}</h3>${trCan() ? `<button class="btn small soft" data-a="trTodoNew" data-rid="${esc(rid)}">＋ Ajouter</button>` : ''}</div>
       ${todo.length ? `<div class="group flat">${todo.map(trTodoRow).join('')}</div>` : '<p class="muted">Rien pour l’instant.</p>'}</div>`}
     ${props.length ? `<div class="card"><h3>💡 Idées pour ${commun ? 'cet endroit' : 'cette chambre'}</h3>${props.map(trPropCard).join('')}</div>` : ''}
+    ${!test && trCan() ? (r.extra ? `<button class="btn ghost bad-t" data-a="trSpaceDel" data-id="${esc(rid)}">Supprimer cette pièce</button>` : `<button class="btn ghost" data-a="trHide" data-id="${esc(rid)}">Retirer des travaux</button><p class="muted sm">Elle disparaît du mode travaux seulement : le ménage continue de la voir. Tu pourras la remettre.</p>`) : ''}
+    ${!test && r.extra && trCan() ? `<button class="btn ghost" data-a="trSpaceRename" data-id="${esc(rid)}">Renommer</button>` : ''}
     ${row && row.updated_label ? `<p class="muted sm">Dernière modification : ${esc(row.updated_label)}, ${when(row.updated_at)}</p>` : ''}`);
 }
 
@@ -431,6 +442,32 @@ Object.assign(A, {
   },
   trIkCat(d) { S.trCatK = d.k; render(); },
   trIkList(d) { const c = (S.trCat || []).find((x) => x.ref === d.ref); if (!c) return; trTodoSheet(null, { kind: 'achat', label: `${c.name} · ${c.descr || ''}`.slice(0, 200), ref: c.ref, url: trIkUrl(c), prix: c.price, magasin: 'IKEA', niveau: 'confort' }); },
+  trSpaceNew() {
+    if (!trCan()) return;
+    openSheet('trspace', `<div class="row between"><h2>Ajouter une pièce</h2><button class="btn small" data-a="close">Annuler</button></div>
+      <p class="muted">Elle compte dans les travaux de l’Archange. Elle n’apparaît pas dans l’appli du ménage.</p>
+      <div class="card form"><label>Nom<input id="tr-sp-nom" maxlength="40" placeholder="Ex. Réserve, Chambre 27, Buanderie" autocomplete="off"></label>
+      <label>Type<select id="tr-sp-genre">${TR_GENRES.map(([k, l]) => opt(k, 'commun', l)).join('')}</select></label>
+      <button class="btn big pri" data-a="trSpaceAdd">Ajouter</button></div>`);
+    setTimeout(() => { const el = $('tr-sp-nom'); if (el) el.focus(); }, 80);
+  },
+  trSpaceAdd() {
+    if (!trCan()) return; const nom = ($('tr-sp-nom').value || '').trim().slice(0, 40), genre = $('tr-sp-genre').value;
+    if (!nom) { toast('Donne un nom à la pièce.'); return; }
+    const id = 'arc__x_' + Math.random().toString(36).slice(2, 10), ordre = 10 + trExtras().length;
+    S.tr.rooms[id] = { room_id: id, hotel: 'arc', data: {} }; S.trCtx = id;
+    trPatch(id, { nom: genre === 'chambre' && /^\d+[a-z]?$/i.test(nom) ? 'Chambre ' + nom : nom, genre, ordre }); render(); trRoomSheet(id);
+  },
+  trSpaceRename(d) { const r = trRoomGet(d.id); if (!r || !r.extra || !trCan()) return; const nom = (prompt('Nouveau nom', r.num) || '').trim().slice(0, 40); if (!nom) return; trPatch(d.id, { nom }); render(); trRoomSheet(d.id); },
+  async trSpaceDel(d) {
+    const r = trRoomGet(d.id); if (!r || !r.extra || !trCan() || !confirm(`Supprimer « ${r.num} », ses mesures, son plan et ses photos ?`)) return;
+    for (let i = trPend.length - 1; i >= 0; i--) if (trPend[i].rid === d.id) trPend.splice(i, 1);
+    LS.set('mh-trq', trPend);
+    try { await api('tr_space_del', { room_id: d.id }); } catch (e) { toast(errMsg(e)); return; }
+    delete S.tr.rooms[d.id]; S.tr.photos = S.tr.photos.filter((p) => p.room_id !== d.id); S.tr.plans = (S.tr.plans || []).filter((p) => p.room_id !== d.id); closeSheet(); render();
+  },
+  trHide(d) { const r = trRoomGet(d.id); if (!r || r.extra || !trCan() || !confirm(`Retirer « ${trPlace(r)} » des travaux ? Le ménage continue de la voir.`)) return; trPatch(d.id, { masque: true }); closeSheet(); render(); },
+  trUnhide(d) { if (!trCan()) return; trPatch(d.id, { masque: null }); render(); },
   trTestNew() {
     if (!trPlanCan()) return;
     const mine = [...new Set(Object.values(S.tr.rooms).filter((r) => trIsTest(r.room_id) && trMine(r.room_id)).map((r) => (r.data || {}).dossier).filter(Boolean))];
