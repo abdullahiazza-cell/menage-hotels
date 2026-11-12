@@ -587,7 +587,7 @@ async function arriveeNew(me: any, body: any) {
   const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
   const place = await placeLabel(room_id, hotel, "hebergement");
   await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${place}`, `Saisie par ${String(me.label).split(" ")[0]} (tuile Nouveau client)`, [TYPE_L[type], type === "client" ? `${row.nuits} nuit${row.nuits > 1 ? "s" : ""}, départ prévu le ${frD(row.depart_prevu)} · pièce d’identité photographiée` : row.categorie].join(" · "));
-  await pushTo((await managerIds(hotel)).filter((x) => x !== me.id), { title: type === "client" ? "🛎️ Nouveau client hôtel" : "🏛️ Nouvelle arrivée (Département)", body: `${fullName(row)} · ${place} · saisi par ${String(me.label).split(" ")[0]}${type === "departement" ? " · prise en charge à rattacher" : ""}`, tag: "arrivee" });
+  await pushTo((await managerIds(hotel)).filter((x: string) => x !== me.id), { title: type === "client" ? "🛎️ Nouveau client hôtel" : "🏛️ Nouvelle arrivée (Département)", body: `${fullName(row)} · ${place} · saisi par ${String(me.label).split(" ")[0]}${type === "departement" ? " · prise en charge à rattacher" : ""}`, tag: "arrivee" });
   return { ok: true, id: data.id };
 }
 // Pièce d'identité des clients hôtel : stockage privé « identite », visible seulement de ceux qui gèrent tout le registre.
