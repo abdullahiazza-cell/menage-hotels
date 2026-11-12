@@ -87,6 +87,7 @@ export function trRendu(o) {
     if (mats.has(key)) return mats.get(key);
     let m;
     if (b.k === 6) return b.lamp || b.glow ? lampMat : skyMat;
+    else if (b.k === 7) m = new THREE.MeshStandardMaterial({ color: col(b.c), transparent: true, opacity: 0.28, roughness: 0.05, metalness: 0, depthWrite: false }); // paroi de douche
     else if (b.k === 3) m = new THREE.MeshStandardMaterial({ color: col(b.c), map: T.wood, roughness: 0.52, metalness: 0 });
     else if (b.k === 4) m = new THREE.MeshStandardMaterial({ color: col(b.c), map: T.weave, roughness: 0.97, metalness: 0 });
     else if (b.k === 5) m = new THREE.MeshStandardMaterial({ color: col(b.c), roughness: 0.94, metalness: 0 });
@@ -195,6 +196,8 @@ export function trRendu(o) {
   const sdbMat = new THREE.MeshStandardMaterial({ color: col([0.72, 0.82, 0.9]), transparent: true, opacity: 0.34, roughness: 0.4, depthWrite: false }); trash.push(sdbMat);
   const sdbGlass = sc.glass.map((b) => { const m = mesh(b, { mat: sdbMat, sharp: true }); scene.add(m); noAO.push(m); return m; });
   let sdbWall = null; if (sc.sdbWall) { sdbWall = mesh(sc.sdbWall, { sharp: true }); sdbWall.visible = false; scene.add(sdbWall); }
+  // Cloisons de la salle de bain : basses en vue d'ensemble, entières quand on est dans la pièce.
+  const sdbLow = (sc.sdbLow || []).map((b) => { const m = mesh(b, { sharp: true, cast: true }); scene.add(m); return m; }), sdbHigh = (sc.sdbHigh || []).map((b) => { const m = mesh(b, { sharp: true, cast: true }); m.visible = false; scene.add(m); return m; });
 
   /* ----- lumière du jour : le soleil entre par la fenêtre et dessine sa tache sur le sol ----- */
   const sun = new THREE.DirectionalLight(0xfff0dc, 2.0);
@@ -254,7 +257,7 @@ export function trRendu(o) {
     camera.fov = fov; camera.aspect = w / h; camera.position.set(eye[0], eye[1], eye[2]); camera.up.set(0, 1, 0); camera.lookAt(tg[0], tg[1], tg[2]); camera.updateProjectionMatrix();
     // Vue d'ensemble : les murs entre l'œil et la pièce s'effacent. De l'intérieur : tout est là, plafond compris.
     sc.walls.forEach((wl, i) => { wallGroups[i].visible = inside || !((eye[0] - wl.c[0]) * wl.n[0] + (eye[2] - wl.c[1]) * wl.n[1] > 0); });
-    ceil.visible = inside; plaf.visible = inside && L.plaf; ceilLights.forEach((m) => { m.visible = inside; }); sdbGlass.forEach((m) => { m.visible = !inside; }); if (sdbWall) sdbWall.visible = inside;
+    ceil.visible = inside; plaf.visible = inside && L.plaf; ceilLights.forEach((m) => { m.visible = inside; }); sdbGlass.forEach((m) => { m.visible = !inside; }); if (sdbWall) sdbWall.visible = inside; sdbLow.forEach((m) => { m.visible = !inside; }); sdbHigh.forEach((m) => { m.visible = inside; });
     { const id = o.sel ? o.sel() : null, it = id ? (sc.models || []).find((m) => m.id === id) : null;
       if (it && !it.tv) { const [hx, hz] = half(it); selMesh.visible = true; selMesh.scale.set(hx * 2 + 0.14, hz * 2 + 0.14, 1); selMesh.position.set(it.cx, 0.016, it.cz); } else selMesh.visible = false; }
     if (fx) {
@@ -292,7 +295,7 @@ export function trRendu(o) {
   const down = (e) => {
     pts.set(e.pointerId, [e.clientX, e.clientY]); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} pinch = 0; e.preventDefault();
     grab = null; tap = pts.size === 1 ? [e.clientX, e.clientY, false] : null;
-    if (pts.size === 1 && o.onSelect) { const mi = pick(e); if (mi >= 0) { const it = sc.models[mi], f = onFloor(e); grab = { it, f, ox: it.cx, oz: it.cz, moved: false }; } }
+    if (pts.size === 1 && o.onSelect && (!o.move || o.move())) { const mi = pick(e); if (mi >= 0) { const it = sc.models[mi], f = onFloor(e); grab = { it, f, ox: it.cx, oz: it.cz, moved: false }; } }
   };
   const move = (e) => {
     const p = pts.get(e.pointerId); if (!p) return; pts.set(e.pointerId, [e.clientX, e.clientY]);
@@ -301,10 +304,11 @@ export function trRendu(o) {
     if (grab && pts.size === 1) {
       if (!tap || !tap[2] || !o.edit || grab.it.tv || !grab.f) return;
       const f = onFloor(e); if (!f) return; grab.moved = true;
-      const it = grab.it, [hx, hz] = half(it), lx = sc.W / 2 - hx, lz = sc.D / 2 - hz;
+      const it = grab.it, [hx, hz] = half(it), lim = it.lim || [-sc.W / 2, -sc.D / 2, sc.W / 2, sc.D / 2]; // un équipement de salle de bain reste dans la salle de bain
+      const ax = lim[0] + hx, bx = lim[2] - hx, az = lim[1] + hz, bz = lim[3] - hz;
       let nx = Math.round((grab.ox + f[0] - grab.f[0]) * 100) / 100, nz = Math.round((grab.oz + f[1] - grab.f[1]) * 100) / 100;
-      nx = lx <= 0 ? 0 : Math.min(lx, Math.max(-lx, nx)); nz = lz <= 0 ? 0 : Math.min(lz, Math.max(-lz, nz));
-      if (lx > 0) { if (lx - nx < 0.08) nx = lx; if (nx + lx < 0.08) nx = -lx; } if (lz > 0) { if (lz - nz < 0.08) nz = lz; if (nz + lz < 0.08) nz = -lz; }
+      nx = ax > bx ? (ax + bx) / 2 : Math.min(bx, Math.max(ax, nx)); nz = az > bz ? (az + bz) / 2 : Math.min(bz, Math.max(az, nz));
+      if (ax <= bx) { if (bx - nx < 0.08) nx = bx; if (nx - ax < 0.08) nx = ax; } if (az <= bz) { if (bz - nz < 0.08) nz = bz; if (nz - az < 0.08) nz = az; }
       const mx = nx - it.cx, mz = nz - it.cz; if (mx || mz) { (byItem[it.mi] || []).forEach((m) => { m.position.x += mx; m.position.z += mz; }); it.cx = nx; it.cz = nz; }
       ask(); return;
     }
@@ -317,7 +321,7 @@ export function trRendu(o) {
   const up = (e) => {
     pts.delete(e.pointerId); pinch = 0;
     if (grab && grab.moved && o.onMove) o.onMove(grab.it.id, Math.round((grab.it.cx + sc.W / 2) * 100), Math.round((grab.it.cz + sc.D / 2) * 100));
-    else if (tap && !tap[2] && o.onSelect && e.type === 'pointerup') o.onSelect(grab ? grab.it.id : null);
+    else if (tap && !tap[2] && o.onSelect && e.type === 'pointerup' && (!o.move || o.move())) o.onSelect(grab ? grab.it.id : null);
     grab = null; tap = null; ask();
   };
   const wheel = (e) => { if (cam.mode !== 'porte') cam.dist = Math.min(30, Math.max(1.5, cam.dist * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); ask(); };
