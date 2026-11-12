@@ -141,6 +141,8 @@ const trItName = (it) => it.n || TR_FURN[it.t].l;
 const trBedFoot = (it, deep) => { const m = trDim(it); return trLocal(it, 0, m.d / 2 + deep / 2, m.w, deep); };
 const trBedSide = (it, sign, wide) => { const m = trDim(it); return trLocal(it, sign * (m.w / 2 + wide / 2), m.d / 2 - 55, wide, 110); };
 
+// La zone devant la fenêtre, où l'on ne pose rien.
+const trWinZone = (p, W, D, winW) => trOpening(p.win, (winW || 120) + 40, W, D, 70);
 /* ---------- déplacer une porte, et adapter l'aménagement autour ---------- */
 // kind 'room' : la porte de la pièce va sur le mur le plus proche du point (x, y) ; kind 'sdb' : celle de la salle de bain, sur la cloison la plus proche.
 function trDoorAt(p, roomId, kind, x, y) {
@@ -162,14 +164,25 @@ function trDoorAdapt(p, roomId) {
     const r = trSdbAuto(roomId, { ...p, items: [] }, style, { vasque: san.some((i) => i.n === 'Meuble vasque') });
     if (r.items.length) { p.items = [...p.items.filter((i) => !trIsSan(i)), ...r.items]; moved.push('salle de bain réaménagée'); if (r.note) moved.push(r.note.toLowerCase()); }
   }
-  const dz = trOpening(p.door, trDW(p), W, D, 80), winW = trNum(d.fen_w) || 120;
-  p.items.filter((i) => i.t !== 'tv' && !trIsSan(i) && trHit(trRect(i), dz)).forEach((it) => {
-    const obs = [dz, ...(s ? [s] : []), ...p.items.filter((o) => o !== it && o.t !== 'tv').map(trRect)];
+  const dz = trOpening(p.door, trDW(p), W, D, 80), winW = trNum(d.fen_w) || 120, wz = trWinZone(p, W, D, winW);
+  const gene = p.items.filter((i) => i.t !== 'tv' && !trIsSan(i) && (trHit(trRect(i), dz) || trHit(trRect(i), wz)));
+  // Un lit gêne : on refait la disposition de la chambre (mêmes lits), la salle de bain ne bouge pas.
+  if (gene.some(trIsBed)) {
+    const nv = TR_NIVEAUX.find((x) => x.k === p.niv), beds = p.items.filter(trIsBed).map((i) => i.t), big = p.items.some((i) => i.t === 'lit_d' && trNum(i.w) >= 160);
+    beds.sort((x, y) => (y === 'lit_d') - (x === 'lit_d'));
+    for (const b of big ? [true, false] : [false]) for (let alt = 0; alt < 4; alt++) {
+      const a = trAuto(roomId, beds, p, { lvl: nv ? nv.lvl : 1, big: b, alt });
+      if (a.bedsOk) { p.items = [...a.p.items, ...p.items.filter(trIsSan)]; moved.push(big && !b ? 'chambre réaménagée (lit double ramené à 140 pour que tout tienne)' : 'chambre réaménagée autour'); return moved; }
+    }
+  }
+  gene.forEach((it) => {
+    const obs = [dz, wz, ...(s ? [s] : []), ...p.items.filter((o) => o !== it && o.t !== 'tv').map(trRect)];
     let best = null;
     for (const r of [it.r || 0, ((it.r || 0) + 90) % 360, ((it.r || 0) + 180) % 360, ((it.r || 0) + 270) % 360]) {
       const q = { ...it, r }, rc0 = trRect({ ...q, x: 0, y: 0 }), hw = (rc0.x1 - rc0.x0) / 2, hh = (rc0.y1 - rc0.y0) / 2;
       for (let x = hw; x <= W - hw + 0.1; x += 5) for (let y = hh; y <= D - hh + 0.1; y += 5) {
         const rr = { x0: x - hw, y0: y - hh, x1: x + hw, y1: y + hh }; if (!trFree(rr, obs, W, D)) continue;
+        if (trIsBed(it)) { const nb = { ...q, x, y }, ob2 = obs.filter((o) => o !== wz); if (![1, -1].some((sg) => trFree(trBedSide(nb, sg, 50), ob2, W, D)) && !trFree(trBedFoot(nb, 55), ob2, W, D)) continue; }
         const wallTouch = (x - hw < 1 || W - x - hw < 1 || y - hh < 1 || D - y - hh < 1) ? 0 : 60, dd = Math.hypot(x - it.x, y - it.y) + wallTouch + (r !== (it.r || 0) ? 40 : 0);
         if (!best || dd < best.dd) best = { dd, x, y, r };
       }
@@ -181,7 +194,7 @@ function trDoorAdapt(p, roomId) {
 /* ---------- vérification d'une disposition ---------- */
 function trPlanCheck(roomId, p) {
   const d = trData(roomId), { W, D } = trWDH(d), bad = new Set(), lines = [];
-  const sdb = trSdbRect(d, p, W, D), doorZ = trOpening(p.door, trDW(p), W, D, 80);
+  const sdb = trSdbRect(d, p, W, D), doorZ = trOpening(p.door, trDW(p), W, D, 80), winZ = trWinZone(p, W, D, trNum(d.fen_w));
   const solid = p.items.filter((i) => i.t !== 'tv'), rc = new Map(solid.map((i) => [i.id, trRect(i)]));
   solid.forEach((i) => {
     const r = rc.get(i.id);
@@ -189,7 +202,9 @@ function trPlanCheck(roomId, p) {
     if (trIsSan(i)) { if (sdb && !(r.x0 >= sdb.x0 - 1 && r.y0 >= sdb.y0 - 1 && r.x1 <= sdb.x1 + 1 && r.y1 <= sdb.y1 + 1)) { bad.add(i.id); lines.push(`${trItName(i)} sort de la salle de bain`); } const sd = sdb && trSdbDoor(sdb, p, W, D); if (sd && trHit(r, sd.zone)) { bad.add(i.id); lines.push(`${trItName(i)} gêne la porte de la salle de bain`); } }
     else if (sdb && trHit(r, sdb)) { bad.add(i.id); lines.push(`${trItName(i)} est dans la salle de bain`); }
     if (trHit(r, doorZ)) { bad.add(i.id); lines.push(`${trItName(i)} gêne l’ouverture de la porte`); }
+    if (!trIsSan(i) && trHit(r, winZ)) { bad.add(i.id); lines.push(`${trItName(i)} est devant la fenêtre`); }
   });
+  p.items.filter((i) => i.t === 'tv').forEach((i) => { if (i.r / 90 === p.win.wall && trHit(trRect(i), trOpening(p.win, (trNum(d.fen_w) || 120), W, D, 30))) { bad.add(i.id); lines.push('La télé est sur la fenêtre'); } });
   for (let a = 0; a < solid.length; a++) for (let b = a + 1; b < solid.length; b++) {
     const A = solid[a], B = solid[b];
     if ((A.t === 'chaise' && B.t === 'bureau') || (A.t === 'bureau' && B.t === 'chaise')) continue;
@@ -212,8 +227,10 @@ function trAuto(roomId, beds, base, opt) {
   const lvl = opt && opt.lvl !== undefined ? opt.lvl : 1, big = !!(opt && opt.big), alt = (opt && opt.alt) || 0, bare = !!(opt && opt.bare);
   const d = trData(roomId), { W, D } = trWDH(d), p = { door: base.door, win: base.win, sdb: base.sdb, items: [] }, miss = [];
   const sdb = trSdbRect(d, p, W, D), winW = trNum(d.fen_w) || 120;
+  // Règle absolue : rien devant la fenêtre (elle s'ouvre), ni lit, ni chevet, ni meuble. 20 cm de marge de chaque côté, 70 cm de profondeur.
+  const winZ = trWinZone(p, W, D, winW);
   const fixed = [trOpening(p.door, trDW(p) + 10, W, D, 95)]; if (sdb) fixed.push(sdb);
-  const winZ = trOpening(p.win, winW + 50, W, D, 60);
+  const solid = () => [...occ(), winZ]; // pour poser un meuble ; la zone de la fenêtre reste un passage possible
   const occ = () => [...fixed, ...p.items.filter((i) => i.t !== 'tv').map(trRect)];
   const bedExtra = (t) => t !== 'lit_d' ? {} : big ? { w: 160, d: 200 } : trNum(d.lit_d_w) >= 140 ? { w: trNum(d.lit_d_w), d: trNum(d.lit_d_w) >= 160 ? 200 : 190 } : {};
   const bedW = (t) => bedExtra(t).w || TR_FURN[t].w;
@@ -234,7 +251,7 @@ function trAuto(roomId, beds, base, opt) {
           const o = occ(); let sidesAll = 0, ok = true, wide = 0;
           for (const it of its) {
             const others = [...o, ...its.filter((x) => x !== it).map(trRect)];
-            if (!trFree(trRect(it), others, W, D) || !trFree(trBedFoot(it, 50), o, W, D)) { ok = false; break; }
+            if (!trFree(trRect(it), [...others, winZ], W, D) || !trFree(trBedFoot(it, 50), o, W, D)) { ok = false; break; }
             const sides = [1, -1].filter((sg) => trFree(trBedSide(it, sg, 50), others, W, D)).length;
             if (!sides) { ok = false; break; }
             sidesAll += sides * (it.t === 'lit_d' ? 2 : 1); // un lit double mérite un passage de chaque côté
@@ -263,7 +280,7 @@ function trAuto(roomId, beds, base, opt) {
   placed.forEach((b) => [1, -1].forEach((sg) => {
     const m = trDim(b), [ox, oy] = trRot(sg * (m.w / 2 + 22), -m.d / 2 + 20, b.r);
     const it = { id: trPid(), t: 'chevet', r: b.r, x: b.x + ox, y: b.y + oy };
-    if (trFree(trRect(it), occ(), W, D)) p.items.push(it);
+    if (trFree(trRect(it), solid(), W, D)) p.items.push(it);
   }));
   // Meuble dos à un mur, avec de la place devant pour s'en servir.
   function putWall(t, o) {
@@ -272,8 +289,8 @@ function trAuto(roomId, beds, base, opt) {
       const L = trWallLen(wall, W, D); if (F.w > L) continue;
       const cs = []; for (let c = F.w / 2; c <= L - F.w / 2 + 0.01; c += 10) cs.push(c); cs.push(L - F.w / 2);
       for (const c of cs) {
-        const it = trAtWall(t, wall, c, W, D), r = trRect(it), ob = occ();
-        if (!trFree(r, ob, W, D) || !trFree(trLocal(it, 0, F.d / 2 + o.front / 2, F.w, o.front), ob, W, D)) continue;
+        const it = trAtWall(t, wall, c, W, D), r = trRect(it), ob = solid();
+        if (!trFree(r, ob, W, D) || !trFree(trLocal(it, 0, F.d / 2 + o.front / 2, F.w, o.front), occ(), W, D)) continue;
         if (o.noWin && trHit(r, winZ)) continue;
         const sc = o.score(it, wall, c, L);
         if (!best || sc > best.sc) best = { sc, it };
@@ -368,7 +385,7 @@ function trPlanBar() {
     const c = trPlanCheck(P.rid, P.p), beds = P.p.items.filter(trIsBed), n = beds.reduce((a, b) => a + (b.t === 'lit_d' ? 2 : 1), 0), s = trSurf({ ...trData(P.rid), plan: P.p });
     const need = n ? TR_SURF3[Math.min(3, n)] : 0, sOk = !n || s.tot >= need * 0.9;
     chkEl.innerHTML = !P.p.items.length ? '<p class="muted">Choisis une disposition ci-dessous, ou ajoute les meubles un par un.</p>'
-      : `${c.lines.length ? `<ul class="tr-gaps">${c.lines.map((l) => `<li>⚠️ ${esc(l)}</li>`).join('')}</ul>` : '<p class="banner sm c-green">Tout tient : rien ne se chevauche, la porte s’ouvre, les lits sont accessibles ✓</p>'}
+      : `${c.lines.length ? `<ul class="tr-gaps">${c.lines.map((l) => `<li>⚠️ ${esc(l)}</li>`).join('')}</ul>${trPlanCan() && c.lines.some((l) => /fenêtre|porte/.test(l)) ? '<button class="btn small soft" data-a="trFreeOpen">Dégager la porte et la fenêtre</button>' : ''}` : '<p class="banner sm c-green">Tout tient : rien ne se chevauche, la porte s’ouvre, les lits sont accessibles ✓</p>'}
         ${chkEl.dataset.pmr ? `<p class="muted sm">${esc(chkEl.dataset.pmr)}</p>` : ''}
         ${n ? `<p class="${sOk ? 'muted' : 'banner sm c-red'}">${n} couchage${n > 1 ? 's' : ''} · ${trFr(s.tot)} m² pour ${trFr(need)} m² demandés en 3★${sOk ? (s.tot < need ? ' (dans la tolérance)' : ' ✓') : ' : trop petit'}</p>` : ''}`;
   }
@@ -452,7 +469,7 @@ function trPlanBind() {
     if (!drag) return; const P = S.trP, dr = drag; drag = null;
     if (dr.it && !dr.moved) { P.sel = P.sel === dr.it.id ? null : dr.it.id; trPlanDraw(); return; }
     if (dr.it) P.sel = dr.it.id;
-    if (dr.moved && (dr.op === 'door' || dr.op === 'sdbdoor')) { const m = trDoorAdapt(P.p, P.rid); if (m.length) toast('Porte déplacée : ' + m.join(', ') + '.', 5000); }
+    if (dr.moved && dr.op) { const m = trDoorAdapt(P.p, P.rid); if (m.length) toast((dr.op === 'win' ? 'Fenêtre déplacée : ' : 'Porte déplacée : ') + m.join(', ') + '.', 5000); }
     trPlanDraw(); if (dr.moved) trPlanSave();
   };
   svg.addEventListener('pointerup', end); svg.addEventListener('pointercancel', end);
@@ -952,6 +969,7 @@ Object.assign(A, {
   trDoorWall(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)), k = +d.k, L = k % 2 ? D : W, dw = trDW(P.p); P.p.door = { ...P.p.door, wall: k, pos: Math.min(L - dw / 2, Math.max(dw / 2, P.p.door.pos)) }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
   trDoorWid(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)), w = +d.k, L = P.p.door.wall % 2 ? D : W; P.p.door = { ...P.p.door, w, pos: Math.min(L - w / 2, Math.max(w / 2, P.p.door.pos)) }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
   trSdbDWid(d) { const P = S.trP; if (!P || !trPlanCan()) return; P.p.sdb = { ...P.p.sdb, dwid: +d.k }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
+  trFreeOpen() { const P = S.trP; if (!P || !trPlanCan()) return; const m = trDoorAdapt(P.p, P.rid); toast(m.length ? m.join(', ') + '.' : 'Rien à déplacer.', 5000); trPlanSave(); trPlanSheet(P.rid, true); },
   trSdbStyle(d) {
     const P = S.trP; if (!P || !trPlanCan()) return;
     const r = trSdbAuto(P.rid, { ...P.p, items: [] }, d.k, { vasque: P.p.niv === 'prestige' });
