@@ -259,7 +259,8 @@ export function trRendu(o) {
     sc.walls.forEach((wl, i) => { wallGroups[i].visible = inside || !((eye[0] - wl.c[0]) * wl.n[0] + (eye[2] - wl.c[1]) * wl.n[1] > 0); });
     ceil.visible = inside; plaf.visible = inside && L.plaf; ceilLights.forEach((m) => { m.visible = inside; }); sdbGlass.forEach((m) => { m.visible = !inside; }); if (sdbWall) sdbWall.visible = inside; sdbLow.forEach((m) => { m.visible = !inside; }); sdbHigh.forEach((m) => { m.visible = inside; });
     { const id = o.sel ? o.sel() : null, it = id ? (sc.models || []).find((m) => m.id === id) : null;
-      if (it && !it.tv) { const [hx, hz] = half(it); selMesh.visible = true; selMesh.scale.set(hx * 2 + 0.14, hz * 2 + 0.14, 1); selMesh.position.set(it.cx, 0.016, it.cz); } else selMesh.visible = false; }
+      if (grab && grab.door && grab.f) { selMesh.visible = true; selMesh.scale.set(0.6, 0.6, 1); selMesh.position.set(grab.f[0], 0.02, grab.f[1]); }
+      else if (it && !it.tv) { const [hx, hz] = half(it); selMesh.visible = true; selMesh.scale.set(hx * 2 + 0.14, hz * 2 + 0.14, 1); selMesh.position.set(it.cx, 0.016, it.cz); } else selMesh.visible = false; }
     if (fx) {
       try {
         if (fx.w !== w || fx.h !== h || fx.d !== dpr) { fx.composer.setPixelRatio(dpr); fx.composer.setSize(w, h); fx.w = w; fx.h = h; fx.d = dpr; }
@@ -291,16 +292,25 @@ export function trRendu(o) {
     for (let x = hit.object; x; x = x.parent) if (x.userData && x.userData.mi >= 0) return x.userData.mi; return -1;
   };
   const onFloor = (e) => { aim(e); return ray.ray.intersectPlane(floor, v3) ? [v3.x, v3.z] : null; };
+  // Portes saisissables en mode « Déplacer » : des volumes invisibles dans l'encadrement.
+  const doorMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false }); trash.push(doorMat);
+  const doorMeshes = (sc.doorPick || []).map((dp) => { const g = new THREE.BoxGeometry(dp.b.s[0], dp.b.s[1], dp.b.s[2]); geos.push(g); const m = new THREE.Mesh(g, doorMat); m.position.set(dp.b.t[0], dp.b.t[1], dp.b.t[2]); m.userData.door = dp.kind; scene.add(m); noAO.push(m); return m; });
+  const pickDoor = (e) => { if (!doorMeshes.length) return null; aim(e); const h = ray.intersectObjects(doorMeshes, false)[0]; return h ? h.object.userData.door : null; };
   let grab = null, tap = null;
   const down = (e) => {
     pts.set(e.pointerId, [e.clientX, e.clientY]); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} pinch = 0; e.preventDefault();
     grab = null; tap = pts.size === 1 ? [e.clientX, e.clientY, false] : null;
+    if (pts.size === 1 && o.onDoor && o.move && o.move()) { const k = pickDoor(e); if (k) { grab = { door: k }; return; } }
     if (pts.size === 1 && o.onSelect && (!o.move || o.move())) { const mi = pick(e); if (mi >= 0) { const it = sc.models[mi], f = onFloor(e); grab = { it, f, ox: it.cx, oz: it.cz, moved: false }; } }
   };
   const move = (e) => {
     const p = pts.get(e.pointerId); if (!p) return; pts.set(e.pointerId, [e.clientX, e.clientY]);
     const dx = e.clientX - p[0], dy = e.clientY - p[1];
     if (tap && Math.hypot(e.clientX - tap[0], e.clientY - tap[1]) > 7) tap[2] = true;
+    if (grab && grab.door && pts.size === 1) {
+      if (!tap || !tap[2]) return; const f = onFloor(e); if (!f) return; grab.f = f; grab.moved = true;
+      ask(); return;
+    }
     if (grab && pts.size === 1) {
       if (!tap || !tap[2] || !o.edit || grab.it.tv || !grab.f) return;
       const f = onFloor(e); if (!f) return; grab.moved = true;
@@ -320,6 +330,7 @@ export function trRendu(o) {
   };
   const up = (e) => {
     pts.delete(e.pointerId); pinch = 0;
+    if (grab && grab.door) { const g = grab; grab = null; tap = null; if (g.moved && g.f) o.onDoor(g.door, Math.round((g.f[0] + sc.W / 2) * 100), Math.round((g.f[1] + sc.D / 2) * 100)); ask(); return; }
     if (grab && grab.moved && o.onMove) o.onMove(grab.it.id, Math.round((grab.it.cx + sc.W / 2) * 100), Math.round((grab.it.cz + sc.D / 2) * 100));
     else if (tap && !tap[2] && o.onSelect && e.type === 'pointerup' && (!o.move || o.move())) o.onSelect(grab ? grab.it.id : null);
     grab = null; tap = null; ask();
@@ -329,6 +340,7 @@ export function trRendu(o) {
   ask(); later.forEach((fn) => fn());
   return {
     ask,
+    whereDoor: (k) => { const m = doorMeshes.find((x) => x.userData.door === k); if (!m) return null; const r = canvas.getBoundingClientRect(), v = new THREE.Vector3(m.position.x, 0.9, m.position.z).project(camera); return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (1 - (v.y * 0.5 + 0.5)) * r.height]; },
     // Où un meuble se trouve à l'écran (pour les essais automatiques).
     where: (id) => { const it = (sc.models || []).find((m) => m.id === id); if (!it) return null; const r = canvas.getBoundingClientRect(), v = new THREE.Vector3(it.cx, it.tv ? 1.2 : Math.min(0.4, it.h * 0.6), it.cz).project(camera); return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (1 - (v.y * 0.5 + 0.5)) * r.height]; },
     snap: () => new Promise((res) => { if (raf) { cancelAnimationFrame(raf); raf = 0; } frame(true); canvas.toBlob((b) => { ask(); res(b); }, 'image/jpeg', 0.93); }),

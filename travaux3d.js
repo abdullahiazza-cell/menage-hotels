@@ -141,6 +141,43 @@ const trItName = (it) => it.n || TR_FURN[it.t].l;
 const trBedFoot = (it, deep) => { const m = trDim(it); return trLocal(it, 0, m.d / 2 + deep / 2, m.w, deep); };
 const trBedSide = (it, sign, wide) => { const m = trDim(it); return trLocal(it, sign * (m.w / 2 + wide / 2), m.d / 2 - 55, wide, 110); };
 
+/* ---------- déplacer une porte, et adapter l'aménagement autour ---------- */
+// kind 'room' : la porte de la pièce va sur le mur le plus proche du point (x, y) ; kind 'sdb' : celle de la salle de bain, sur la cloison la plus proche.
+function trDoorAt(p, roomId, kind, x, y) {
+  const d = trData(roomId), { W, D } = trWDH(d);
+  if (kind === 'room') { const dw = trDW(p), ds = [y, W - x, D - y, x], wall = ds.indexOf(Math.min(...ds)), L = trWallLen(wall, W, D), h = Math.min(dw, L) / 2; p.door = { ...p.door, wall, pos: Math.round(Math.min(L - h, Math.max(h, wall % 2 ? y : x)) / 5) * 5 }; return true; }
+  const s = trSdbRect(d, p, W, D); if (!s || !p.sdb || !p.sdb.c) return false;
+  const c = p.sdb.c, vx = c[1] === 'e' ? s.x0 : s.x1, hy = c[0] === 's' ? s.y0 : s.y1, vIn = vx > 0.5 && vx < W - 0.5, hIn = hy > 0.5 && hy < D - 0.5;
+  const dv = vIn ? Math.abs(x - vx) + Math.max(0, s.y0 - y, y - s.y1) : 1e9, dh = hIn ? Math.abs(y - hy) + Math.max(0, s.x0 - x, x - s.x1) : 1e9; if (dv === 1e9 && dh === 1e9) return false;
+  const side = dv <= dh ? 'v' : 'h', w = trNum(p.sdb.dwid) || 70, lo = (side === 'v' ? s.y0 : s.x0) + w / 2 + 2, hi = (side === 'v' ? s.y1 : s.x1) - w / 2 - 2;
+  p.sdb = { ...p.sdb, dw: side, dpos: Math.round(Math.min(hi, Math.max(lo, side === 'v' ? y : x)) / 5) * 5 }; return true;
+}
+// Après un déplacement de porte : ce qui la gêne est déplacé (équipements de la salle de bain replacés, meubles poussés à la place libre la plus proche).
+function trDoorToast() { const P = S.trP; if (!P) return; const m = trDoorAdapt(P.p, P.rid); if (m.length) toast('Porte déplacée : ' + m.join(', ') + '.', 5000); }
+function trDoorAdapt(p, roomId) {
+  const d = trData(roomId), { W, D } = trWDH(d), s = trSdbRect(d, p, W, D), moved = [];
+  const sd = s && trSdbDoor(s, p, W, D), san = p.items.filter(trIsSan);
+  if (sd && san.some((i) => trHit(trRect(i), sd.zone))) {
+    const style = san.some((i) => i.t === 'baignoire') ? 'bain' : san.some((i) => /italienne/.test(i.n || '')) ? 'italienne' : 'douche';
+    const r = trSdbAuto(roomId, { ...p, items: [] }, style, { vasque: san.some((i) => i.n === 'Meuble vasque') });
+    if (r.items.length) { p.items = [...p.items.filter((i) => !trIsSan(i)), ...r.items]; moved.push('salle de bain réaménagée'); if (r.note) moved.push(r.note.toLowerCase()); }
+  }
+  const dz = trOpening(p.door, trDW(p), W, D, 80), winW = trNum(d.fen_w) || 120;
+  p.items.filter((i) => i.t !== 'tv' && !trIsSan(i) && trHit(trRect(i), dz)).forEach((it) => {
+    const obs = [dz, ...(s ? [s] : []), ...p.items.filter((o) => o !== it && o.t !== 'tv').map(trRect)];
+    let best = null;
+    for (const r of [it.r || 0, ((it.r || 0) + 90) % 360, ((it.r || 0) + 180) % 360, ((it.r || 0) + 270) % 360]) {
+      const q = { ...it, r }, rc0 = trRect({ ...q, x: 0, y: 0 }), hw = (rc0.x1 - rc0.x0) / 2, hh = (rc0.y1 - rc0.y0) / 2;
+      for (let x = hw; x <= W - hw + 0.1; x += 5) for (let y = hh; y <= D - hh + 0.1; y += 5) {
+        const rr = { x0: x - hw, y0: y - hh, x1: x + hw, y1: y + hh }; if (!trFree(rr, obs, W, D)) continue;
+        const wallTouch = (x - hw < 1 || W - x - hw < 1 || y - hh < 1 || D - y - hh < 1) ? 0 : 60, dd = Math.hypot(x - it.x, y - it.y) + wallTouch + (r !== (it.r || 0) ? 40 : 0);
+        if (!best || dd < best.dd) best = { dd, x, y, r };
+      }
+    }
+    if (best) { it.x = best.x; it.y = best.y; it.r = best.r; moved.push(trItName(it).toLowerCase() + ' déplacé'); } else moved.push(trItName(it).toLowerCase() + ' sans place libre');
+  });
+  return moved;
+}
 /* ---------- vérification d'une disposition ---------- */
 function trPlanCheck(roomId, p) {
   const d = trData(roomId), { W, D } = trWDH(d), bad = new Set(), lines = [];
@@ -311,11 +348,12 @@ function trPlanSvg() {
     return `<g class="${cls}" data-it="${it.id}" transform="translate(${it.x},${it.y}) rotate(${it.r || 0})">${inner}</g>`;
   }).join('') + labels.join('');
   return `<rect class="pf" x="0" y="0" width="${W}" height="${D}"/>
-    ${sdb ? `<rect class="psdb" x="${sdb.x0}" y="${sdb.y0}" width="${sdb.x1 - sdb.x0}" height="${sdb.y1 - sdb.y0}"/>${(() => { const sd = trSdbDoor(sdb, p, W, D); return sd ? (sd.side === 'v' ? `<line x1="${sd.vx}" y1="${sd.a}" x2="${sd.vx}" y2="${sd.b}" stroke="#B07A3F" stroke-width="${fs * 0.5}" stroke-linecap="round"/>` : `<line x1="${sd.a}" y1="${sd.hy}" x2="${sd.b}" y2="${sd.hy}" stroke="#B07A3F" stroke-width="${fs * 0.5}" stroke-linecap="round"/>`) : ''; })()}<text class="pt" x="${(sdb.x0 + sdb.x1) / 2}" y="${(sdb.y0 + sdb.y1) / 2 + fs * 0.35}" font-size="${fs}" text-anchor="middle">SdB</text>` : ''}
+    ${sdb ? `<rect class="psdb" x="${sdb.x0}" y="${sdb.y0}" width="${sdb.x1 - sdb.x0}" height="${sdb.y1 - sdb.y0}"/>${(() => { const sd = trSdbDoor(sdb, p, W, D); const ln = sd ? (sd.side === 'v' ? `x1="${sd.vx}" y1="${sd.a}" x2="${sd.vx}" y2="${sd.b}"` : `x1="${sd.a}" y1="${sd.hy}" x2="${sd.b}" y2="${sd.hy}"`) : ''; return sd ? `<g data-op="sdbdoor"><line ${ln} stroke="#B07A3F" stroke-width="${fs * 0.6}" stroke-linecap="round"/><line class="phit" ${ln}/></g>` : ''; })()}<text class="pt" x="${(sdb.x0 + sdb.x1) / 2}" y="${(sdb.y0 + sdb.y1) / 2 + fs * 0.35}" font-size="${fs}" text-anchor="middle">SdB</text>` : ''}
     <rect class="pw" x="0" y="0" width="${W}" height="${D}"/>
     <path class="parc" d="${arc}"/>${items}
     <g data-op="win"><line class="pwin" ${seg(p.win, winW)}/><line class="phit" ${seg(p.win, winW)}/></g>
     <g data-op="door"><line class="pdoor" ${seg(p.door, trDW(p))}/><line class="phit" ${seg(p.door, trDW(p))}/></g>
+    ${(() => { const sd = sdb && trSdbDoor(sdb, p, W, D); if (!sd) return ''; const ln = sd.side === 'v' ? `x1="${sd.vx}" y1="${sd.a}" x2="${sd.vx}" y2="${sd.b}"` : `x1="${sd.a}" y1="${sd.hy}" x2="${sd.b}" y2="${sd.hy}"`; return `<g data-op="sdbdoor"><line class="phit" style="stroke-width:44" ${ln}/></g>`; })()}
     <text class="pdim" x="${W / 2}" y="${-fs * 0.9}" font-size="${fs}" text-anchor="middle">${trM(W)}</text>
     <text class="pdim" x="${-fs * 0.9}" y="${D / 2}" font-size="${fs}" text-anchor="middle" transform="rotate(-90 ${-fs * 0.9} ${D / 2})">${trM(D)}</text>`;
 }
@@ -391,8 +429,9 @@ function trPlanBind() {
   });
   svg.addEventListener('pointermove', (e) => {
     if (!drag) return; const P = S.trP, d = trData(P.rid), { W, D } = trWDH(d), [x, y] = pt(e);
-    if (drag.op) {
-      const o = drag.op === 'door' ? P.p.door : P.p.win, width = drag.op === 'door' ? trDW(P.p) : (trNum(d.fen_w) || 120);
+    if (drag.op === 'door' || drag.op === 'sdbdoor') { trDoorAt(P.p, P.rid, drag.op === 'door' ? 'room' : 'sdb', x, y); drag.moved = true; }
+    else if (drag.op) {
+      const o = P.p.win, width = trNum(d.fen_w) || 120;
       const ds = [y, W - x, D - y, x], wall = ds.indexOf(Math.min(...ds)), L = trWallLen(wall, W, D), half = Math.min(width, L) / 2;
       o.wall = wall; o.pos = Math.round(Math.min(L - half, Math.max(half, wall % 2 ? y : x)) / 5) * 5; drag.moved = true;
     } else {
@@ -413,6 +452,7 @@ function trPlanBind() {
     if (!drag) return; const P = S.trP, dr = drag; drag = null;
     if (dr.it && !dr.moved) { P.sel = P.sel === dr.it.id ? null : dr.it.id; trPlanDraw(); return; }
     if (dr.it) P.sel = dr.it.id;
+    if (dr.moved && (dr.op === 'door' || dr.op === 'sdbdoor')) { const m = trDoorAdapt(P.p, P.rid); if (m.length) toast('Porte déplacée : ' + m.join(', ') + '.', 5000); }
     trPlanDraw(); if (dr.moved) trPlanSave();
   };
   svg.addEventListener('pointerup', end); svg.addEventListener('pointercancel', end);
@@ -528,7 +568,10 @@ function trScene(roomId, p) {
   // Point de vue « depuis la porte » : à 50 cm à l'intérieur, à hauteur des yeux, tourné vers le milieu de la pièce.
   const dz = trOpening(p.door, 10, W, D, 50), de = [(((dz.x0 + dz.x1) / 2) - W / 2) * cm, 1.55, (((dz.y0 + dz.y1) / 2) - D / 2) * cm];
   const inward = [[0, 1], [-1, 0], [0, -1], [1, 0]][p.door.wall], dEye = [de[0] + inward[0] * 0.25, 1.55, de[2] + inward[1] * 0.25];
-  return { W: W * cm, D: D * cm, H: H * cm, B, glass, walls, plants, models, lum: { plaf: lum.includes('plafonnier'), corniche: lum.includes('corniche'), spots }, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: null, sdbLow, sdbHigh, Wc: W, Dc: D, Hc: H, win: { wall: p.win.wall, pos: p.win.pos, w: fw, z0: al, z1: ft }, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
+  const doorPick = [];
+  { const q = trOpening(p.door, trDW(p), W, D, 30); doorPick.push({ kind: 'room', b: box(q.x0, q.y0, 0, q.x1, q.y1, 205, [1, 1, 1]) }); }
+  if (sdb) { const sd = trSdbDoor(sdb, p, W, D); if (sd) doorPick.push({ kind: 'sdb', b: sd.side === 'v' ? box(sd.vx - 15, sd.a, 0, sd.vx + 15, sd.b, 205, [1, 1, 1]) : box(sd.a, sd.hy - 15, 0, sd.b, sd.hy + 15, 205, [1, 1, 1]) }); }
+  return { doorPick, W: W * cm, D: D * cm, H: H * cm, B, glass, walls, plants, models, lum: { plaf: lum.includes('plafonnier'), corniche: lum.includes('corniche'), spots }, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: null, sdbLow, sdbHigh, Wc: W, Dc: D, Hc: H, win: { wall: p.win.wall, pos: p.win.pos, w: fw, z0: al, z1: ft }, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
 }
 const TR_GL = { gl: null, raf: 0, ask: null, snap: null, three: null, token: null };
 window.addEventListener('resize', () => { if (TR_GL.gl && TR_GL.ask) TR_GL.ask(); });
@@ -576,7 +619,8 @@ function trGlStart() {
   const basic = () => { if (TR_GL.token !== token) return; const old = $('tr-gl'); if (!old) return; const fresh = old.cloneNode(false); old.replaceWith(fresh); trGlStartBasic(); };
   import('./travaux-rendu.js?v=' + APP_V).then((mod) => {
     if (TR_GL.token !== token || !cv.isConnected) return;
-    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false, soir: () => !!P.soir, move: () => !!P.move, lumi: () => (P.lumi || 100) / 100, edit: trPlanCan(), sel: () => P.sel,
+    try { const h = mod.trRendu({ canvas: cv, lab: $('tr-lab'), sc: trScene(P.rid, P.p), cam: P.cam, fmt: trM, cotes: () => P.cotes !== false, soir: () => !!P.soir, move: () => !!P.move,
+      onDoor: (kind, x, y) => { if (!trPlanCan()) return; if (!trDoorAt(P.p, P.rid, kind, x, y)) return; const m = trDoorAdapt(P.p, P.rid); toast(m.length ? 'Porte déplacée : ' + m.join(', ') + '.' : 'Porte déplacée ✓', 4000); trPlanSave(); trPlanBar(); trGlStart(); }, lumi: () => (P.lumi || 100) / 100, edit: trPlanCan(), sel: () => P.sel,
       onSelect: (id) => { P.sel = id && id !== P.sel ? id : null; trPlanBar(); if (TR_GL.ask) TR_GL.ask(); },
       onMove: (id, x, y) => { const it = P.p.items.find((i) => i.id === id); if (!it) return; it.x = x; it.y = y; P.sel = id; trPlanSave(); trPlanBar(); if (trIsBed(it) && trLum(P.p.deco).some((k) => k === 'appliques' || k === 'ruban')) trGlStart(); } }); TR_GL.three = h; TR_GL.ask = h.ask; TR_GL.snap = h.snap; }
     catch (e) { console.warn('rendu', e); basic(); }
@@ -905,15 +949,15 @@ Object.assign(A, {
     const a = trAuto(P.rid, c[2], P.p); if (!a.p.items.length) { toast('Rien ne rentre dans cette disposition.'); return; }
     P.p.items = [...a.p.items, ...P.p.items.filter(trIsSan)]; P.p.cfg = d.k; P.sel = null; trPlanSave(); trPlanSheet(P.rid, true);
   },
-  trDoorWall(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)), k = +d.k, L = k % 2 ? D : W, dw = trDW(P.p); P.p.door = { ...P.p.door, wall: k, pos: Math.min(L - dw / 2, Math.max(dw / 2, P.p.door.pos)) }; trPlanSave(); trPlanSheet(P.rid, true); },
-  trDoorWid(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)), w = +d.k, L = P.p.door.wall % 2 ? D : W; P.p.door = { ...P.p.door, w, pos: Math.min(L - w / 2, Math.max(w / 2, P.p.door.pos)) }; trPlanSave(); trPlanSheet(P.rid, true); },
-  trSdbDWid(d) { const P = S.trP; if (!P || !trPlanCan()) return; P.p.sdb = { ...P.p.sdb, dwid: +d.k }; trPlanSave(); trPlanSheet(P.rid, true); },
+  trDoorWall(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)), k = +d.k, L = k % 2 ? D : W, dw = trDW(P.p); P.p.door = { ...P.p.door, wall: k, pos: Math.min(L - dw / 2, Math.max(dw / 2, P.p.door.pos)) }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
+  trDoorWid(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)), w = +d.k, L = P.p.door.wall % 2 ? D : W; P.p.door = { ...P.p.door, w, pos: Math.min(L - w / 2, Math.max(w / 2, P.p.door.pos)) }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
+  trSdbDWid(d) { const P = S.trP; if (!P || !trPlanCan()) return; P.p.sdb = { ...P.p.sdb, dwid: +d.k }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
   trSdbStyle(d) {
     const P = S.trP; if (!P || !trPlanCan()) return;
     const r = trSdbAuto(P.rid, { ...P.p, items: [] }, d.k, { vasque: P.p.niv === 'prestige' });
     P.p.items = [...P.p.items.filter((i) => !trIsSan(i)), ...r.items]; if (r.note) toast(r.note, 5000); trPlanSave(); trPlanSheet(P.rid, true);
   },
-  trSdbDoorSwap() { const P = S.trP; if (!P || !trPlanCan()) return; const dd = trData(P.rid), { W, D } = trWDH(dd), s = trSdbRect(dd, P.p, W, D), cur = trSdbDoor(s, P.p, W, D); P.p.sdb = { ...P.p.sdb, dw: cur && cur.side === 'v' ? 'h' : 'v', dpos: null }; trPlanSave(); trPlanSheet(P.rid, true); },
+  trSdbDoorSwap() { const P = S.trP; if (!P || !trPlanCan()) return; const dd = trData(P.rid), { W, D } = trWDH(dd), s = trSdbRect(dd, P.p, W, D), cur = trSdbDoor(s, P.p, W, D); P.p.sdb = { ...P.p.sdb, dw: cur && cur.side === 'v' ? 'h' : 'v', dpos: null }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
   trPlanSdb(d) { const P = S.trP; if (!P || !trPlanCan()) return; P.p.sdb = { c: d.k, rot: !!P.p.sdb.rot }; trPlanSave(); trPlanSheet(P.rid, true); },
   trPlanSdbRot() { const P = S.trP; if (!P || !trPlanCan()) return; P.p.sdb.rot = !P.p.sdb.rot; trPlanSave(); trPlanSheet(P.rid, true); },
   trDeco(d) { const P = S.trP; if (!P || !trPlanCan()) return; const deco = { ...(P.p.deco || {}) }; if (!d.v || deco[d.k] === d.v) delete deco[d.k]; else deco[d.k] = d.v; P.p.deco = deco; trPlanSave(); trPlanSheet(P.rid, true); },
@@ -998,8 +1042,8 @@ function trIkPickSheet() {
       <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn small pri" data-a="trIkPut" data-ref="${esc(c.ref)}">Poser</button><a class="btn small" href="${esc(trIkUrl(c))}" target="_blank" rel="noopener">Voir</a></div></div>`).join('')}</div>`}`);
 }
 Object.assign(C, {
-  trDoorPos(el) { const P = S.trP; if (!P || !trPlanCan()) return; P.p.door = { ...P.p.door, pos: Number(el.value) }; trPlanSave(); trPlanSheet(P.rid, true); },
-  trSdbDPos(el) { const P = S.trP; if (!P || !trPlanCan()) return; const dd = trData(P.rid), { W, D } = trWDH(dd), sd = trSdbDoor(trSdbRect(dd, P.p, W, D), P.p, W, D); if (!sd) return; P.p.sdb = { ...P.p.sdb, dw: sd.side, dpos: Number(el.value) }; trPlanSave(); trPlanSheet(P.rid, true); },
+  trDoorPos(el) { const P = S.trP; if (!P || !trPlanCan()) return; P.p.door = { ...P.p.door, pos: Number(el.value) }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
+  trSdbDPos(el) { const P = S.trP; if (!P || !trPlanCan()) return; const dd = trData(P.rid), { W, D } = trWDH(dd), sd = trSdbDoor(trSdbRect(dd, P.p, W, D), P.p, W, D); if (!sd) return; P.p.sdb = { ...P.p.sdb, dw: sd.side, dpos: Number(el.value) }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
   trPlanIk(el) {
     const P = S.trP, c = (S.trCat || []).find((x) => x.ref === (el.value || (el.dataset && el.dataset.ref))), cat = c && TR_IK_CATS.find((x) => x[0] === c.cat), dm = c && trIkDims(c); if (!P || !c || !cat || !cat[2] || !dm || !trPlanCan()) return;
     const { W, D } = trWDH(trData(P.rid)), it = { id: trPid(), t: cat[2], r: 0, x: Math.round(W / 2), y: Math.round(D / 2), w: dm.w, d: dm.d, n: 'IKEA ' + c.name, ik: c.ref }; if (dm.h) it.h = dm.h;
