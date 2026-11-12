@@ -365,8 +365,9 @@ async function regState() {
     sb.from("registre_log").select("*").order("ts", { ascending: false }).limit(600),
     sb.from("pec_relances").select("*"),
   ]);
+  const { data: ids } = await sb.from("occupants").select("id,nom,prenom,hotel,statut,entree,sortie,piece_le,nationalite").not("piece_recto", "is", null).neq("statut", "supprime").order("piece_le");
   await attachMailDocs((inbox || []).filter((i: any) => i.status === "a_traiter")).catch(() => {});
-  return { occ: occ || [], pecs: pecs || [], inbox: inbox || [], log: log || [], relances: relances || [] };
+  return { occ: occ || [], pecs: pecs || [], inbox: inbox || [], log: log || [], relances: relances || [], ids: ids || [] };
 }
 const S_ = (v: any, n = 200) => (v === undefined || v === null || v === "") ? null : String(v).slice(0, n);
 const D_ = (v: any) => (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : null;
@@ -381,7 +382,10 @@ async function regLog(me: any, action: string, occId: string | null, cible: stri
   await sb.from("registre_log").insert({ by_staff: me.id, by_label: String(me.label).split(" ")[0], action, occupant_id: occId, cible, raison: raison || "", details });
 }
 // Traçabilité : chaque modification note l'ancienne et la nouvelle valeur, champ par champ.
-const OCC_L: Record<string, string> = { nom: "nom", prenom: "prénom", naissance: "naissance", categorie: "catégorie", telephone: "téléphone", entree: "arrivée", notes: "notes", resto: "repas sur place" };
+const OCC_L: Record<string, string> = { type: "type", nom: "nom", prenom: "prénom", naissance: "naissance", categorie: "catégorie", telephone: "téléphone", entree: "arrivée", nuits: "nuits prévues", depart_prevu: "départ prévu", nationalite: "nationalité", lieu_naissance: "lieu de naissance", adresse: "adresse", ref_nom: "référent", ref_service: "service du référent", ref_tel: "téléphone du référent", ref_mail: "mail du référent", notes: "notes", resto: "repas sur place" };
+const TYPE_L: Record<string, string> = { client: "Client hôtel (paie lui-même)", departement: "Confié par le Département" };
+// Photos de la pièce d'identité et signature : seulement des fichiers déposés dans le stockage privé « identite ».
+const idPath = (v: any) => (typeof v === "string" && /^[0-9a-f-]{36}\.(jpg|png)$/.test(v)) ? v : null;
 const PEC_L: Record<string, string> = { financeur: "financeur", reference: "référence", debut: "début", fin: "fin", tarif: "tarif", repas: "repas", notes: "notes" };
 const showV = (v: any) => v === true ? "oui" : v === false ? "non" : (v === null || v === undefined || v === "") ? "vide" : (/^\d{4}-\d{2}-\d{2}$/.test(String(v)) ? frD(String(v)) : (String(v).length > 40 ? String(v).slice(0, 40) + "…" : String(v)));
 const diffTxt = (old: any, row: any, L: Record<string, string>) => Object.keys(L).filter((k) => k in row && String(old[k] ?? "") !== String(row[k] ?? "")).map((k) => `${L[k]} : ${showV(old[k])} → ${showV(row[k])}`);
@@ -414,16 +418,40 @@ async function regAction(me: any, a: string, body: any) {
     const h0 = HOTELS.includes(body.hotel) ? body.hotel : null; if (!h0) throw new E("bad");
     const { hotel, room_id, formule } = await placeOf(body.room_id, h0);
     const row: any = { hotel, room_id, formule, nom: S_(body.nom, 80), prenom: S_(body.prenom, 80), naissance: D_(body.naissance), categorie: S_(body.categorie, 40), telephone: S_(body.telephone, 25), entree: D_(body.entree), notes: S_(body.notes, 1000) || "", updated_at: now, updated_by: me.id };
+    // Type obligatoire à la création : client hôtel (il paie lui-même) ou confié par le Département. Jamais de valeur par défaut.
+    const type = TYPE_L[body.type] ? body.type : null;
+    if (!body.id && !type) throw new E("type");
+    if (type) row.type = type;
+    if (type === "client") {
+      row.categorie = "Conventionnel";
+      for (const k of ["nationalite", "lieu_naissance", "adresse"]) if (k in body) row[k] = S_(body[k], 160);
+      const n = Number(body.nuits); if ("nuits" in body) row.nuits = Number.isInteger(n) && n > 0 && n < 400 ? n : null;
+    } else if (type === "departement") {
+      if (row.categorie === "Conventionnel") row.categorie = null;
+      for (const [k, n] of [["ref_nom", 120], ["ref_service", 160], ["ref_tel", 40], ["ref_mail", 160]] as [string, number][]) if (k in body) row[k] = S_(body[k], n);
+    }
+    for (const k of ["piece_recto", "piece_verso", "signature"]) if (idPath(body[k])) row[k] = body[k];
     // Repas sur place : toujours vrai pour les repas seuls ; sinon selon la case de la fiche (une ancienne version de l'appli ne l'envoie pas : on ne touche à rien).
     if (formule === "restauration") row.resto = true; else if (typeof body.resto === "boolean") row.resto = body.resto;
     if (!row.nom && !row.prenom) throw new E("bad");
+    const chk = { ...(body.id ? (await sb.from("occupants").select("*").eq("id", body.id).single()).data || {} : {}), ...row };
+    if (chk.type === "client") {
+      // Fiche du client hôtel : téléphone, chambre, nuits prévues et pièce d'identité recto verso.
+      if (!chk.telephone || !chk.nuits || !chk.entree || formule !== "hebergement" || !room_id) throw new E("client_champs");
+      if (!chk.piece_recto || (!chk.piece_verso && !body.passeport)) throw new E("piece");
+      row.depart_prevu = new Date(Date.UTC(+chk.entree.slice(0, 4), +chk.entree.slice(5, 7) - 1, +chk.entree.slice(8, 10) + chk.nuits)).toISOString().slice(0, 10);
+      if (idPath(body.piece_recto)) row.piece_le = now;
+    }
     if (body.id) {
       const { data: old } = await sb.from("occupants").select("*").eq("id", body.id).single(); if (!old) throw new E("bad");
+      // Changer le type d'une fiche existante : le propriétaire seul, avec une raison.
+      if (type && old.type && type !== old.type) { if (me.role !== "owner") throw new E("owner_only", 403); if (!raison) throw new E("reason"); }
       if (formule !== "restauration" && old.formule === "restauration" && typeof body.resto !== "boolean") row.resto = false;
       const moved = old.room_id !== room_id || old.formule !== formule || old.hotel !== hotel;
       const ch = diffTxt(old, row, OCC_L);
-      if (!moved && !ch.length) return { ok: true, id: body.id };
-      const { error: e1 } = await sb.from("occupants").update(row).eq("id", body.id); if (e1) throw new E("db");
+      if (!moved && !ch.length && !["piece_recto", "piece_verso", "signature"].some((k) => idPath(body[k]) && body[k] !== old[k])) return { ok: true, id: body.id };
+      const { error: e1 } = await sb.from("occupants").update(row).eq("id", body.id); if (e1) throw new E(/client_hotel/.test(e1.message || "") ? "client" : "db");
+      if (["piece_recto", "piece_verso"].some((k) => idPath(body[k]) && body[k] !== old[k])) ch.push("pièce d’identité photographiée");
       if (moved) ch.unshift(`${await placeLabel(old.room_id, old.hotel, old.formule)} → ${await placeLabel(room_id, hotel, formule)}`);
       const onlyResto = !moved && ch.length === 1 && "resto" in row && old.resto !== row.resto;
       await regLog(me, moved ? "Changement de chambre" : (onlyResto ? (row.resto ? "Repas sur place : oui" : "Repas sur place : non") : "Fiche modifiée"), body.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, ch.join(" · "));
@@ -431,7 +459,7 @@ async function regAction(me: any, a: string, body: any) {
     }
     row.created_by = me.id; row.statut = "present"; if (!row.entree) row.entree = now.slice(0, 10);
     const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
-    await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, [row.categorie || "", formule !== "restauration" && row.resto ? "avec repas sur place" : ""].filter(Boolean).join(" · "));
+    await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${await placeLabel(room_id, hotel, formule)}`, raison, [TYPE_L[row.type], row.type === "client" ? `${row.nuits} nuit${row.nuits > 1 ? "s" : ""} prévue${row.nuits > 1 ? "s" : ""}, départ le ${frD(row.depart_prevu)} · pièce d’identité photographiée` : (row.categorie || ""), formule !== "restauration" && row.resto ? "avec repas sur place" : ""].filter(Boolean).join(" · "));
     return { ok: true, id: data.id };
   }
   if (a === "reg_occ_exit") {
@@ -450,7 +478,8 @@ async function regAction(me: any, a: string, body: any) {
     return { ok: true };
   }
   if (a === "reg_pec_save") {
-    const { data: o } = await sb.from("occupants").select("id,nom,prenom").eq("id", body.occupant_id).single(); if (!o) throw new E("bad");
+    const { data: o } = await sb.from("occupants").select("id,nom,prenom,type").eq("id", body.occupant_id).single(); if (!o) throw new E("bad");
+    if (o.type === "client") throw new E("client");
     const row: any = { occupant_id: o.id, financeur: S_(body.financeur, 80), reference: S_(body.reference, 40) || "", debut: D_(body.debut), fin: D_(body.fin), tarif: S_(body.tarif, 20) || "", repas: S_(body.repas, 40), notes: S_(body.notes, 1000) || "", updated_at: now, updated_by: me.id };
     if (body.id) {
       const { data: old } = await sb.from("pecs").select("*").eq("id", body.id).single(); if (!old) throw new E("bad");
@@ -458,7 +487,7 @@ async function regAction(me: any, a: string, body: any) {
       if (movedTo && !raison) throw new E("reason");
       const ch = diffTxt(old, row, PEC_L);
       if (!movedTo && !ch.length) return { ok: true };
-      const { error: e1 } = await sb.from("pecs").update(row).eq("id", body.id); if (e1) throw new E("db");
+      const { error: e1 } = await sb.from("pecs").update(row).eq("id", body.id); if (e1) throw new E(/client_hotel/.test(e1.message || "") ? "client" : "db");
       const span = `${frD(row.debut)} → ${frD(row.fin)}`, lab = `${row.financeur || ""}${row.reference ? " · réf. " + row.reference : ""}`;
       if (movedTo) {
         const { data: prev } = await sb.from("occupants").select("id,nom,prenom").eq("id", old.occupant_id).maybeSingle();
@@ -470,7 +499,7 @@ async function regAction(me: any, a: string, body: any) {
       return { ok: true };
     }
     row.created_by = me.id; if (Array.isArray(body.docs)) row.docs = body.docs.slice(0, 10);
-    const { error } = await sb.from("pecs").insert(row); if (error) throw new E("db");
+    const { error } = await sb.from("pecs").insert(row); if (error) throw new E(/client_hotel/.test(error.message || "") ? "client" : "db");
     await regLog(me, "PEC ajoutée", o.id, `${fullName(o)} · ${row.financeur || ""}`, raison, `${row.debut || "?"} → ${row.fin || "?"}`);
     return { ok: true };
   }
@@ -529,16 +558,42 @@ async function regAction(me: any, a: string, body: any) {
   }
   throw new E("unknown_action");
 }
+// Pièce d'identité des clients hôtel : stockage privé « identite », visible seulement de ceux qui gèrent tout le registre.
+// Elle est gardée jusqu'à ce qu'un gérant l'efface lui-même (choix du propriétaire, 12/11/2026).
+async function idAction(me: any, a: string, body: any) {
+  if (!can(me, "reg_full")) throw new E("forbidden", 403);
+  if (a === "reg_id_upload") {
+    const ext = body.ext === "png" ? "png" : "jpg", path = `${crypto.randomUUID()}.${ext}`;
+    const { data, error } = await sb.storage.from("identite").createSignedUploadUrl(path); if (error) throw new E("upload");
+    return { path, url: data.signedUrl };
+  }
+  const { data: o } = await sb.from("occupants").select("*").eq("id", String(body.id || "")).maybeSingle(); if (!o) throw new E("bad");
+  const files = ["piece_recto", "piece_verso", "signature"].map((k) => [k, o[k]]).filter((x) => idPath(x[1]));
+  if (a === "reg_id_urls") {
+    const out: Record<string, string> = {};
+    for (const [k, p] of files) { const { data } = await sb.storage.from("identite").createSignedUrl(p, 600); if (data) out[k] = data.signedUrl; }
+    await regLog(me, "Pièce d’identité consultée", o.id, fullName(o), null, "");
+    return { urls: out };
+  }
+  if (a === "reg_id_delete") {
+    if (files.length) await sb.storage.from("identite").remove(files.map((x) => x[1]));
+    await sb.from("occupants").update({ piece_recto: null, piece_verso: null, signature: null, piece_le: null, updated_at: new Date().toISOString(), updated_by: me.id }).eq("id", o.id);
+    await regLog(me, "Pièce d’identité effacée", o.id, fullName(o), S_(body.raison, 300), o.piece_le ? `photographiée le ${frD(String(o.piece_le).slice(0, 10))}` : "");
+    return { ok: true };
+  }
+  throw new E("unknown_action");
+}
 async function inboxApply(me: any, it: any, body: any, now: string, raison: string) {
   {
     await attachMailDocs([it]).catch(() => {});
     let occId = body.occupant_id ? String(body.occupant_id) : null, who = "";
     if (occId) {
-      const { data: o } = await sb.from("occupants").select("id,nom,prenom").eq("id", occId).single(); if (!o) throw new E("bad"); who = fullName(o);
+      const { data: o } = await sb.from("occupants").select("id,nom,prenom,type").eq("id", occId).single(); if (!o) throw new E("bad"); who = fullName(o);
+      if (o.type === "client") throw new E("client");
     } else {
       const h0 = HOTELS.includes(body.hotel) ? body.hotel : (it.hotel || "arc");
       const { hotel, room_id, formule } = await placeOf(body.room_id, h0);
-      const row: any = { hotel, room_id, formule, nom: it.nom, prenom: it.prenom, naissance: it.naissance, categorie: it.categorie, entree: D_(body.entree) || it.debut || now.slice(0, 10), statut: "present", notes: "", created_by: me.id, updated_by: me.id };
+      const row: any = { hotel, room_id, formule, nom: it.nom, prenom: it.prenom, naissance: it.naissance, categorie: it.categorie, type: "departement", entree: D_(body.entree) || it.debut || now.slice(0, 10), statut: "present", notes: "", created_by: me.id, updated_by: me.id };
       const { data, error } = await sb.from("occupants").insert(row).select("id").single(); if (error) throw new E("db");
       occId = data.id; who = fullName(row);
       await regLog(me, "Arrivée", occId, `${who} · ${await placeLabel(room_id, hotel, formule)}`, raison || "Depuis une PEC reçue", it.categorie || "");
@@ -626,6 +681,8 @@ async function verifAction(me: any, a: string, body: any) {
     const heberge = groupe !== "resto", repas = groupe === "mna" || groupe === "resto";
     const row: any = { mois, groupe, ord: 90, nom: S_(body.nom, 80), prenom: S_(body.prenom, 80), naissance: D_(body.naissance), hotel: groupe === "pari_arc" || groupe === "eai" ? "arc" : (HOTELS.includes(body.hotel) ? body.hotel : "par"), lieu: S_(body.lieu, 80) || (groupe === "resto" ? "Hôtel de Paris · restauration" : ""), heberge, repas, alerte: "Ajouté pendant la vérification." };
     if (!row.nom && !row.prenom) throw new E("bad");
+    const { data: cl } = await sb.from("occupants").select("id").eq("type", "client").neq("statut", "supprime").ilike("nom", row.nom || "").ilike("prenom", row.prenom || "").limit(1);
+    if (cl && cl.length) throw new E("client");
     Object.assign(row, verifDates(mois, body, heberge, repas));
     Object.assign(row, { statut: "valide", validated_by: me.id, validated_label: who, validated_at: now, updated_by: me.id, updated_label: who, updated_at: now });
     const { data, error } = await sb.from("verif_dates").insert(row).select("*").single(); if (error) throw new E("db");
@@ -1016,7 +1073,7 @@ const longFr = (iso: string) => new Date(iso + "T12:00:00Z").toLocaleDateString(
 async function relancesTodo() {
   const today = parisDay(), lim = new Date(Date.now() + 7 * 864e5).toISOString().slice(0, 10);
   const [{ data: occ }, { data: pecs }, { data: done }, { data: inbox }] = await Promise.all([
-    sb.from("occupants").select("id,nom,prenom,hotel,formule,categorie").eq("statut", "present"),
+    sb.from("occupants").select("id,nom,prenom,hotel,formule,categorie,type").eq("statut", "present"),
     sb.from("pecs").select("id,occupant_id,fin,reference,financeur,source_msg").not("fin", "is", null),
     sb.from("pec_relances").select("pec_id,stage"),
     sb.from("pec_inbox").select("nom,prenom,fin").eq("status", "a_traiter"),
@@ -1024,7 +1081,7 @@ async function relancesTodo() {
   const seen = new Set((done || []).map((d: any) => d.pec_id + ":" + d.stage));
   const out: any[] = [];
   for (const o of occ || []) {
-    if (o.categorie === "Conventionnel") continue;
+    if (o.type === "client" || o.categorie === "Conventionnel") continue;
     const p = (pecs || []).filter((x: any) => x.occupant_id === o.id).sort((a: any, b: any) => String(b.fin).localeCompare(String(a.fin)))[0];
     if (!p || p.fin > lim) continue;
     const stage = p.fin < today ? "expiree" : "bientot";
@@ -1364,6 +1421,8 @@ async function handle(req: Request) {
     }
 
     // --- registre ---
+    case "reg_id_upload": case "reg_id_urls": case "reg_id_delete":
+      return await idAction(me, a, body);
     case "reg_occ_save": case "reg_occ_exit": case "reg_occ_return": case "reg_occ_delete": case "reg_occ_restore": case "reg_pec_save": case "reg_pec_delete": case "reg_inbox_set": case "reg_inbox_apply":
       return await regAction(me, a, body);
     // --- vérification des dates avant facturation ---

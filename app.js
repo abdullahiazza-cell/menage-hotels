@@ -160,7 +160,7 @@ const ERR = {
   not_yours: 'Cette chambre n’est plus à toi.', not_started: 'Touche d’abord « Je commence ».', photos_missing: 'Il manque des photos.',
   owner_protected: 'Le compte du propriétaire est protégé.', forbidden: 'Tu n’as pas accès à cette action.', exists: 'Cette chambre existe déjà.',
   readonly: 'Lecture seule : vous pouvez tout regarder, mais rien n’est modifié. Demandez à Abdullah.',
-  reason: 'Indique la raison.', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
+  reason: 'Indique la raison.', type: 'Choisis d’abord : client hôtel ou confié par le Département.', client: 'C’est un client hôtel : il paie lui-même, il ne peut pas avoir de prise en charge ni être facturé au Département.', client_champs: 'Pour un client hôtel : téléphone, chambre, date d’arrivée et nombre de nuits sont obligatoires.', piece: 'Prends en photo la pièce d’identité, recto et verso (ou coche « Passeport »).', owner_only: 'Seul le propriétaire peut faire ça.', busy: 'Cette chambre est en cours de ménage.', still_active: 'Désactive d’abord cette personne.', pin_format: 'Le code doit faire 4 chiffres.', hors_mois: 'Les dates doivent être dans le mois vérifié.', dates: 'Vérifie les dates : le début doit être avant la fin.', nochange: 'Aucune date n’a changé. Utilise « Valider » si tout est juste.', empty: 'Message vide.', no_one: 'Personne à prévenir.',
   chorus_fail: 'Chorus ne répond pas. Réessaie dans quelques minutes.', chorus_changed: 'La facture a changé entre-temps. Rouvre l’écran et revérifie.', chorus_depot_fail: 'Le dépôt a échoué. Le détail est affiché sur la facture ; rien n’a été déposé.',
   courrier_incomplet: 'Il manque quelque chose dans cette réponse : confirmez pour l’envoyer quand même.', courrier_etat: 'Ce mail a déjà été traité. Rouvrez Courrier.', courrier_vide: 'La réponse est vide.',
   deja: 'Cette prise en charge est déjà dans le registre.', too_late: 'Trop tard : un message ne peut être modifié ou supprimé que dans l’heure qui suit l’envoi.', not_author: 'Seule la personne qui a écrit ce message peut le modifier.', gone: 'Ce message a déjà été supprimé.',
@@ -225,7 +225,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 // Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
 // Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
-const APP_V = 'v67';
+const APP_V = 'v68';
 async function onlineVersion() {
   const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
   const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
@@ -621,6 +621,12 @@ function viewHome() {
 
 /* ----- registre des occupants (gérants seulement) ----- */
 const CATS = ['MNA', 'Mineur ASE', 'Jeune majeur', 'Adulte (PARI)', 'Conventionnel', 'Autre'];
+const CATS_DEP = CATS.filter((c) => c !== 'Conventionnel');
+// Type de la fiche : « client » (client hôtel, paie lui-même) ou « departement » (confié par le Département). Jamais de valeur par défaut.
+const occType = (o) => o.type || (o.categorie === 'Conventionnel' ? 'client' : 'departement');
+const isClient = (o) => occType(o) === 'client';
+// Numéro cliquable : le téléphone propose « Appeler », un second appui lance l'appel.
+const callBtn = (t, who) => t ? `<a class="btn small soft call" href="${telHref(t)}" aria-label="Appeler ${esc(who || '')}">📞 ${esc(t)}</a>` : '';
 const FINANCEURS = ['Conseil départemental', 'Association', 'Autre'];
 const REPAS = ['Non', 'Petit déjeuner seul', 'Oui'];
 const OLD_REG = 'https://claude.ai/code/artifact/d68a9a35-8b67-47f5-b68e-731d3a154178';
@@ -643,7 +649,7 @@ function pecState(o) {
   const t = todayISO(), list = pecsOf(o.id);
   const act = list.filter((p) => (!p.debut || p.debut <= t) && (!p.fin || p.fin >= t));
   if (act.length) return act.every((p) => p.fin && p.fin <= addDaysISO(t, 7)) ? { c: 'amber', t: 'PEC expire bientôt' } : { c: 'green', t: 'PEC en cours' };
-  if (o.categorie === 'Conventionnel') return { c: 'plain', t: 'Sans PEC' };
+  if (isClient(o)) return { c: 'plain', t: 'Client hôtel' };
   return list.length ? { c: 'red', t: 'PEC expirée' } : { c: 'red', t: 'PEC manquante' };
 }
 const inboxTodo = () => S.reg.inbox.filter((i) => i.status === 'a_traiter');
@@ -666,7 +672,7 @@ const pendingRenew = (o) => { const cur = lastPec(o); return inboxTodo().find((i
 const relanceOf = (p, stage) => (S.reg.relances || []).filter((r) => r.pec_id === p.id && (!stage || r.stage === stage)).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))[0] || null;
 function finsList() {
   const t = todayISO(), lim = addDaysISO(t, 7);
-  return presentOcc().filter((o) => o.categorie !== 'Conventionnel').map((o) => { const p = lastPec(o); return p && p.fin <= lim ? { o, p, late: p.fin < t, n: daysTo(p.fin) } : null; }).filter(Boolean)
+  return presentOcc().filter((o) => !isClient(o)).map((o) => { const p = lastPec(o); return p && p.fin <= lim ? { o, p, late: p.fin < t, n: daysTo(p.fin) } : null; }).filter(Boolean)
     .sort((a, b) => String(a.p.fin).localeCompare(String(b.p.fin)));
 }
 function relanceTxt(f) {
@@ -691,11 +697,19 @@ function regFins() {
 const finsCount = () => scoped(finsList().map((f) => ({ ...f, hotel: f.o.hotel }))).length;
 function viewRegistre() {
   const todo = inboxTodo().length;
-  const subs = [['chambres', 'Chambres', 0], ['personnes', 'Personnes', 0], ['atraiter', 'À traiter', todo], ['fins', 'Fins PEC', finsCount()], ...(canReg('reg_full') ? [['journal', 'Journal', 0]] : [])];
-  const body = { chambres: regRooms, personnes: regPeople, atraiter: regInbox, fins: regFins, journal: regJournal }[S.rsub] || regRooms;
+  const subs = [['chambres', 'Chambres', 0], ['personnes', 'Personnes', 0], ['atraiter', 'À traiter', todo], ['fins', 'Fins PEC', finsCount()], ...(canReg('reg_full') && (S.reg.ids || []).length ? [['ids', 'Pièces d’identité', (S.reg.ids || []).filter(idOld).length]] : []), ...(canReg('reg_full') ? [['journal', 'Journal', 0]] : [])];
+  const body = { chambres: regRooms, personnes: regPeople, atraiter: regInbox, fins: regFins, ids: regIds, journal: regJournal }[S.rsub] || regRooms;
   return `<div class="segc" role="group" aria-label="Registre">${subs.map(([k, l, n]) => `<button data-a="rsub" data-k="${k}" aria-pressed="${S.rsub === k}">${l}${n ? ` <span class="badge sm">${n}</span>` : ''}</button>`).join('')}</div>${body()}`;
 }
 function occLine(o) { const ps = pecState(o); return `<span class="ol"><span>${esc(occName(o))}${eats(o) ? ' <span title="Repas sur place" aria-label="repas sur place">🍽️</span>' : ''}${o.categorie ? ` <span class="muted">· ${esc(o.categorie)}</span>` : ''}</span><span class="pill p-${ps.c}">${ps.t}</span></span>`; }
+// Pièces d'identité gardées : effacées à la main par un gérant. Au-delà de 6 mois (durée de la fiche de police), la ligne passe en rouge.
+const idAge = (x) => x.piece_le ? Math.floor((Date.now() - new Date(x.piece_le).getTime()) / 864e5) : 0;
+const idOld = (x) => idAge(x) > 182;
+function regIds() {
+  const L = (S.reg.ids || []).slice().sort((a, b) => idAge(b) - idAge(a));
+  return `<p class="muted">Photos de pièces d’identité des clients hôtel encore gardées. Elles restent tant qu’un gérant ne les efface pas. La fiche de police d’un client étranger se garde 6 mois.</p>
+    <div class="group">${L.map((x) => `<button class="prow" data-a="occOpen" data-id="${x.id}"><span class="pr-t"><b>${esc(occName(x))}</b><span class="muted">${esc(hotelName(x.hotel))} · photographiée le ${fdate(String(x.piece_le || '').slice(0, 10))}${x.statut === 'sorti' ? ' · parti le ' + fdate(x.sortie) : ' · présent'}</span></span><span class="pill ${idOld(x) ? 'p-red' : 'p-plain'}">${idAge(x)} j</span></button>`).join('') || '<p class="muted" style="padding:14px">Aucune.</p>'}</div>`;
+}
 function regRooms() {
   const rooms = roomsOf(S.hotel), occ = presentOcc().filter((o) => o.hotel === S.hotel);
   const free = rooms.filter((r) => !occOfRoom(r.id).length && !r.blocked).length;
@@ -748,32 +762,99 @@ function regJournal() {
 }
 const opt = (v, cur, l) => `<option value="${esc(v)}" ${String(cur ?? '') === String(v) ? 'selected' : ''}>${esc(l ?? v)}</option>`;
 const roomOpts = (hotel, cur) => `${opt('resto', cur, 'Restauration (repas seuls)')}${opt('', cur, 'Sans chambre (à replacer)')}${roomsOf(hotel).map((r) => opt(r.id, cur, placeName(r) + (occOfRoom(r.id).filter((o) => o.room_id !== cur).length ? ' · occupée' : ''))).join('')}`;
+// Chambres libres seulement (plus la chambre actuelle de la personne), pour un client hôtel.
+const freeRoomOpts = (hotel, cur) => `${opt('', cur, 'Choisir la chambre…')}${roomsOf(hotel).filter((r) => r.id === cur || (!r.blocked && !occOfRoom(r.id).length)).map((r) => opt(r.id, cur, placeName(r))).join('')}`;
+// Première étape d'une arrivée : client hôtel ou confié par le Département. Aucun choix par défaut.
+function occTypeSheet(preset) {
+  S.idDraft = {}; S.occPreset = preset || {};
+  openSheet('occtype', `${sheetHead('Nouvelle arrivée')}<p><b>Qui arrive ?</b></p>
+    <button class="btn big-choice" data-a="occPickType" data-k="client"><b>🛎️ Client hôtel</b><br><span class="muted sm">Il paie lui-même (espèces, carte). Jamais facturé au Département.</span></button>
+    <button class="btn big-choice" data-a="occPickType" data-k="departement"><b>🏛️ Confié par le Département</b><br><span class="muted sm">MNA, ASE, jeune majeur, PARI… avec une prise en charge.</span></button>`);
+}
+const idThumb = (k, label, have) => `<button class="btn ${have ? 'soft' : ''}" data-a="idShot" data-k="${k}">${have ? '✅' : '📷'} ${label}${have ? ' · refaire' : ''}</button>`;
 function occSheet(id, preset) {
-  const o = id ? occById(id) : { hotel: (preset && preset.hotel) || S.hotel, room_id: (preset && preset.room_id) || '', entree: todayISO(), categorie: '' };
+  if (!id && !(preset && preset.type)) return occTypeSheet(preset);
+  const o = id ? occById(id) : { hotel: (preset && preset.hotel) || S.hotel, room_id: (preset && preset.room_id) || '', entree: todayISO(), categorie: '', type: preset.type };
+  if (!o) return closeSheet();
+  const T = occType(o), cl = T === 'client', dr = S.idDraft || (S.idDraft = {});
+  if (dr.for !== (id || 'new')) { S.idDraft = { for: id || 'new' }; }
+  const D = S.idDraft, hasR = D.piece_recto || o.piece_recto, hasV = D.piece_verso || o.piece_verso;
+  const etr = cl && o.nationalite && !/^fran/i.test(o.nationalite);
   const hs = HOTELS.map((h) => opt(h.id, o.hotel, h.name)).join('');
   const pecs = id ? pecsOf(id) : [], ro = !canReg('reg_full');
   openSheet('occ:' + (id || ''), `${sheetHead(id ? esc(occName(o)) : 'Nouvelle arrivée')}
     ${id && o.statut === 'sorti' ? `<div class="banner c-amber">Parti le ${fdate(o.sortie)}</div>` : ''}
     ${id && o.statut !== 'sorti' ? (() => { const f = finsList().find((x) => x.o.id === id); if (!f) return ''; const rt = relanceTxt(f); return `<div class="banner c-${f.late ? 'red' : 'amber'}">${f.late ? `PEC finie le ${fdate(f.p.fin)}` : `PEC finit le ${fdate(f.p.fin)}`}<br><span class="sm">${esc(rt.t)}</span></div>`; })() : ''}
     ${id && o.statut !== 'sorti' && twins(o).length ? `<div class="banner c-amber">⚠️ Doublon possible : ${twins(o).map((x) => `${esc(occName(x))} est aussi en ${esc(occPlace(x))}`).join(', ')}.${ro ? '' : `<br><button class="btn small" data-a="occDel" data-id="${id}" style="margin-top:8px">Supprimer cette fiche-ci</button>`}</div>` : ''}
+    ${id ? `<div class="banner c-${cl ? 'slate' : 'accent'}">${cl ? '🛎️ Client hôtel · paie lui-même, jamais facturé au Département' : '🏛️ Confié par le Département'}${S.me.role === 'owner' ? `<br><button class="btn small" data-a="occTypeChg" data-id="${id}" style="margin-top:8px">Changer le type</button>` : ''}</div>` : `<div class="banner c-${cl ? 'slate' : 'accent'}">${cl ? '🛎️ Client hôtel (paie lui-même)' : '🏛️ Confié par le Département'} · <button class="linkbtn" data-a="occNew">changer</button></div>`}
+    ${id && (o.telephone || o.ref_tel || o.ref_mail) ? `<div class="card"><h3>Joindre</h3><div class="col">
+      ${o.telephone ? `<div class="row between"><span>${esc(occName(o))}</span>${callBtn(o.telephone, occName(o))}</div>` : ''}
+      ${o.ref_tel ? `<div class="row between"><span>Référent${o.ref_nom ? ' · ' + esc(o.ref_nom) : ''}</span>${callBtn(o.ref_tel, o.ref_nom || 'le référent')}</div>` : ''}
+      ${o.ref_mail ? `<div class="row between"><span>Mail du référent</span><a class="btn small soft" href="mailto:${esc(o.ref_mail)}">✉️ Écrire</a></div>` : ''}</div></div>` : ''}
     <fieldset class="card form" ${ro ? 'disabled' : ''}>
       <div class="two"><label>Prénom<input id="o-prenom" value="${esc(o.prenom || '')}"></label><label>Nom<input id="o-nom" value="${esc(o.nom || '')}"></label></div>
-      <div class="two"><label>Naissance<input id="o-naissance" type="date" value="${esc(o.naissance || '')}"></label><label>Catégorie<select id="o-cat"><option value="">—</option>${CATS.map((c) => opt(c, o.categorie)).join('')}</select></label></div>
+      ${cl ? `
+      <label>Téléphone (obligatoire)<input id="o-tel" inputmode="tel" value="${esc(o.telephone || '')}"></label>
+      <div class="two"><label>Hôtel<select id="o-hotel" data-change="oHotelC">${HOTELS.map((h) => opt(h.id, o.hotel, h.name)).join('')}</select></label><label>Chambre<select id="o-room">${freeRoomOpts(o.hotel, o.room_id || '')}</select></label></div>
+      <div class="two"><label>Arrivée<input id="o-entree" type="date" value="${esc(o.entree || '')}" data-change="oNuits"></label><label>Nombre de nuits<input id="o-nuits" type="number" min="1" inputmode="numeric" value="${esc(o.nuits || '')}" data-change="oNuits"></label></div>
+      <p class="muted sm" id="o-depart">${o.entree && o.nuits ? 'Départ prévu le ' + fdate(addDaysISO(o.entree, +o.nuits)) : 'Le départ prévu se calcule avec le nombre de nuits.'}</p>
+      <div class="card sub"><h3>🪪 Pièce d’identité</h3><p class="muted sm">Recto et verso. La photo est gardée jusqu’à ce qu’un gérant l’efface.</p>
+        <div class="col">${idThumb('piece_recto', 'Recto', hasR)}${D.passeport || (id && o.piece_recto && !o.piece_verso) ? '' : idThumb('piece_verso', 'Verso', hasV)}</div>
+        <label class="check"><input type="checkbox" id="o-passeport" data-change="oPass" ${D.passeport || (id && o.piece_recto && !o.piece_verso) ? 'checked' : ''}> Passeport (pas de verso)</label>
+        ${id && o.piece_recto ? `<button class="btn small ghost" data-a="idView" data-id="${id}">👁 Voir la pièce enregistrée</button>` : ''}</div>
+      <label>Nationalité<input id="o-nat" list="nat-l" value="${esc(o.nationalite || '')}" placeholder="Ex. : française" data-change="oNat"><datalist id="nat-l"><option value="Française"></datalist></label>
+      <div id="o-police" ${etr ? '' : 'hidden'}><p class="muted sm">Client étranger : fiche de police (gardée 6 mois).</p>
+        <div class="two"><label>Date de naissance<input id="o-naissance" type="date" value="${esc(o.naissance || '')}"></label><label>Lieu de naissance<input id="o-lieu" value="${esc(o.lieu_naissance || '')}"></label></div>
+        <label>Adresse habituelle<input id="o-adr" value="${esc(o.adresse || '')}"></label>
+        ${o.signature && !D.sigNew ? '<p class="sm">✍️ Signature enregistrée.</p>' : ''}<label>Signature du client<canvas id="o-sig" class="sigpad" width="600" height="180"></canvas></label><button class="btn small ghost" data-a="sigClear">Effacer la signature</button></div>` : `
+      <div class="two"><label>Naissance<input id="o-naissance" type="date" value="${esc(o.naissance || '')}"></label><label>Catégorie<select id="o-cat"><option value="">—</option>${CATS_DEP.map((c) => opt(c, o.categorie)).join('')}</select></label></div>
       <div class="two"><label>Hôtel<select id="o-hotel" data-change="oHotel">${hs}</select></label><label>Chambre<select id="o-room" data-change="oRoom">${roomOpts(o.hotel, isResto(o) ? 'resto' : (o.room_id || ''))}</select></label></div>
-      <div class="two"><label>Arrivée<input id="o-entree" type="date" value="${esc(o.entree || '')}"></label><label>Téléphone<input id="o-tel" inputmode="tel" value="${esc(o.telephone || '')}"></label></div>
+      <div class="two"><label>Arrivée<input id="o-entree" type="date" value="${esc(o.entree || '')}"></label><label>Téléphone du jeune<input id="o-tel" inputmode="tel" value="${esc(o.telephone || '')}"></label></div>
       <label class="check big" id="o-resto-l" ${isResto(o) ? 'hidden' : ''}><input type="checkbox" id="o-resto" ${o.resto && !isResto(o) ? 'checked' : ''}><span><b>🍽️ Repas sur place</b><br><span class="muted sm">Logé(e) et mange aussi au restaurant. Pour des repas sans chambre, choisis « Restauration (repas seuls) » dans Chambre.</span></span></label>
       ${id && eats(o) && activePecs(id).length && !activePecs(id).some((p) => p.repas === 'Oui') ? '<p class="sm rel-amber">⚠️ Aucune prise en charge en cours ne prévoit les repas : à vérifier avant de facturer.</p>' : ''}
       ${id && !isResto(o) && !o.resto && o.statut !== 'sorti' && activePecs(id).some((p) => p.repas === 'Oui') ? '<p class="sm rel-amber">ℹ️ La prise en charge en cours prévoit les repas, mais la case n’est pas cochée.</p>' : ''}
+      <div class="card sub"><h3>Référent</h3>
+        <div class="two"><label>Nom<input id="o-refnom" value="${esc(o.ref_nom || '')}"></label><label>Service<input id="o-refsrv" value="${esc(o.ref_service || '')}"></label></div>
+        <div class="two"><label>Téléphone<input id="o-reftel" inputmode="tel" value="${esc(o.ref_tel || '')}"></label><label>Mail<input id="o-refmail" type="email" value="${esc(o.ref_mail || '')}"></label></div></div>`}
       <label>Notes<textarea id="o-notes">${esc(o.notes || '')}</textarea></label>
-      ${ro ? '' : `<label>Pourquoi ce changement ?${id ? ' (facultatif)' : ''}<input id="o-raison" placeholder="${id ? 'Ex. : correction du prénom' : 'Ex. : arrivée envoyée par l’ASE'}"></label>
-      <button class="btn pri" data-a="occSave" data-id="${id || ''}">${id ? 'Enregistrer' : 'Ajouter au registre'}</button>`}</fieldset>
-    ${id ? `<div class="card"><div class="row between"><h3>Prises en charge</h3>${ro ? '' : `<button class="btn small soft" data-a="pecNew" data-id="${id}">＋ Ajouter</button>`}</div>
+      ${ro ? '' : `<label>Pourquoi ce changement ?${id ? ' (facultatif)' : ''}<input id="o-raison" placeholder="${id ? 'Ex. : correction du prénom' : (cl ? 'Ex. : arrivée sans réservation' : 'Ex. : arrivée envoyée par l’ASE')}"></label>
+      <button class="btn pri" data-a="occSave" data-id="${id || ''}" data-t="${T}">${id ? 'Enregistrer' : 'Ajouter au registre'}</button>`}</fieldset>
+    ${id && cl && o.piece_recto && canReg('reg_full') ? `<button class="btn ghost" data-a="idDel" data-id="${id}">🗑 Effacer la pièce d’identité</button>` : ''}
+    ${id && !cl ? `<div class="card"><div class="row between"><h3>Prises en charge</h3>${ro ? '' : `<button class="btn small soft" data-a="pecNew" data-id="${id}">＋ Ajouter</button>`}</div>
       ${pecs.length ? `<div class="group">${pecs.map((p) => { const t = todayISO(), on = (!p.debut || p.debut <= t) && (!p.fin || p.fin >= t);
-        return `<button class="prow" data-a="pecOpen" data-id="${p.id}"><span class="pr-t"><b>${esc(p.financeur || 'Financeur ?')}${p.reference ? ' · réf. ' + esc(p.reference) : ''}</b><span class="muted">${fdate(p.debut)} → ${fdate(p.fin)}${p.tarif ? ' · ' + esc(p.tarif) + ' €' : ''}${p.repas ? ' · repas : ' + esc(p.repas) : ''}</span></span><span class="pill ${on ? 'p-green' : 'p-plain'}">${on ? 'En cours' : (p.fin && p.fin < t ? 'Terminée' : 'À venir')}</span></button>`; }).join('')}</div>` : '<p class="muted">Aucune pour l’instant.</p>'}</div>
+        return `<button class="prow" data-a="pecOpen" data-id="${p.id}"><span class="pr-t"><b>${esc(p.financeur || 'Financeur ?')}${p.reference ? ' · réf. ' + esc(p.reference) : ''}</b><span class="muted">${fdate(p.debut)} → ${fdate(p.fin)}${p.tarif ? ' · ' + esc(p.tarif) + ' €' : ''}${p.repas ? ' · repas : ' + esc(p.repas) : ''}</span></span><span class="pill ${on ? 'p-green' : 'p-plain'}">${on ? 'En cours' : (p.fin && p.fin < t ? 'Terminée' : 'À venir')}</span></button>`; }).join('')}</div>` : '<p class="muted">Aucune pour l’instant.</p>'}</div>` : ''}
+    ${id ? `
       ${ro ? '' : (o.statut === 'sorti' ? `<button class="btn" data-a="occReturn" data-id="${id}">Annuler le départ</button>` : `<button class="btn bad" data-a="occExit" data-id="${id}">Départ</button>`)}
       ${ro ? '' : `<button class="btn ghost" data-a="occDel" data-id="${id}">🗑 Supprimer cette fiche (doublon ou erreur)</button>`}
       ${(() => { const H = occHist(id); if (!H.length) return ''; const show = S.occHistAll === id ? H : H.slice(0, 4);
         return `<div class="card"><h3>Historique</h3><p class="muted sm">Qui a modifié quoi sur cette fiche, quand et pourquoi.</p><div class="group flat">${show.map(logRow).join('')}</div>${H.length > show.length ? `<button class="btn small ghost" data-a="occHistAll" data-id="${id}">Voir les ${H.length} lignes</button>` : ''}</div>`; })()}` : ''}`);
+  if (cl && !ro) setTimeout(initSig, 0);
+}
+// Signature au doigt (fiche de police d'un client étranger).
+function initSig() {
+  const c = $('o-sig'); if (!c || c.dataset.on) return; c.dataset.on = '1';
+  const x = c.getContext('2d'); x.lineWidth = 3; x.lineCap = 'round'; x.strokeStyle = '#111'; let down = false;
+  const pt = (e) => { const r = c.getBoundingClientRect(); return [(e.clientX - r.left) * c.width / r.width, (e.clientY - r.top) * c.height / r.height]; };
+  c.addEventListener('pointerdown', (e) => { down = true; c.setPointerCapture(e.pointerId); const [a, b] = pt(e); x.beginPath(); x.moveTo(a, b); e.preventDefault(); });
+  c.addEventListener('pointermove', (e) => { if (!down) return; const [a, b] = pt(e); x.lineTo(a, b); x.stroke(); S.idDraft.sigNew = true; e.preventDefault(); });
+  c.addEventListener('pointerup', () => { down = false; });
+}
+// Photo de la pièce d'identité : stockage privé à part, jamais avec les photos de ménage.
+async function idUpload(blob, ext) {
+  const u = await api('reg_id_upload', { ext });
+  const r = await fetch(u.url, { method: 'PUT', headers: { 'content-type': ext === 'png' ? 'image/png' : 'image/jpeg', 'x-upsert': 'false' }, body: blob });
+  if (!r.ok) { const e = new Error('upload'); e.code = 'upload'; throw e; }
+  return u.path;
+}
+// Garde ce qui est déjà tapé quand la fiche se redessine (photo prise, case cochée).
+function occKeep() { const k = {}; document.querySelectorAll('#sheet input, #sheet select, #sheet textarea').forEach((el) => { if (el.id) k[el.id] = el.type === 'checkbox' ? el.checked : el.value; }); return k; }
+function occRestore(k) { Object.entries(k).forEach(([i, v]) => { const el = $(i); if (!el) return; if (el.type === 'checkbox') el.checked = v; else el.value = v; }); }
+function idViewSheet(id, urls) {
+  const o = occById(id);
+  openSheet('idview', `${sheetHead('Pièce d’identité')}<p class="muted">${esc(occName(o))} · photographiée le ${fdate(String(o.piece_le || '').slice(0, 10))}</p>
+    ${['piece_recto', 'piece_verso', 'signature'].filter((k) => urls[k]).map((k) => `<div class="card"><h3>${{ piece_recto: 'Recto', piece_verso: 'Verso', signature: 'Signature' }[k]}</h3><img src="${esc(urls[k])}" alt="" style="width:100%;border-radius:10px;background:#fff"></div>`).join('')}
+    <p class="muted sm">Chaque consultation est notée dans l’historique de la fiche.</p>
+    <button class="btn ghost" data-a="occOpen" data-id="${id}">← Retour à la fiche</button>`);
 }
 function pecSheet(occId, pecId) {
   const p = pecId ? S.reg.pecs.find((x) => x.id === pecId) : { financeur: FINANCEURS[0], debut: todayISO(), repas: 'Non' };
@@ -2595,8 +2676,8 @@ const A = {
   rEat() { S.rEat = !S.rEat; render(); },
   rDone() { S.rDone = !S.rDone; render(); },
   regRoom(d) { const os = occOfRoom(d.id); if (os.length === 1) occSheet(os[0].id); else if (!os.length) { if (canReg('reg_full')) occSheet(null, { hotel: S.rooms[d.id].hotel, room_id: d.id }); } else openSheet('roomocc', `${sheetHead(esc(placeName(S.rooms[d.id])))}<div class="group">${os.map((o) => `<button class="prow" data-a="occOpen" data-id="${o.id}"><span class="pr-t">${occLine(o)}</span></button>`).join('')}</div>${canReg('reg_full') ? `<button class="btn" data-a="occNewRoom" data-id="${d.id}">＋ Ajouter quelqu’un dans cette chambre</button>` : ''}`); },
-  occNew() { occSheet(null, { hotel: S.scope !== 'all' ? S.scope : S.hotel }); },
-  occNewRoom(d) { occSheet(null, { hotel: S.rooms[d.id].hotel, room_id: d.id }); },
+  occNew() { occTypeSheet({ hotel: S.scope !== 'all' ? S.scope : S.hotel }); },
+  occNewRoom(d) { occTypeSheet({ hotel: S.rooms[d.id].hotel, room_id: d.id }); },
   occOpen(d) { occSheet(d.id); },
   occHistAll(d) { S.occHistAll = d.id; occSheet(d.id); },
   occDel(d) { delSheet(d.id); },
@@ -2607,11 +2688,51 @@ const A = {
     if (await act(() => api('reg_occ_delete', { id: d.id, keep_id: keep, raison }), 'Fiche supprimée · visible dans le Journal')) { if (keep && occById(keep)) occSheet(keep); else closeSheet(); }
   },
   async occRestore(d) { await act(() => api('reg_occ_restore', { id: d.id }), 'Fiche rétablie'); },
+  occPickType(d) { occSheet(null, { ...(S.occPreset || {}), type: d.k }); },
+  async idShot(d) {
+    const k = occKeep(); const f = await pickFile('image/*', null); if (!f) return;
+    toast('Envoi de la photo…', 8000);
+    try { const b = await shrink(f, null); S.idDraft[d.k] = await idUpload(b, 'jpg'); toast('Photo enregistrée ✓'); }
+    catch (e) { toast('La photo n’a pas pu partir. Vérifie la connexion et réessaie.'); return; }
+    occSheet(S.idDraft.for === 'new' ? null : S.idDraft.for, { ...(S.occPreset || {}), type: 'client' }); occRestore(k);
+  },
+  sigClear() { const c = $('o-sig'); if (c) c.getContext('2d').clearRect(0, 0, c.width, c.height); S.idDraft.sigNew = false; },
+  async idView(d) { let r; if (await act(async () => { r = await api('reg_id_urls', { id: d.id }); })) idViewSheet(d.id, r.urls || {}); },
+  idDel(d) {
+    const o = occById(d.id);
+    openSheet('iddel', `${sheetHead('Effacer la pièce d’identité')}<p><b>${esc(occName(o))}</b> · photographiée le ${fdate(String(o.piece_le || '').slice(0, 10))}</p>
+      <div class="card form"><p>Les photos (recto, verso, signature) seront effacées pour de bon. Le reste de la fiche ne change pas.</p>
+      <label>Pourquoi ?<input id="idd-raison" placeholder="Ex. : client parti depuis longtemps"></label>
+      <button class="btn bad" data-a="idDelGo" data-id="${d.id}">Effacer définitivement</button></div>
+      <button class="btn ghost" data-a="occOpen" data-id="${d.id}">← Retour à la fiche</button>`);
+  },
+  async idDelGo(d) { const raison = ($('idd-raison') && $('idd-raison').value || '').trim(); if (await act(() => api('reg_id_delete', { id: d.id, raison }), 'Pièce d’identité effacée')) occSheet(d.id); },
+  occTypeChg(d) {
+    const o = occById(d.id), to = isClient(o) ? 'departement' : 'client';
+    openSheet('occtypechg', `${sheetHead('Changer le type')}<p><b>${esc(occName(o))}</b></p>
+      <div class="card form"><p>${to === 'client' ? 'Passer en <b>client hôtel</b> : il ne pourra plus avoir de prise en charge ni être facturé au Département. Impossible s’il a déjà des prises en charge ou des dates facturées.' : 'Passer en <b>confié par le Département</b> : il pourra recevoir des prises en charge et être facturé.'}</p>
+      <label>Pourquoi ? (obligatoire)<input id="tc-raison"></label>
+      <button class="btn pri" data-a="occTypeGo" data-id="${d.id}" data-k="${to}">Confirmer</button></div>
+      <button class="btn ghost" data-a="occOpen" data-id="${d.id}">← Retour à la fiche</button>`);
+  },
+  async occTypeGo(d) {
+    const o = occById(d.id), raison = ($('tc-raison') && $('tc-raison').value || '').trim(); if (!raison) { toast('Indique la raison.'); return; }
+    if (await act(() => api('reg_occ_save', { id: o.id, type: d.k, hotel: o.hotel, room_id: isResto(o) ? 'resto' : o.room_id, nom: o.nom, prenom: o.prenom, naissance: o.naissance, categorie: d.k === 'client' ? 'Conventionnel' : '', telephone: o.telephone, entree: o.entree, notes: o.notes, nuits: o.nuits, passeport: !o.piece_verso, raison }), 'Type changé')) occSheet(o.id);
+  },
   async occSave(d) {
     const v = (id) => ($(id) && $(id).value || '').trim();
-    const body = { id: d.id || undefined, prenom: v('o-prenom'), nom: v('o-nom'), naissance: v('o-naissance'), categorie: v('o-cat'), hotel: v('o-hotel'), room_id: v('o-room') || null, entree: v('o-entree'), telephone: v('o-tel'), notes: v('o-notes'), raison: v('o-raison'), resto: !!($('o-resto') && $('o-resto').checked) };
+    const body = { id: d.id || undefined, type: d.t, prenom: v('o-prenom'), nom: v('o-nom'), naissance: v('o-naissance'), categorie: d.t === 'client' ? 'Conventionnel' : v('o-cat'), hotel: v('o-hotel'), room_id: v('o-room') || null, entree: v('o-entree'), telephone: v('o-tel'), notes: v('o-notes'), raison: v('o-raison'), resto: !!($('o-resto') && $('o-resto').checked) };
     if (!body.nom && !body.prenom) { toast('Écris au moins un nom.'); return; }
-    if (!d.id && !body.raison) { toast('Indique pourquoi (ex. : arrivée envoyée par l’ASE).'); return; }
+    if (d.t === 'client') {
+      const o = d.id ? occById(d.id) : {}, D = S.idDraft || {};
+      Object.assign(body, { nuits: v('o-nuits'), nationalite: v('o-nat'), lieu_naissance: v('o-lieu'), adresse: v('o-adr'), passeport: !!($('o-passeport') && $('o-passeport').checked) });
+      ['piece_recto', 'piece_verso'].forEach((k) => { if (D[k]) body[k] = D[k]; });
+      if (!body.telephone || !body.room_id || !body.entree || !(+body.nuits > 0)) { toast('Téléphone, chambre, arrivée et nombre de nuits sont obligatoires.'); return; }
+      if (!(D.piece_recto || o.piece_recto) || (!body.passeport && !(D.piece_verso || o.piece_verso))) { toast('Prends en photo la pièce d’identité, recto et verso (ou coche « Passeport »).'); return; }
+      if (D.sigNew && $('o-sig')) { try { const b = await new Promise((r) => $('o-sig').toBlob(r, 'image/png')); body.signature = await idUpload(b, 'png'); } catch (e) { toast('La signature n’a pas pu partir. Réessaie.'); return; } }
+    } else Object.assign(body, { ref_nom: v('o-refnom'), ref_service: v('o-refsrv'), ref_tel: v('o-reftel'), ref_mail: v('o-refmail') });
+    if (!d.id && !body.raison) { toast(d.t === 'client' ? 'Indique pourquoi (ex. : arrivée sans réservation).' : 'Indique pourquoi (ex. : arrivée envoyée par l’ASE).'); return; }
+    S.idDraft = {};
     let id = d.id; if (await act(async () => { const r = await api('reg_occ_save', body); id = r.id; }, d.id ? 'Fiche enregistrée' : 'Ajouté au registre')) occSheet(id);
   },
   occExit(d) { exitSheet(d.id); },
@@ -3109,6 +3230,10 @@ const C = {
   sdHotel(el) { const f = S.sd; if (!f) return; f.hotel = el.value; if (f.check) { const n = el.value + '-' + f.check.split('-').slice(1).join('-'); f.check = secChecks().some((x) => x.id === n) ? n : ''; } sdRedraw(); },
   sdCheck(el) { if (!S.sd) return; S.sd.check = el.value; S.sd.guess = false; sdRedraw(); },
   assignTo(el) { S.assignTo = el.value; },
+  oHotelC(el) { $('o-room').innerHTML = freeRoomOpts(el.value, ''); },
+  oNuits() { const e = $('o-entree').value, n = +$('o-nuits').value, p = $('o-depart'); if (p) p.textContent = e && n > 0 ? 'Départ prévu le ' + fdate(addDaysISO(e, n)) : 'Le départ prévu se calcule avec le nombre de nuits.'; },
+  oNat(el) { const p = $('o-police'); if (p) { p.hidden = !el.value.trim() || /^fran/i.test(el.value.trim()); if (!p.hidden) setTimeout(initSig, 0); } },
+  oPass(el) { const k = occKeep(); S.idDraft.passeport = el.checked; occSheet(S.idDraft.for === 'new' ? null : S.idDraft.for, { ...(S.occPreset || {}), type: 'client' }); occRestore(k); },
   oHotel(el) { $('o-room').innerHTML = roomOpts(el.value, ''); const l = $('o-resto-l'); if (l) l.hidden = false; },
   oRoom(el) { const l = $('o-resto-l'); if (l) l.hidden = el.value === 'resto'; },
   aHotel(el) { $('a-room').innerHTML = roomOpts(el.value, ''); },
