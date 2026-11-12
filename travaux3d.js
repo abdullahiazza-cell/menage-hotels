@@ -9,7 +9,7 @@ const TR_FURN = {
   chevet: { l: 'Chevet', s: '', w: 40, d: 40, h: 50 }, bureau: { l: 'Bureau', s: 'Bureau', w: 100, d: 50, h: 75 },
   chaise: { l: 'Chaise', s: '', w: 45, d: 45, h: 85 }, fauteuil: { l: 'Fauteuil', s: 'Faut.', w: 75, d: 75, h: 80 },
   armoire: { l: 'Armoire', s: 'Armoire', w: 100, d: 60, h: 200 }, tv: { l: 'Télé murale', s: 'TV', w: 100, d: 8, h: 56 },
-  bagages: { l: 'Porte-bagages', s: 'Bag.', w: 60, d: 45, h: 50 }, meuble: { l: 'Meuble', s: 'Meuble', w: 80, d: 40, h: 80 },
+  bagages: { l: 'Porte-bagages', s: 'Bag.', w: 60, d: 45, h: 50 }, penderie: { l: 'Penderie ouverte (banc bagages + portant)', s: 'Pend.', w: 100, d: 45, h: 180 }, meuble: { l: 'Meuble', s: 'Meuble', w: 80, d: 40, h: 80 },
   // Salle de bain
   wc: { l: 'WC', s: 'WC', w: 38, d: 62, h: 80, san: 1 }, lavabo: { l: 'Lavabo', s: 'Lav.', w: 60, d: 46, h: 88, san: 1 },
   baignoire: { l: 'Baignoire', s: 'Bain', w: 170, d: 70, h: 55, san: 1 }, douche: { l: 'Douche', s: 'Douche', w: 90, d: 120, h: 4, san: 1 },
@@ -31,7 +31,7 @@ const TR_NIVEAUX = [
   { k: 'eco', l: 'Essentiel', e: '💶', lvl: 0, deco: { mur: 'blanc', accent: 'sauge', rideau: 'occultant', tissu: 'gris', linge: 'blanc', lum: ['plafonnier', 'appliques'] },
     txt: 'Le moins cher qui fait propre et net : on garde le sol et les meubles en bon état, on repeint en blanc avec le mur de la tête de lit en couleur, rideaux occultants, linge blanc, plafonnier LED et une liseuse par personne.' },
   { k: 'confort', l: 'Confort', e: '⭐', lvl: 1, deco: { mur: 'lin', accent: 'vertprofond', sol: 'lvtchene', rideau: 'double', tissu: 'lin', linge: 'blanc', lum: ['spots', 'appliques', 'ruban'] },
-    txt: 'Le meilleur rapport qualité-prix : sol vinyle imitation chêne (solide, facile à laver), voilage + occultants, fauteuil et porte-bagages, spots au plafond, liseuses et ruban LED derrière la tête de lit pour une lumière douce le soir.' },
+    txt: 'Le meilleur rapport qualité-prix : sol vinyle imitation chêne (solide, facile à laver), voilage + occultants, fauteuil, penderie ouverte (banc à valise + portant à cintres), spots au plafond, liseuses et ruban LED derrière la tête de lit pour une lumière douce le soir.' },
   { k: 'prestige', l: 'Prestige', e: '💎', lvl: 2, deco: { mur: 'grege', accent: 'bleunuit', sol: 'chenefume', rideau: 'double', tissu: 'anthracite', linge: 'blanc', lum: ['corniche', 'spots', 'appliques', 'ruban'] },
     txt: 'Le haut de gamme : grand lit de 160 quand la pièce le permet, parquet chêne fumé, doubles rideaux épais, mur de tête de lit bleu nuit, corniche LED qui éclaire le plafond sans éblouir, spots, liseuses et ruban LED.' },
 ];
@@ -333,7 +333,8 @@ function trAuto(roomId, beds, base, opt) {
   const doorPt = mid(trOpening(p.door, trDW(p), W, D, 10)), winPt = mid(winZ);
   const corner = (c, L, w) => (c <= w / 2 + 1 || c >= L - w / 2 - 1 ? 8 : 0);
   if (placed.length && !bare) {
-    putWall('armoire', { front: 60, noWin: true, score: (it, wall, c, L) => -dist(it, doorPt) / 12 + corner(c, L, 100) });
+    // Penderie ouverte plutôt qu'une armoire : un banc bas pour la valise, un portant avec quelques cintres au-dessus. Pas collée à l'entrée.
+    const pend = putWall('penderie', { front: 60, optional: true, noWin: true, score: (it, wall, c, L) => (dist(it, doorPt) < 120 ? -20 : 0) - Math.abs(Math.min(dist(it, doorPt), 400) - 200) / 40 + corner(c, L, 100) });
     const desk = putWall('bureau', { front: 70, noWin: true, score: (it, wall, c, L) => Math.min(dist(it, doorPt), 300) / 60 + corner(c, L, 100) });
     if (desk) { const [ox, oy] = trRot(0, 50 / 2 + 45 / 2 - 15, desk.r); p.items.push({ id: trPid(), t: 'chaise', r: (desk.r + 180) % 360, x: desk.x + ox, y: desk.y + oy }); }
     // Télé au mur, face au premier lit.
@@ -342,11 +343,11 @@ function trAuto(roomId, beds, base, opt) {
     for (let k = 0; k <= L && !tv; k += 10) for (const c of [target - k, target + k]) {
       if (c < 50 || c > L - 50) continue;
       const it = trAtWall('tv', wall, c, W, D), r = trRect(it);
-      const blocked = [trOpening(p.door, trDW(p) + 20, W, D, 10), trOpening(p.win, winW + 10, W, D, 10), ...(sdb ? [sdb] : []), ...p.items.filter((i) => i.t === 'armoire').map(trRect)];
+      const blocked = [trOpening(p.door, trDW(p) + 20, W, D, 10), trOpening(p.win, winW + 10, W, D, 10), ...(sdb ? [sdb] : []), ...p.items.filter((i) => i.t === 'armoire' || i.t === 'penderie').map(trRect)];
       if (trInside(r, W, D) && !blocked.some((o) => trHit(r, o))) { tv = it; break; }
     }
     if (tv) p.items.push(tv); else miss.push('Télé murale');
-    putWall('bagages', { front: 50, optional: true, noWin: true, score: (it) => -dist(it, doorPt) / 12 });
+    if (!pend) putWall('bagages', { front: 50, optional: true, noWin: true, score: (it) => -dist(it, doorPt) / 12 });
     if (W * D >= 110000) putWall('fauteuil', { front: 45, optional: true, noWin: true, score: (it) => -dist(it, winPt) / 12 });
   }
   const n = beds.reduce((a, t) => a + (t === 'lit_d' ? 2 : 1), 0), need = TR_SURF3[Math.min(3, n)], s = trSurf({ ...d, plan: p });
@@ -362,12 +363,13 @@ const TR_NIV_VAR = {
 // Finitions d'un niveau pour la variante n : chaque nouvel appui change les couleurs, l'éclairage et, si possible, le mur des lits.
 const trNivDeco = (nv, n) => { const v = TR_NIV_VAR[nv.k]; return { ...nv.deco, ...v.pal[n % v.pal.length], lum: v.lum[n % v.lum.length] }; };
 function trNiveau(roomId, nv, base, n) {
-  const d = trData(roomId), want = [...Array(trNum(d.lits_d) || 0).fill('lit_d'), ...Array(trNum(d.lits_s) || 0).fill('lit_s')];
+  const d = trData(roomId), mine = trLitsOf(base), want = mine.length ? mine : [...Array(trNum(d.lits_d) || 0).fill('lit_d'), ...Array(trNum(d.lits_s) || 0).fill('lit_s')];
   const cands = want.length ? [want] : (base.cfg && TR_CFG.find((c) => c[0] === base.cfg) ? [TR_CFG.find((c) => c[0] === base.cfg)[2]] : [['lit_d', 'lit_s'], ['lit_d'], ['lit_s', 'lit_s'], ['lit_s']]);
   let best = null;
-  for (const beds of cands) {
+  // Lits imposés : si la variante demandée ne les place pas, on essaie les variantes suivantes avant de renoncer.
+  for (const beds of cands) for (const alt of (want.length ? [0, 1, 2, 3, 4, 5] : [0]).map((k) => (n || 0) + k)) {
     for (const bigTry of (nv.lvl === 2 && beds.includes('lit_d') ? [true, false] : [false])) {
-      const a = trAuto(roomId, beds, base, { lvl: nv.lvl, big: bigTry, alt: n || 0 }); a.big = bigTry; a.beds = beds;
+      const a = trAuto(roomId, beds, base, { lvl: nv.lvl, big: bigTry, alt }); a.big = bigTry; a.beds = beds;
       if (bigTry && (!a.bedsOk || trPlanCheck(roomId, { ...base, items: a.p.items }).lines.length)) continue; // le lit de 160 seulement s'il ne gêne rien
       if (a.bedsOk && a.surfOk) return a; if (!best && a.bedsOk) best = a;
     }
@@ -468,8 +470,13 @@ function trFork(name) {
   const v = { id: crypto.randomUUID(), room_id: P.rid, owner_id: S.tr.me_id, owner_label: S.me.label, name: nm, plan: JSON.parse(JSON.stringify(P.p)) };
   S.tr.plans.push(v); P.vid = v.id; if (!name) toast(`Ta version est créée : « ${nm} ». L’originale n’est pas touchée.`, 6000); return v;
 }
+// Les lits voulus pour la chambre : le choix fait, sinon ceux du plan. Ils restent d'un niveau à l'autre.
+const trBedsOf = (p) => (p.items || []).filter(trIsBed).map((i) => i.t).sort((a, b) => (b === 'lit_d') - (a === 'lit_d'));
+const trLitsOf = (p) => (Array.isArray(p.lits) && p.lits.length ? p.lits : trBedsOf(p));
+const trLitsLab = (beds) => { const dd = beds.filter((t) => t === 'lit_d').length, ss = beds.length - dd; return [dd ? `${dd} lit${dd > 1 ? 's' : ''} double${dd > 1 ? 's' : ''}` : '', ss ? `${ss} lit${ss > 1 ? 's' : ''} simple${ss > 1 ? 's' : ''}` : ''].filter(Boolean).join(' + '); };
 function trPlanSave() {
   const P = S.trP; if (!P || !trPlanCan()) return;
+  const beds = trBedsOf(P.p); if (beds.length) P.p.lits = beds;
   if (!P.vid) { if (trCan()) { P.p.by = trPrenom(S.me.label); trPatch(P.rid, { plan: P.p }); return; } trFork(); }
   let v = trVGet(P.vid); if (v && v.owner_id !== S.tr.me_id) v = trFork();
   if (!v) return; v.plan = JSON.parse(JSON.stringify(P.p)); trVSave(v); trVersDraw();
@@ -665,6 +672,11 @@ function trParts(it, duvet, noLamp) {
   if (it.t === 'lavabo') return [...(w >= 80 ? [[0, 0, w, d, 12, 80, C.wood, 3], [0, d / 2 + 0.4, w - 10, 0.8, 46, 47, C.woodD, 0]] : [[0, -d / 2 + 12, 18, 18, 0, 78, CER, 0]]), [0, 0, w, d, 78, 88, CER, 0], [0, 2, w - 16, d - 18, 87.5, 88.3, WAT, 0], [0, -d / 2 + 5, 4, 12, 88, 102, C.metal, 0], [0, -d / 2 + 1.2, Math.min(w - 4, 70), 2, 108, 178, [0.78, 0.82, 0.85], 0], ...(it.n ? [[0, -d / 2 + 2.4, Math.min(w - 4, 70) + 6, 1, 105, 181, C.metal, 0]] : [])];
   if (it.t === 'baignoire') return [[0, 0, w, d, 0, 55, CER, 0], [0, 0, w - 14, d - 14, 54.5, 55.4, WAT, 0], [-w / 2 + 12, -d / 2 + 4, 5, 8, 55, 72, C.metal, 0], [-w / 2 + 12, -d / 2 + 2, 4, 3, 72, 190, C.metal, 0], [-w / 2 + 12, -d / 2 + 10, 14, 14, 186, 189, C.metal, 0]];
   if (it.t === 'douche') { const ita = /italienne/.test(it.n || ''); return [[0, 0, w, d, 0, ita ? 1 : 4, ita ? [0.55, 0.55, 0.53] : CER, ita ? 2 : 0], [0, 0, 10, 10, ita ? 1 : 4, ita ? 1.4 : 4.4, C.metal, 0], [w / 2 - 1, d / 4, 1.2, d / 2, ita ? 1 : 4, 200, [0.70, 0.84, 0.90], 7], [w / 2 - 1, d / 2 - 1, 2, 2, 0, 200, C.metal, 0], [0, -d / 2 + 2, 4, 3, 100, 200, C.metal, 0], [0, -d / 2 + 14, 22, 22, 196, 199, C.metal, 0]]; }
+  if (it.t === 'penderie') {
+    const bk = -d / 2 + 4, cint = [-0.3, -0.1, 0.12, 0.3].map((f) => [f * w, bk + 10, 1.2, 30, 118, 168, f < 0 ? C.textile : dark(C.textile, 1.12), 0]);
+    return [[0, 0, w, d, 40, 45, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, 40, C.woodD, 3), [-w / 2 + 2, bk, 3, 3, 45, h, C.metal, 0], [w / 2 - 2, bk, 3, 3, 45, h, C.metal, 0],
+      [0, bk + 10, w - 4, 2.4, 168, 170.4, C.metal, 0], [-w / 2 + 2, bk + 5, 3, 13, 168, 170.4, C.metal, 0], [w / 2 - 2, bk + 5, 3, 13, 168, 170.4, C.metal, 0], [0, bk + 10, w, 24, h - 2, h, C.wood, 3], ...cint];
+  }
   if (it.t === 'bagages') return [[0, 0, w, d, 40, 44, C.wood, 3], [0, -d / 2 + 2, w, 3, 44, 52, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, 40, C.woodD, 3)];
   return [[0, 0, w, d, 0, h, C.wood, 3]];
 }
@@ -1109,6 +1121,9 @@ function trPlanSheet(roomId, keep) {
   const ikN = P.p.items.filter((i) => i.ik).length;
   openSheet('trplan:' + roomId, `<div class="row between"><h2>${esc(trPlace(r))} · ${trM(W)} × ${trM(D)}</h2><button class="btn small" data-a="trRoom" data-id="${esc(roomId)}">‹ Fiche</button></div>
     <div id="tr-vers">${trVersHtml()}</div>
+    ${can ? (() => { const cur = JSON.stringify(trLitsOf(P.p)), chip = (c, all) => { const on = JSON.stringify(TR_CFG.find((x) => x[0] === c.k)[2]) === cur; return !all && !on && !c.a.bedsOk ? '' : `<button data-a="trLits" data-k="${c.k}" aria-pressed="${on}"${c.a.bedsOk ? '' : ' class="tr-off"'}>${c.l}${c.a.bedsOk ? '' : ' · ne rentre pas'}</button>`; };
+      return P.askLits ? `<div id="tr-lits" class="card tr-ask"><h3>🛏️ Combien de lits ?</h3><p class="banner sm c-amber">Choisis d’abord le nombre de lits : je fais ensuite la proposition, et toutes les suivantes garderont ces lits.</p><div class="tr-eq">${cfgs.map((c) => chip(c, true)).join('')}</div></div>`
+        : `<div id="tr-lits" class="tr-eq tr-litsrow"><span>🛏️ Lits gardés :</span>${cfgs.map((c) => chip(c, false)).join('')}</div>`; })() : ''}
     <div class="segc" role="group"><button data-a="trPlanView" data-k="plan" aria-pressed="${P.view === 'plan'}">Plan</button><button data-a="trPlanView" data-k="3d" aria-pressed="${P.view === '3d'}">Vue 3D</button></div>
     ${P.view === 'plan' && trCan() ? `<button class="btn small ${P.edit ? 'pri' : 'soft'}" style="margin-bottom:8px" data-a="trEdit">${P.edit ? '✓ Terminer les corrections' : '✏️ Corriger murs, cloisons et fenêtres'}</button>` : ''}
     <div class="tr-stage${P.big && P.view === '3d' ? ' big' : ''}">${P.view === 'plan'
@@ -1194,7 +1209,16 @@ Object.assign(A, {
     const P = S.trP, c = TR_CFG.find((x) => x[0] === d.k); if (!P || !c || !trPlanCan()) return;
     if (P.p.items.length && !confirm('Remplacer les meubles du plan par cette proposition ?')) return;
     const a = trAuto(P.rid, c[2], P.p); if (!a.p.items.length) { toast('Rien ne rentre dans cette disposition.'); return; }
-    P.p.items = [...a.p.items, ...P.p.items.filter(trIsSan)]; P.p.cfg = d.k; P.sel = null; trPlanSave(); trPlanSheet(P.rid, true);
+    P.p.items = [...a.p.items, ...P.p.items.filter(trIsSan)]; P.p.cfg = d.k; P.p.lits = [...c[2]]; P.sel = null; trPlanSave(); trPlanSheet(P.rid, true);
+  },
+  // Le nombre de lits choisi : il reste pour tous les niveaux. Si un niveau est en place, il est refait avec ces lits, mêmes finitions.
+  trLits(d) {
+    const P = S.trP, c = TR_CFG.find((x) => x[0] === d.k); if (!P || !c || !trPlanCan()) return;
+    const ask = P.askLits, keep = P.p.niv && !ask, nv = TR_NIVEAUX.find((x) => x.k === (ask || P.p.niv)), old = P.p.lits;
+    P.p.lits = [...c[2]]; P.askLits = null;
+    if (nv) { if (keep) P.p.nivN = (P.p.nivN || 0) - 1; else P.p.niv = null; const before = JSON.stringify(P.p.items); A.trNiveauGo({ k: nv.k, ok: 1 }); if (JSON.stringify(P.p.items) === before) { P.p.lits = old; trPlanSheet(P.rid, true); } return; }
+    if (P.p.items.some(trIsBed)) { const a = trAuto(P.rid, c[2], P.p); if (!a.bedsOk) { P.p.lits = old; toast(`${c[1]} : ça ne rentre pas dans cette pièce.`, 4000); trPlanSheet(P.rid, true); return; } P.p.items = [...a.p.items, ...P.p.items.filter(trIsSan)]; }
+    trPlanSave(); trPlanSheet(P.rid, true); toast(`${c[1]} : les propositions garderont ce nombre de lits.`);
   },
   trDoorWall(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)), k = +d.k, L = k % 2 ? D : W, dw = trDW(P.p); P.p.door = { ...P.p.door, wall: k, pos: Math.min(L - dw / 2, Math.max(dw / 2, P.p.door.pos)) }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
   trDoorWid(d) { const P = S.trP; if (!P || !trPlanCan()) return; const { W, D } = trWDH(trData(P.rid)), w = +d.k, L = P.p.door.wall % 2 ? D : W; P.p.door = { ...P.p.door, w, pos: Math.min(L - w / 2, Math.max(w / 2, P.p.door.pos)) }; trDoorToast(); trPlanSave(); trPlanSheet(P.rid, true); },
@@ -1229,9 +1253,12 @@ Object.assign(A, {
   trDecoLum(d) { const P = S.trP; if (!P || !trPlanCan()) return; const cur = trLum(P.p.deco), lum = cur.includes(d.v) ? cur.filter((x) => x !== d.v) : [...cur, d.v]; P.p.deco = { ...(P.p.deco || {}), lum }; trPlanSave(); trPlanSheet(P.rid, true); },
   trNiveauGo(d) {
     const P = S.trP, nv = TR_NIVEAUX.find((x) => x.k === d.k); if (!P || !nv || !trPlanCan()) return;
-    if (P.p.items.length && !P.p.niv && !confirm(`Remplacer les meubles et les finitions du plan par la proposition « ${nv.l} » ?`)) return;
+    // D'abord : combien de lits ? Ensuite, chaque proposition garde ces lits.
+    if (!trLitsOf(P.p).length) { P.askLits = nv.k; trPlanSheet(P.rid, true); const q = $('tr-lits'); if (q) q.scrollIntoView({ block: 'center', behavior: 'smooth' }); toast('Combien de lits dans cette chambre ? Choisis, et je fais la proposition.', 4000); return; }
+    if (P.p.items.length && !P.p.niv && !d.ok && !confirm(`Remplacer les meubles et les finitions du plan par la proposition « ${nv.l} » ?`)) return;
     const n = P.p.niv === nv.k ? (P.p.nivN || 0) + 1 : 0; // un nouvel appui sur le même niveau : une autre combinaison
-    const a = trNiveau(P.rid, nv, P.p, n); if (!a.p.items.length) { toast('Rien ne rentre dans cette pièce avec ces lits.'); return; }
+    const a = trNiveau(P.rid, nv, P.p, n), lits = trLitsOf(P.p);
+    if (!a.p.items.length || (lits.length && (!a.bedsOk || a.p.items.filter(trIsBed).length !== lits.length))) { toast(`${trLitsLab(lits)} : ça ne rentre pas dans cette pièce. Choisis un autre nombre de lits.`, 5000); return; }
     const oldSan = P.p.items.filter(trIsSan); let san = oldSan, bnote = '';
     if (P.p.sdb && P.p.sdb.c) {
       if (nv.k !== 'eco' || !oldSan.length) { const hadBath = oldSan.some((i) => i.t === 'baignoire'), r = trSdbAuto(P.rid, { ...P.p, items: [] }, nv.k === 'prestige' ? 'italienne' : nv.k === 'confort' ? (n % 2 ? 'bain' : 'douche') : (hadBath ? 'bain' : 'douche'), { vasque: nv.k === 'prestige', n }); san = r.items; bnote = r.note; }
