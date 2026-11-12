@@ -758,7 +758,7 @@ function trPlanSheet(roomId, keep) {
     <div class="card"><h3>💡 Dispositions proposées</h3><p class="muted">Calculées avec la place de la porte et de la fenêtre. Touche une proposition pour la voir${can ? ' ; elle remplace les meubles du plan' : ''}.</p>
       <div class="group flat">${cfgs.map((c) => `<button class="prow" ${can ? '' : 'disabled'} data-a="trPlanCfg" data-k="${c.k}"><span class="pr-t"><b>${c.l}</b><span class="muted sm">${!c.a.bedsOk ? 'Les lits ne rentrent pas' : (!c.a.surfOk ? `Surface trop petite en 3★ (${trFr(c.a.surf)} m² pour ${trFr(c.a.need)})` : (c.a.miss.length ? 'Pas de place pour : ' + c.a.miss.join(', ').toLowerCase() : 'Tout rentre, avec bureau, armoire et télé'))}</span></span><span class="pill ${c.ok ? (c.a.miss.length ? 'p-amber' : 'p-green') : 'p-red'}">${c.ok ? (c.a.miss.length ? 'Juste' : 'Oui') : 'Non'}</span></button>`).join('')}</div></div>
     ${can ? `<div class="card"><h3>Ajouter un meuble</h3><div class="tr-eq">${Object.entries(TR_FURN).filter(([k]) => k !== 'meuble').map(([k, f]) => `<button data-a="trPlanAdd" data-k="${k}">＋ ${f.l}</button>`).join('')}</div>
-      <div class="form"><label>Un meuble du catalogue IKEA<select data-change="trPlanIk">${opt('', '', S.trCat ? 'Choisir une référence…' : 'Chargement…')}${S.trCat ? TR_IK_CATS.filter((c) => c[2]).map(([c, l]) => `<optgroup label="${l}">${S.trCat.filter((x) => x.cat === c && trIkDims(x)).map((x) => opt(x.ref, '', `${x.name} · ${(x.descr || '').split(',').slice(-1)[0].trim()}${x.price != null ? ' · ' + trEur(x.price) : ''}`)).join('')}</optgroup>`).join('') : ''}</select></label></div>
+      <button class="btn soft" style="width:100%;margin-top:10px" data-a="trIkPick">🛋️ Choisir dans le catalogue IKEA, avec photos</button>
       ${bank.length ? `<div class="form"><label>Ou un meuble qu’on a déjà<select data-change="trPlanBank">${opt('', '', 'Choisir dans nos meubles…')}${bank.map((i) => opt(i.id, '', `${i.label || trType(i.type)[1]} · ${i.w_cm} × ${i.d_cm} cm`)).join('')}</select></label></div>` : ''}</div>` : ''}
     ${hasSdb ? `<div class="card"><h3>🚿 Salle de bain</h3><p class="muted">Où est-elle par rapport aux mesures de la chambre ?</p>
       <div class="segc five" role="group">${[['', 'À part'], ['no', '↖ coin'], ['ne', '↗ coin'], ['so', '↙ coin'], ['se', '↘ coin']].map(([k, l]) => `<button ${can ? '' : 'disabled'} data-a="trPlanSdb" data-k="${k}" aria-pressed="${(P.p.sdb.c || '') === k}">${l}</button>`).join('')}</div>
@@ -817,6 +817,10 @@ Object.assign(A, {
     const a = trNiveau(P.rid, nv, P.p, n); if (!a.p.items.length) { toast('Rien ne rentre dans cette pièce avec ces lits.'); return; }
     P.p.items = a.p.items; P.p.deco = trNivDeco(nv, n); P.p.niv = nv.k; P.p.nivN = n; if (n) toast(`${nv.l} · variante ${n + 1}`); P.p.cfg = null; P.sel = null; P.view = '3d'; trPlanSave(); trPlanSheet(P.rid, true);
   },
+  trIkPick() { if (!S.trP || !trPlanCan()) return; trIkPickSheet(); },
+  trIkPk(d) { S.trIkPk = d.k; trIkPickSheet(); },
+  trIkBack() { if (S.trP) trPlanSheet(S.trP.rid, true); },
+  trIkPut(d) { C.trPlanIk({ value: d.ref }); },
   async trIkPlanList() {
     const P = S.trP; if (!P || !trCan() || !S.trCat) return; const by = {}; P.p.items.filter((i) => i.ik).forEach((i) => { by[i.ik] = (by[i.ik] || 0) + 1; });
     let n = 0;
@@ -872,9 +876,18 @@ Object.assign(A, {
   },
 });
 Object.assign(I, { trLumi(el) { const P = S.trP; if (!P) return; P.lumi = Number(el.value) || 100; if (TR_GL.ask) TR_GL.ask(); } });
+// Choisir un meuble IKEA en le voyant : un écran de vignettes par rayon, au lieu d'une liste de noms.
+function trIkPickSheet() {
+  const P = S.trP; if (!P) return; trGlStop(); if (!S.trCat) trIkLoad();
+  const cats = TR_IK_CATS.filter((c) => c[2]), k = cats.some((c) => c[0] === S.trIkPk) ? S.trIkPk : cats[0][0], list = (S.trCat || []).filter((c) => c.cat === k && trIkDims(c));
+  openSheet('trikpick', `<div class="row between"><h2>Catalogue IKEA</h2><button class="btn small" data-a="trIkBack">‹ Plan</button></div>
+    <div class="tr-sws">${cats.map(([c, l]) => `<button class="tr-sw" style="padding-left:12px" data-a="trIkPk" data-k="${c}" aria-pressed="${k === c}">${l}</button>`).join('')}</div>
+    ${!S.trCat ? '<p class="muted">Chargement…</p>' : `<div class="tr-ikg">${list.map((c) => `<div class="tr-ik"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(trIkImg(c))}" onerror="this.onerror=null;this.src='${esc(trIkImg2(c))}'"><b>${esc(c.name)}</b><span class="muted sm">${esc(c.descr || '')}</span><span class="tr-ikp">${c.price != null ? trEur(c.price) : ''}</span>
+      <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn small pri" data-a="trIkPut" data-ref="${esc(c.ref)}">Poser</button><a class="btn small" href="${esc(trIkUrl(c))}" target="_blank" rel="noopener">Voir</a></div></div>`).join('')}</div>`}`);
+}
 Object.assign(C, {
   trPlanIk(el) {
-    const P = S.trP, c = (S.trCat || []).find((x) => x.ref === el.value), cat = c && TR_IK_CATS.find((x) => x[0] === c.cat), dm = c && trIkDims(c); if (!P || !c || !cat || !cat[2] || !dm || !trPlanCan()) return;
+    const P = S.trP, c = (S.trCat || []).find((x) => x.ref === (el.value || (el.dataset && el.dataset.ref))), cat = c && TR_IK_CATS.find((x) => x[0] === c.cat), dm = c && trIkDims(c); if (!P || !c || !cat || !cat[2] || !dm || !trPlanCan()) return;
     const { W, D } = trWDH(trData(P.rid)), it = { id: trPid(), t: cat[2], r: 0, x: Math.round(W / 2), y: Math.round(D / 2), w: dm.w, d: dm.d, n: 'IKEA ' + c.name, ik: c.ref }; if (dm.h) it.h = dm.h;
     P.p.items.push(it); P.sel = it.id; trPlanSave(); trPlanSheet(P.rid, true);
   },

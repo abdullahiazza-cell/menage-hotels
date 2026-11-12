@@ -155,7 +155,7 @@ const trIkImg = (c) => c.img ? API + '?ik=' + encodeURIComponent(c.img) : '';
 const trIkImg2 = (c) => c.img ? 'https://www.ikea.com/fr/fr/images/products/' + c.img + '?f=xs' : '';
 // Dimensions lues dans la description : « 40x50x53 cm » (largeur × profondeur × hauteur) ou « 140x200 cm » pour un lit.
 function trIkDims(c) { const m = /(\d+)x(\d+)(?:x(\d+))?\s*cm/.exec(c.descr || ''); if (!m) return null; const o = { w: +m[1], d: +m[2] }; if (m[3]) o.h = +m[3]; else if (c.cat === 'armoire') { o.h = o.d; o.d = 58; } return o; }
-async function trIkLoad() { if (S.trCat || S.trCatBusy) return; S.trCatBusy = true; try { const d = await api('tr_catalog'); S.trCat = d.items || []; } catch (e) { S.trCatErr = errMsg(e); } S.trCatBusy = false; if (S.mode === 'travaux' && !S.sheet) render(); else if (S.trP && S.sheet && S.sheet.startsWith('trplan:')) trPlanSheet(S.trP.rid, true); }
+async function trIkLoad() { if (S.trCat || S.trCatBusy) return; S.trCatBusy = true; try { const d = await api('tr_catalog'); S.trCat = d.items || []; } catch (e) { S.trCatErr = errMsg(e); } S.trCatBusy = false; if (S.mode === 'travaux' && !S.sheet) render(); else if (S.sheet === 'trikpick') trIkPickSheet(); else if (S.trP && S.sheet && S.sheet.startsWith('trplan:')) trPlanSheet(S.trP.rid, true); }
 function trViewIkea() {
   if (!S.trCat) { trIkLoad(); return `<div class="card empty"><div class="e">🛋️</div><h2>${S.trCatErr ? 'Catalogue indisponible' : 'Chargement du catalogue…'}</h2>${S.trCatErr ? `<p>${esc(S.trCatErr)}</p>` : ''}</div>`; }
   const k = S.trCatK || 'lit_d', list = S.trCat.filter((c) => c.cat === k), seen = S.trCat.reduce((a, c) => (c.seen > a ? c.seen : a), '');
