@@ -114,7 +114,9 @@ window.addEventListener('online', () => { if (trPend.length) trFlush(); });
 
 /* ---------- calculs ---------- */
 function trSurf(d) {
-  const ch = d.surf ? trNum(d.surf) : (trNum(d.len) * trNum(d.wid)) / 10000;
+  // Les zones hors chambre (pièce en L, recoin) ne comptent pas.
+  const hors = (Array.isArray(d.hors) ? d.hors : []).reduce((a, r) => a + (r && r.x1 > r.x0 && r.y1 > r.y0 ? (r.x1 - r.x0) * (r.y1 - r.y0) : 0), 0);
+  const ch = d.surf ? trNum(d.surf) : Math.max(0, trNum(d.len) * trNum(d.wid) - hors) / 10000;
   const sdb = (trNum(d.sdb_len) * trNum(d.sdb_wid)) / 10000;
   // Salle de bain placée dans un coin du plan : elle est déjà comprise dans longueur × largeur.
   const inside = !!(d.plan && d.plan.sdb && d.plan.sdb.c && sdb);
