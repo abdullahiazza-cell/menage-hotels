@@ -53,7 +53,9 @@ const trRooms = () => [...roomsOf(TR_HOTEL), ...trExtras().filter((r) => r.kind 
 const trCommuns = () => [...trExtras().filter((r) => r.kind === 'commun'), ...communsOf(TR_HOTEL)].filter((r) => !trMasque(r.id));
 const trRetirees = () => [...roomsOf(TR_HOTEL), ...communsOf(TR_HOTEL)].filter((r) => trMasque(r.id));
 const trData = (rid) => (S.tr && S.tr.rooms[rid] && S.tr.rooms[rid].data) || {};
-const trPhotosOf = (rid) => S.tr.photos.filter((p) => p.room_id === rid);
+const trIsMesh = (p) => /\.glb$/i.test(String(p && p.path || ''));
+const trPhotosOf = (rid) => S.tr.photos.filter((p) => p.room_id === rid && !trIsMesh(p));
+const trMeshOf = (rid) => S.tr.photos.filter((p) => p.room_id === rid && trIsMesh(p)).slice(-1)[0] || null;
 const trItemPhotos = (id) => S.tr.photos.filter((p) => p.item_id === id);
 const trUrl = (p) => p ? (S.localUrls[p] || S.trUrls[p] || null) : null;
 const trNum = (v) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? n : 0; };
@@ -148,20 +150,37 @@ function trGaps(rid) {
 /* ---------- écran principal ---------- */
 function trButton() { return `<button class="ptbtn" data-a="trEnter" aria-label="Mode travaux">🛠️</button>`; }
 /* ---------- catalogue IKEA : des références relevées sur ikea.com (nom, dimensions, prix du jour du relevé, lien, photo affichée depuis leur site) ---------- */
-const TR_IK_CATS = [['lit_d', 'Lits doubles', 'lit_d'], ['lit_s', 'Lits simples', 'lit_s'], ['tete', 'Têtes de lit', null], ['chevet', 'Chevets', 'chevet'], ['armoire', 'Armoires', 'armoire'], ['bureau', 'Bureaux', 'bureau'], ['chaise', 'Chaises', 'chaise'], ['applique', 'Appliques', null], ['rideau', 'Rideaux', null], ['deco', 'Décoration', null]];
+// [clé, rayon, type posable dans le plan (ou null), groupe]
+const TR_IK_CATS = [
+  ['lit_d', 'Lits doubles', 'lit_d', 'Dormir'], ['lit_s', 'Lits simples', 'lit_s', 'Dormir'], ['tete', 'Têtes de lit', null, 'Dormir'], ['matelas', 'Matelas', null, 'Dormir'], ['linge', 'Housses de couette', null, 'Dormir'], ['plaid', 'Plaids', null, 'Dormir'], ['coussin', 'Coussins', null, 'Dormir'],
+  ['chevet', 'Chevets', 'chevet', 'Ranger'], ['commode', 'Commodes', 'meuble', 'Ranger'], ['armoire', 'Armoires', 'armoire', 'Ranger'], ['bagages', 'Bancs porte-bagages', 'bagages', 'Ranger'], ['entree', 'Portemanteaux et patères', null, 'Ranger'],
+  ['bureau', 'Bureaux', 'bureau', 'S’asseoir'], ['chaise', 'Chaises', 'chaise', 'S’asseoir'], ['fauteuil', 'Fauteuils', 'fauteuil', 'S’asseoir'], ['tabouret', 'Tabourets', 'chaise', 'S’asseoir'], ['table', 'Tables (petit déjeuner)', 'bureau', 'S’asseoir'],
+  ['applique', 'Appliques', null, 'Lumière'], ['lampe', 'Lampes de chevet', null, 'Lumière'], ['lampadaire', 'Lampadaires', null, 'Lumière'], ['suspension', 'Suspensions', null, 'Lumière'], ['plafonnier', 'Plafonniers', null, 'Lumière'],
+  ['rideau', 'Rideaux occultants', null, 'Fenêtre et sol'], ['voilage', 'Voilages', null, 'Fenêtre et sol'], ['tapis', 'Tapis', null, 'Fenêtre et sol'],
+  ['miroir', 'Miroirs', null, 'Décorer'], ['cadre', 'Cadres et tableaux', null, 'Décorer'], ['vase', 'Vases', null, 'Décorer'], ['plante', 'Plantes', null, 'Décorer'], ['objet', 'Objets déco', null, 'Décorer'],
+  ['sdb', 'Miroirs et porte-serviettes', null, 'Salle de bain'], ['poubelle', 'Poubelles', null, 'Salle de bain']];
 const trIkUrl = (c) => 'https://www.ikea.com/fr/fr/p/' + c.slug + '/';
 // La vignette passe par notre serveur (certains téléphones n'affichent pas les images prises directement chez le marchand) ; en secours, l'adresse directe.
 const trIkImg = (c) => c.img ? API + '?ik=' + encodeURIComponent(c.img) : '';
 const trIkImg2 = (c) => c.img ? 'https://www.ikea.com/fr/fr/images/products/' + c.img + '?f=xs' : '';
 // Dimensions lues dans la description : « 40x50x53 cm » (largeur × profondeur × hauteur) ou « 140x200 cm » pour un lit.
-function trIkDims(c) { const m = /(\d+)x(\d+)(?:x(\d+))?\s*cm/.exec(c.descr || ''); if (!m) return null; const o = { w: +m[1], d: +m[2] }; if (m[3]) o.h = +m[3]; else if (c.cat === 'armoire') { o.h = o.d; o.d = 58; } return o; }
+function trIkDims(c) {
+  const d = c.descr || '', m = /(\d+)(?:\/\d+)?x(\d+)(?:x(\d+))?\s*cm/.exec(d), cat = TR_IK_CATS.find((x) => x[0] === c.cat), t = cat && cat[2];
+  if (m) { const o = { w: +m[1], d: +m[2] }; if (m[3]) o.h = +m[3]; else if (c.cat === 'armoire') { o.h = o.d; o.d = 58; } return o; }
+  // Pas de dimensions sur la fiche : celles d'un meuble courant de ce type, signalées comme approximatives.
+  if (!t || typeof TR_FURN === 'undefined' || !TR_FURN[t]) return null;
+  const f = TR_FURN[t], one = /(\d+)\s*cm/.exec(d), o = { w: f.w, d: f.d, h: f.h, approx: true };
+  if (one && c.cat === 'tabouret') { o.h = +one[1]; o.w = o.d = 35; } else if (c.cat === 'tabouret') { o.w = o.d = 35; o.h = 45; }
+  else if (one && c.cat === 'table') { o.w = o.d = +one[1]; } else if (one && ['bagages', 'meuble'].includes(t)) { o.w = +one[1]; o.d = 38; o.h = 45; }
+  return o;
+}
 async function trIkLoad() { if (S.trCat || S.trCatBusy) return; S.trCatBusy = true; try { const d = await api('tr_catalog'); S.trCat = d.items || []; } catch (e) { S.trCatErr = errMsg(e); } S.trCatBusy = false; if (S.mode === 'travaux' && !S.sheet) render(); else if (S.sheet === 'trikpick') trIkPickSheet(); else if (S.trP && S.sheet && S.sheet.startsWith('trplan:')) trPlanSheet(S.trP.rid, true); }
 function trViewIkea() {
   if (!S.trCat) { trIkLoad(); return `<div class="card empty"><div class="e">🛋️</div><h2>${S.trCatErr ? 'Catalogue indisponible' : 'Chargement du catalogue…'}</h2>${S.trCatErr ? `<p>${esc(S.trCatErr)}</p>` : ''}</div>`; }
   const k = S.trCatK || 'lit_d', list = S.trCat.filter((c) => c.cat === k), seen = S.trCat.reduce((a, c) => (c.seen > a ? c.seen : a), '');
-  return `<p class="muted">Des références IKEA France utiles en hôtellerie : ${S.trCat.length} produits pour commencer. Prix relevés le ${seen ? seen.split('-').reverse().join('/') : '?'}, à revérifier avant d’acheter.</p>
-    <div class="tr-sws">${TR_IK_CATS.map(([c, l]) => `<button class="tr-sw" style="padding-left:12px" data-a="trIkCat" data-k="${c}" aria-pressed="${k === c}">${l} · ${S.trCat.filter((x) => x.cat === c).length}</button>`).join('')}</div>
-    <div class="tr-ikg">${list.map((c) => { const dm = trIkDims(c); return `<div class="tr-ik"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(trIkImg(c))}" onerror="this.onerror=null;this.src='${esc(trIkImg2(c))}'"><b>${esc(c.name)}</b><span class="muted sm">${esc(c.descr || '')}</span><span class="tr-ikp">${c.price != null ? trEur(c.price) : ''}</span><span class="muted sm">Réf. ${esc(c.ref.replace(/(\d{3})(\d{3})(\d{2})/, '$1.$2.$3'))}${dm ? '' : ' · dimensions à relever'}</span>
+  return `<p class="muted">Des références IKEA France utiles en hôtellerie : ${S.trCat.length} produits, par rayons. Prix relevés le ${seen ? seen.split('-').reverse().join('/') : '?'}, à revérifier avant d’acheter.</p>
+    ${[...new Set(TR_IK_CATS.map((c) => c[3]))].map((g) => `<p class="tr-cap">${g}</p><div class="tr-sws">${TR_IK_CATS.filter((c) => c[3] === g).map(([c, l]) => `<button class="tr-sw" style="padding-left:12px" data-a="trIkCat" data-k="${c}" aria-pressed="${k === c}">${l} · ${S.trCat.filter((x) => x.cat === c).length}</button>`).join('')}</div>`).join('')}
+    <div class="tr-ikg">${list.map((c) => { const dm = trIkDims(c); return `<div class="tr-ik"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(trIkImg(c))}" onerror="this.onerror=null;this.src='${esc(trIkImg2(c))}'"><b>${esc(c.name)}</b><span class="muted sm">${esc(c.descr || '')}</span><span class="tr-ikp">${c.price != null ? trEur(c.price) : ''}</span><span class="muted sm">Réf. ${esc(c.ref.replace(/(\d{3})(\d{3})(\d{2})/, '$1.$2.$3'))}${dm && dm.approx ? ' · dimensions approximatives' : ''}</span>
       <div class="row" style="gap:6px;flex-wrap:wrap"><a class="btn small" href="${esc(trIkUrl(c))}" target="_blank" rel="noopener">Voir</a>${S.tr.can_edit ? `<button class="btn small soft" data-a="trIkList" data-ref="${esc(c.ref)}">＋ Liste</button>` : ''}</div></div>`; }).join('')}</div>
     <p class="muted sm">Pour poser un de ces meubles dans une chambre : ouvre le plan de la chambre, puis « Un meuble du catalogue IKEA ». Les photos viennent du site d’IKEA.</p>`;
 }
@@ -266,6 +285,8 @@ function trRoomSheet(rid) {
       ${commun ? '' : `<p class="muted">Catégorie de la chambre</p>${trSeg(rid, 'cat', d, Object.entries(TR_CAT))}`}
       <div class="form">${trSel(rid, 'etage', 'Étage', d, TR_ETAGES)}</div></div>
     <div class="card"><h3>📷 Photos</h3>${trShots(rid, commun ? TR_SHOTS_COMMUN : TR_SHOTS)}</div>
+    ${(() => { const m = trMeshOf(rid); return `<div class="card"><h3>🧊 Scan 3D réel</h3>${m ? `<p class="muted">Le scan en relief de la pièce, avec ses vraies textures (marches, moulures, objets…).</p><button class="btn big pri" data-a="trMesh" data-rid="${esc(rid)}">Voir le scan 3D</button>` : '<p class="muted">Pour l’escalier, les détails et la déco : scanne la pièce avec « 3d Scanner App » (mode LiDAR), exporte en GLB, puis dépose le fichier ici.</p>'}
+      ${trCan() ? `<button class="btn ${m ? '' : 'soft'}" data-a="trMeshAdd" data-rid="${esc(rid)}">${m ? 'Remplacer par un autre scan' : '📥 Déposer un scan 3D (GLB)'}</button>${m ? `<button class="btn ghost bad-t" data-a="trPhotoDel" data-id="${m.id}">Supprimer le scan 3D</button>` : ''}` : ''}</div>`; })()}
     <div class="card form"><h3>📏 Mesures (en centimètres)</h3>
       <p class="muted">De mur à mur, au sol. Avec l’iPhone : appli « Mesures ». Sinon un télémètre laser ou un mètre.</p>
       <div class="three">${trIn(rid, 'len', 'Longueur', d, { cm: 1, ph: '420' })}${trIn(rid, 'wid', 'Largeur', d, { cm: 1, ph: '310' })}${trIn(rid, 'hei', 'Hauteur', d, { cm: 1, ph: '260' })}</div>
@@ -426,6 +447,24 @@ Object.assign(A, {
     catch (e) { toast(errMsg(e)); }
     if (trSheetRoom() === d.rid) trRoomSheet(d.rid);
   },
+  async trMeshAdd(d) {
+    S.trCtx = d.rid; if (!trCan()) return;
+    const f = await pickFile('.glb,model/gltf-binary,application/octet-stream'); if (!f) return;
+    if (!/\.glb$/i.test(f.name)) { toast('Il faut un fichier .glb (dans 3d Scanner App : Partager → GLB).', 6000); return; }
+    if (f.size > 50 * 1024 * 1024) { toast('Fichier trop lourd (plus de 50 Mo). Exporte-le en qualité moyenne ou basse.', 7000); return; }
+    toast('Envoi du scan… (' + Math.round(f.size / 1048576) + ' Mo)', 8000);
+    try { const path = await upload(f, 'model/gltf-binary', 'glb'); const x = await api('tr_photo_add', { room_id: d.rid, path, label: 'Scan 3D' }); S.tr.photos.push(x.photo); toast('Scan 3D enregistré ✓'); }
+    catch (e) { toast(errMsg(e)); return; }
+    if (trSheetRoom() === d.rid) trRoomSheet(d.rid);
+  },
+  trMesh(d) {
+    const m = trMeshOf(d.rid), u = m && trUrl(m.path), r = trRoomGet(d.rid); if (!u) { toast('Scan introuvable, réessaie dans un instant.'); return; }
+    openSheet('trmesh', `<div class="row between"><h2>${esc(r ? trPlace(r) : 'Pièce')} · scan 3D</h2><button class="btn small" data-a="trMeshBack" data-rid="${esc(d.rid)}">‹ Retour</button></div>
+      <div class="tr-stage"><canvas id="tr-mesh" class="tr-3d" style="touch-action:none;display:block;width:100%"></canvas><div id="tr-mesh-lab" class="tr-cap" style="position:absolute;left:12px;top:10px"></div><div class="tr-tools"><button data-a="trFull" aria-label="Plein écran">⤢</button></div></div>
+      <p class="muted sm">Un doigt pour tourner, deux doigts pour s’approcher (on peut entrer dans la pièce).</p>`);
+    import('./travaux-rendu.js?v=' + APP_V).then((mod) => { const cv = $('tr-mesh'); if (!cv || S.sheet !== 'trmesh') return; if (S.trMeshV) S.trMeshV.stop(); S.trMeshV = mod.trMaille({ canvas: cv, url: u, lab: $('tr-mesh-lab') }); }).catch(() => toast('La vue 3D ne s’ouvre pas sur ce téléphone.'));
+  },
+  trMeshBack(d) { if (S.trMeshV) { S.trMeshV.stop(); S.trMeshV = null; } trRoomSheet(d.rid); },
   trZoom(d) {
     const p = S.tr.photos.find((x) => x.id === d.id); if (!p) return;
     const u = trUrl(p.path), back = p.room_id ? `data-a="trRoom" data-id="${esc(p.room_id)}"` : `data-a="trItem" data-id="${esc(p.item_id || '')}"`;

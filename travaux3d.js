@@ -882,7 +882,7 @@ function trIkPickSheet() {
   const cats = TR_IK_CATS.filter((c) => c[2]), k = cats.some((c) => c[0] === S.trIkPk) ? S.trIkPk : cats[0][0], list = (S.trCat || []).filter((c) => c.cat === k && trIkDims(c));
   openSheet('trikpick', `<div class="row between"><h2>Catalogue IKEA</h2><button class="btn small" data-a="trIkBack">‹ Plan</button></div>
     <div class="tr-sws">${cats.map(([c, l]) => `<button class="tr-sw" style="padding-left:12px" data-a="trIkPk" data-k="${c}" aria-pressed="${k === c}">${l}</button>`).join('')}</div>
-    ${!S.trCat ? '<p class="muted">Chargement…</p>' : `<div class="tr-ikg">${list.map((c) => `<div class="tr-ik"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(trIkImg(c))}" onerror="this.onerror=null;this.src='${esc(trIkImg2(c))}'"><b>${esc(c.name)}</b><span class="muted sm">${esc(c.descr || '')}</span><span class="tr-ikp">${c.price != null ? trEur(c.price) : ''}</span>
+    ${!S.trCat ? '<p class="muted">Chargement…</p>' : `<div class="tr-ikg">${list.map((c) => `<div class="tr-ik"><img loading="lazy" referrerpolicy="no-referrer" alt="" src="${esc(trIkImg(c))}" onerror="this.onerror=null;this.src='${esc(trIkImg2(c))}'"><b>${esc(c.name)}</b><span class="muted sm">${esc(c.descr || '')}</span><span class="tr-ikp">${c.price != null ? trEur(c.price) : ''}</span>${trIkDims(c).approx ? '<span class="muted sm">Dimensions approximatives</span>' : ''}
       <div class="row" style="gap:6px;flex-wrap:wrap"><button class="btn small pri" data-a="trIkPut" data-ref="${esc(c.ref)}">Poser</button><a class="btn small" href="${esc(trIkUrl(c))}" target="_blank" rel="noopener">Voir</a></div></div>`).join('')}</div>`}`);
 }
 Object.assign(C, {

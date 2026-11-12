@@ -337,3 +337,45 @@ export function trRendu(o) {
     },
   };
 }
+
+
+/* Scan 3D réel (maillage texturé, fichier GLB d'une appli de scan LiDAR) : affiché tel quel, on tourne autour et on zoome.
+   Les textures du scan contiennent déjà la lumière de la pièce : on les montre sans éclairage ajouté. */
+export function trMaille({ canvas, url, lab }) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.outputColorSpace = THREE.SRGBColorSpace; renderer.setClearColor(0xeeeae4, 1);
+  const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(55, 1, 0.02, 200);
+  let dead = false, raf = 0, ctr = new THREE.Vector3(), rad = 3, yaw = 0.6, pitch = 0.5, dist = 6;
+  const draw = () => {
+    raf = 0; if (dead) return;
+    const w = Math.max(1, canvas.clientWidth), h = Math.max(1, canvas.clientHeight); renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1)); renderer.setSize(w, h, false);
+    camera.aspect = w / h; camera.updateProjectionMatrix();
+    camera.position.set(ctr.x + Math.sin(yaw) * Math.cos(pitch) * dist, ctr.y + Math.sin(pitch) * dist, ctr.z + Math.cos(yaw) * Math.cos(pitch) * dist); camera.lookAt(ctr);
+    renderer.render(scene, camera);
+  };
+  const ask = () => { if (!raf && !dead) raf = requestAnimationFrame(draw); };
+  if (lab) lab.textContent = 'Chargement du scan…';
+  new GLTFLoader().load(url, (g) => {
+    if (dead) return;
+    g.scene.traverse((m) => { if (!m.isMesh) return; const old = Array.isArray(m.material) ? m.material[0] : m.material; const nm = new THREE.MeshBasicMaterial({ map: old && old.map ? old.map : null, color: old && old.map ? 0xffffff : (old && old.color ? old.color : 0xcccccc), vertexColors: !!(m.geometry && m.geometry.attributes.color && !(old && old.map)), side: THREE.DoubleSide }); m.material = nm; });
+    scene.add(g.scene); const bb = new THREE.Box3().setFromObject(g.scene); bb.getCenter(ctr); rad = Math.max(0.5, bb.getSize(new THREE.Vector3()).length() / 2); dist = rad * 2.3;
+    if (lab) lab.textContent = ''; ask();
+  }, (e) => { if (lab && e.total) lab.textContent = `Chargement du scan… ${Math.round(e.loaded / e.total * 100)} %`; }, () => { if (lab) lab.textContent = 'Ce fichier n’a pas pu être ouvert. Il faut un export GLB.'; });
+  const pts = new Map(); let pinch = 0;
+  const down = (e) => { pts.set(e.pointerId, [e.clientX, e.clientY]); try { canvas.setPointerCapture(e.pointerId); } catch (_) {} pinch = 0; e.preventDefault(); };
+  const move = (e) => {
+    const p = pts.get(e.pointerId); if (!p) return; e.preventDefault();
+    if (pts.size === 1) { yaw -= (e.clientX - p[0]) * 0.008; pitch = Math.max(-1.45, Math.min(1.45, pitch + (e.clientY - p[1]) * 0.006)); }
+    pts.set(e.pointerId, [e.clientX, e.clientY]);
+    if (pts.size === 2) { const [a, b] = [...pts.values()], dd = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) dist = Math.max(0.05, Math.min(rad * 6, dist * pinch / dd)); pinch = dd; }
+    ask();
+  };
+  const up = (e) => { pts.delete(e.pointerId); pinch = 0; };
+  const wheel = (e) => { e.preventDefault(); dist = Math.max(0.05, Math.min(rad * 6, dist * (1 + e.deltaY * 0.001))); ask(); };
+  canvas.addEventListener('pointerdown', down); canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up); canvas.addEventListener('wheel', wheel, { passive: false });
+  const ro = new ResizeObserver(ask); ro.observe(canvas);
+  return {
+    ask, info: () => ({ ctr: ctr.toArray(), rad, dist, cw: canvas.clientWidth, ch: canvas.clientHeight, w: canvas.width, h: canvas.height }),
+    stop() { dead = true; if (raf) cancelAnimationFrame(raf); ro.disconnect(); scene.traverse((m) => { if (m.isMesh) { m.geometry.dispose(); if (m.material.map) m.material.map.dispose(); m.material.dispose(); } }); try { renderer.dispose(); renderer.forceContextLoss(); } catch (_) {} },
+  };
+}

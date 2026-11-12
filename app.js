@@ -225,7 +225,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 // Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
 // Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
-const APP_V = 'v61';
+const APP_V = 'v62';
 async function onlineVersion() {
   const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
   const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
@@ -2462,7 +2462,7 @@ function openSheet(kind, html, cls) {
   S.sheet = kind; s.innerHTML = `<div class="panel ${cls || ''}" role="dialog" aria-modal="true">${html}</div>`; s.hidden = false;
   if (top) { const p = s.querySelector('.panel'); if (p) p.scrollTop = top; }
 }
-function closeSheet() { S.sheet = null; S.rep = null; S.trCtx = null; const s = $('sheet'); s.hidden = true; s.innerHTML = ''; if (S.dirty || S.mode === 'travaux') softRender(); }
+function closeSheet() { if (S.trMeshV) { S.trMeshV.stop(); S.trMeshV = null; } S.sheet = null; S.rep = null; S.trCtx = null; const s = $('sheet'); s.hidden = true; s.innerHTML = ''; if (S.dirty || S.mode === 'travaux') softRender(); }
 function refreshSheet() {
   if (!S.sheet) return;
   if (S.sheet.startsWith('room:')) roomSheet(S.sheet.slice(5));
