@@ -10,6 +10,7 @@ const TR_FURN = {
   chaise: { l: 'Chaise', s: '', w: 45, d: 45, h: 85 }, fauteuil: { l: 'Fauteuil', s: 'Faut.', w: 75, d: 75, h: 80 },
   armoire: { l: 'Armoire', s: 'Armoire', w: 100, d: 60, h: 200 }, tv: { l: 'Télé murale', s: 'TV', w: 100, d: 8, h: 56 },
   bagages: { l: 'Porte-bagages', s: 'Bag.', w: 60, d: 45, h: 50 }, penderie: { l: 'Penderie ouverte (banc bagages + portant)', s: 'Pend.', w: 100, d: 45, h: 180 },
+  commode: { l: 'Commode', s: 'Com.', w: 80, d: 45, h: 82 },
   tableau: { l: 'Tableau', s: 'Tab.', w: 60, d: 3, h: 80 },
   // Salle du petit-déjeuner
   cuisine: { l: 'Cuisine linéaire', s: 'Cuisine', w: 300, d: 62, h: 220 }, table: { l: 'Table', s: 'Table', w: 110, d: 70, h: 75 }, table_r: { l: 'Table ronde', s: 'T.', w: 90, d: 90, h: 75 },
@@ -710,50 +711,236 @@ const TR_COL = {
 const TR_FLOOR = { parquet: [[0.80, 0.64, 0.46], 1], pvc: [[0.74, 0.70, 0.64], 1], moquette: [[0.56, 0.60, 0.68], 4], carrelage: [[0.86, 0.85, 0.82], 2], autre: [[0.78, 0.74, 0.68], 0] };
 // Matières (dernier champ d'une pièce) : 0 uni, 1 parquet, 2 carrelage, 3 bois veiné, 4 tissu, 5 mur, 6 lumineux (vitre, abat-jour).
 // Les pièces d'un meuble : [centre x, centre y (repère du meuble), largeur, profondeur, bas, haut, couleur, matière], en cm.
-function trParts(it, duvet, noLamp) {
-  const m = trDim(it), w = m.w, d = m.d, h = m.h, C = TR_COL, legs = (ix, iy, top, c, k) => [[-ix, -iy], [ix, -iy], [-ix, iy], [ix, iy]].map(([x, y]) => [x, y, 4, 4, 0, top, c, k || 0]);
-  const dark = (c, f) => [c[0] * f, c[1] * f, c[2] * f];
+// Couleurs IKEA lues dans la description (« plaqué bouleau/Knisa beige clair » : bois puis tissu).
+const TR_IK_COLS = [['blanc cassé', [0.93, 0.91, 0.86]], ['teinté blanc', [0.93, 0.91, 0.86]], ['effet chêne blanchi', [0.86, 0.80, 0.70]], ['chêne blanchi', [0.86, 0.80, 0.70]], ['brun noir', [0.20, 0.15, 0.12]], ['gris foncé', [0.35, 0.36, 0.38]], ['gris-beige', [0.70, 0.66, 0.60]], ['beige foncé', [0.66, 0.58, 0.48]], ['beige clair', [0.86, 0.81, 0.72]], ['gris vert', [0.55, 0.60, 0.55]], ['jaune foncé', [0.78, 0.60, 0.22]],
+  ['anthracite', [0.26, 0.27, 0.28]], ['noyer', [0.45, 0.32, 0.22]], ['acacia', [0.62, 0.42, 0.28]], ['bambou', [0.80, 0.66, 0.44]], ['rotin', [0.76, 0.62, 0.42]], ['bouleau', [0.88, 0.76, 0.58]], ['frêne', [0.85, 0.74, 0.58]], ['chêne', [0.78, 0.63, 0.45]], ['pin', [0.86, 0.70, 0.50]],
+  ['laiton', [0.78, 0.64, 0.36]], ['orange', [0.86, 0.48, 0.24]], ['jaune', [0.86, 0.70, 0.30]], ['vert', [0.40, 0.50, 0.42]], ['bleu', [0.28, 0.36, 0.50]], ['écru', [0.92, 0.89, 0.82]], ['beige', [0.80, 0.74, 0.64]], ['noir', [0.12, 0.12, 0.13]], ['gris', [0.62, 0.63, 0.64]], ['blanc', [0.95, 0.95, 0.93]]];
+function trIkCols(descr) {
+  const spec = String(descr || '').split(', ')[1] || '', [a, b] = spec.toLowerCase().split('/'), f = (t) => { if (!t) return null; const m = TR_IK_COLS.find(([k]) => t.includes(k)); return m ? m[1] : null; };
+  const body = f(a), fab = f(b) || null; return { body, fab, wood: /pin|chêne|bouleau|frêne|noyer|acacia|bambou|rotin|plaqué/.test(a || '') };
+}
+// Les meubles, pièce par pièce. Chaque pièce : [x, y, largeur, profondeur, bas, haut, couleur, matière, forme].
+// Repère du meuble : x en travers, y vers l'avant (+y = façade), hauteurs depuis le sol, en cm.
+// Forme : absente = boîte aux angles adoucis ; { cyl } cylindre (top = finesse du haut, ax = couché le long de x ou y) ; { sph } sphère ; { soft } coussin.
+// Matières : 0 laqué, 3 bois, 4 tissu, 6 lumière. pal : tissu et couleur d'accent de la déco choisie.
+function trParts(it, duvet, noLamp, pal, ik) {
+  const m = trDim(it), w = m.w, d = m.d, h = m.h, C = TR_COL, dark = (c, f) => [Math.min(1, c[0] * f), Math.min(1, c[1] * f), Math.min(1, c[2] * f)];
+  // Article IKEA : ses vraies couleurs (bois ou laqué, puis tissu) remplacent celles de la déco.
+  const ikc = ik ? trIkCols(ik.descr) : null, ikb = ikc && ikc.body, ikf = ikc && (ikc.fab || (ikc.wood ? null : ikc.body));
+  let tex = (pal && pal.tex) || C.textile, acc = (pal && pal.acc) || [0.70, 0.50, 0.36], wood = ikb || C.wood, woodD = ikb ? dark(ikb, 0.8) : C.woodD;
+  const WK = ikb && !ikc.wood ? 0 : 3, CERA = [0.90, 0.88, 0.84];
+  if (ikf && (it.t === 'fauteuil')) acc = ikf; if (ikf && (it.t === 'chaise' || trIsBed(it) || it.t === 'banquette')) tex = ikf;
+  const cyl = (x, y, dia, z0, z1, c, k, top) => [x, y, dia, dia, z0, z1, c, k || 0, { cyl: 1, top: top === undefined ? 1 : top }];
+  const sph = (x, y, dx, dy, z0, z1, c, k) => [x, y, dx, dy, z0, z1, c, k || 0, { sph: 1 }];
+  const rodX = (x, y, len, dia, z, c) => [x, y, len, dia, z - dia / 2, z + dia / 2, c, 0, { cyl: 1, ax: 'x' }];
+  const rodY = (x, y, len, dia, z, c) => [x, y, dia, len, z - dia / 2, z + dia / 2, c, 0, { cyl: 1, ax: 'y' }];
+  const soft = (x, y, sw, sd, z0, z1, c) => [x, y, sw, sd, z0, z1, c, 4, { soft: 1 }];
+  const legs = (ix, iy, top, c, k) => [[-ix, -iy], [ix, -iy], [-ix, iy], [ix, iy]].map(([x, y]) => [x, y, 4, 4, 0, top, c, k || 0]);
+  const rlegs = (ix, iy, top, c, dia, taper) => [[-ix, -iy], [ix, -iy], [-ix, iy], [ix, iy]].map(([x, y]) => cyl(x, y, dia || 4, 0, top, c, c === C.metal || c === C.dark ? 0 : 3, taper === undefined ? 1.4 : taper));
+  const lampe = (x, y, z, sc) => { const s2 = sc || 1; return [cyl(x, y, 13 * s2, z, z + 19 * s2, CERA, 0, 0.55), cyl(x, y, 1.4, z + 19 * s2, z + 25 * s2, C.metal), [x, y, 27 * s2, 27 * s2, z + 23 * s2, z + 41 * s2, C.lamp, 6]]; };
+  // Le linge d'un lit : couette qui retombe, revers du drap, plaid au pied, oreillers et coussins. Matelas de bw × bd, dessus à z, centré en y0.
+  const literie = (bw, bd, z, y0) => {
+    const dv = duvet || C.duvet, two = bw >= 120, out = [
+      [0, y0 + bd * 0.13, bw + 5, bd * 0.72, z - 1, z + 6, dv, 4], [-bw / 2 - 1.5, y0 + bd * 0.13, 3, bd * 0.72, z - 20, z + 5, dv, 4], [bw / 2 + 1.5, y0 + bd * 0.13, 3, bd * 0.72, z - 20, z + 5, dv, 4], [0, y0 + bd / 2 - 0.5, bw + 5, 3, z - 20, z + 5, dv, 4],
+      [0, y0 - bd * 0.235, bw + 5, 13, z, z + 7.5, C.white, 4],
+      [0, y0 + bd / 2 - 28, bw + 7, 40, z + 6, z + 8.5, acc, 4], [-bw / 2 - 2.5, y0 + bd / 2 - 28, 2, 40, z - 17, z + 8, acc, 4], [bw / 2 + 2.5, y0 + bd / 2 - 28, 2, 40, z - 17, z + 8, acc, 4]];
+    (two ? [-bw / 4, bw / 4] : [0]).forEach((x) => { const pw = two ? bw / 2 - 12 : bw - 26; out.push(soft(x, y0 - bd / 2 + 25, pw, 30, z, z + 14, C.pillow), soft(x, y0 - bd / 2 + 19, pw - 6, 13, z + 5, z + 31, C.pillow)); });
+    (two ? [-bw / 6, 0, bw / 6] : [0]).forEach((x, i) => out.push(soft(x, y0 - bd / 2 + 34, i === 1 ? 46 : 38, 11, z + 5, z + (i === 1 ? 29 : 39), i === 1 ? tex : acc)));
+    return out;
+  };
+  // Modèles faits à la main d'après les cotes et la description des articles IKEA les plus courants.
+  function trIkModel() {
+    const nm = String(ik.name || '').toUpperCase(), ds = String(ik.descr || '').toLowerCase(), t = it.t, col = ikb || [0.95, 0.95, 0.93], fab = ikf || col, K = WK;
+    const blk = [0.12, 0.12, 0.13], zinc = [0.72, 0.72, 0.75], brass = [0.78, 0.64, 0.36], WH = [0.95, 0.95, 0.93];
+    const has = (...k) => k.some((x) => nm.includes(x));
+    if (trIsBed(it)) {
+      if (has('MALM')) { // panneaux pleins : tête de lit haute, côtés et pied bas ; tiroirs sur le côté si « rangement »
+        const W = w + 16, D = d + 9, y0 = 1.5, o = [[-W / 2 + 1, 0, 2, D, 0, 38, col, K], [W / 2 - 1, 0, 2, D, 0, 38, col, K], [0, D / 2 - 1, W, 2, 0, 38, col, K], [0, -D / 2 + 1.5, W, 3, 0, 100, col, K], [0, y0, w, d, 20, 41, C.white, 4]];
+        if (/rangement|coffre/.test(ds)) [-1, 1].forEach((sg) => o.push([W / 2 + 0.3, y0 + sg * d / 4, 0.8, d / 2 - 8, 4, 30, dark(col, 0.97), K], [W / 2 + 0.8, y0 + sg * d / 4, 0.8, 14, 27, 29, dark(col, 0.85), 0]));
+        return [...o, ...literie(w, d, 41, y0)];
+      }
+      if (has('BRIMNES')) { // cadre blanc à tiroirs des deux côtés ; tête de lit-rangement à portes coulissantes si elle est comprise
+        const tete = /tête de lit/.test(ds), W = w + 6, y0 = tete ? 14 : 0, o = [[0, y0, W, d + 6, 6, 33, col, K], [0, y0, W - 10, d - 4, 0, 6, dark(col, 0.7), 0], [0, y0, w, d, 33, 52, C.white, 4]];
+        [-1, 1].forEach((sx) => [-1, 1].forEach((sy) => o.push([sx * (W / 2 + 0.3), y0 + sy * d / 4, 0.8, d / 2 - 8, 9, 30, dark(col, 0.97), K], sph(sx * (W / 2 + 0.9), y0 + sy * d / 4, 1, 7, 26, 29, dark(col, 0.55)))));
+        if (tete) o.push([0, -d / 2 + 6, W, 26, 0, 107, col, K], [-W / 4, -d / 2 + 19.4, W / 2 - 2, 0.8, 52, 104, dark(col, 0.97), K], [W / 4, -d / 2 + 20, W / 2 - 2, 0.8, 52, 104, dark(col, 0.98), K], [0, -d / 2 + 6, W, 26, 107, 109, col, K]);
+        return [...o, ...literie(w, d, 52, y0)];
+      }
+      if (has('SLATTUM', 'RAMNEFJÄLL', 'KLEPPSTAD', 'LJUSFJÄLLET')) { // cadre et tête de lit rembourrés (KLEPPSTAD : cadre blanc, tête de lit tissu)
+        const hb = has('RAMNEFJÄLL') ? 113 : has('KLEPPSTAD') ? 100 : 98, frame = has('KLEPPSTAD') ? col : fab, o = [[0, 4, w + 8, d + 6, 10, 32, frame, has('KLEPPSTAD') ? K : 4], ...rlegs(w / 2, d / 2 - 2, 10, blk, 3.5, 1), [0, 4, w, d - 4, 30, 50, C.white, 4], [0, -d / 2 - 1, w + 8, 9, 10, hb, fab, 4]];
+        if (has('RAMNEFJÄLL')) { const n = Math.round(w / 18); for (let i = 0; i < n; i++) o.push(soft(-w / 2 - 4 + (w + 8) * (i + 0.5) / n, -d / 2 + 3.6, (w + 8) / n - 0.6, 4, 34, hb - 3, fab)); }
+        return [...o, ...literie(w, d - 4, 50, 4)];
+      }
+      if (has('NEIDEN', 'TARVA', 'TAXÅSKLINT')) { // pin massif : quatre montants, planches horizontales à la tête, lattes, matelas
+        const W = w + 6, D = d + 6, o = [[-W / 2 + 2.5, -D / 2 + 2.5, 5, 5, 0, 83, col, 3], [W / 2 - 2.5, -D / 2 + 2.5, 5, 5, 0, 83, col, 3], [-W / 2 + 2.5, D / 2 - 2.5, 5, 5, 0, 37, col, 3], [W / 2 - 2.5, D / 2 - 2.5, 5, 5, 0, 37, col, 3],
+          [-W / 2 + 1.5, 0, 3, D - 10, 18, 31, col, 3], [W / 2 - 1.5, 0, 3, D - 10, 18, 31, col, 3], [0, D / 2 - 2.5, W - 10, 2.4, 20, 33, col, 3], [0, 0, w, d, 23, 43, C.white, 4]];
+        [[38, 50], [55, 67], [72, 80]].forEach(([a, b]) => o.push([0, -D / 2 + 2.5, W - 10, 2.4, a, b, col, 3]));
+        return [...o, ...literie(w, d, 43, 0)];
+      }
+      return null;
+    }
+    if (t === 'chevet') {
+      if (has('BRIMNES')) return [[-w / 2 + 0.8, 0, 1.6, d, 0, h, col, K], [w / 2 - 0.8, 0, 1.6, d, 0, h, col, K], [0, 0, w, d, h - 1.6, h, col, K], [0, 0, w - 3, d - 3, 0, 5, col, K], [0, 0, w - 3, d - 2, 25, 26.6, col, K], [0, -d / 2 + 0.5, w - 3, 1, 5, h, dark(col, 0.92), K],
+        [0, d / 2 - 0.2, w - 3.4, 1.6, 27, h - 2, dark(col, 0.98), K], sph(0, d / 2 + 0.6, 3, 1, h - 10, h - 7, dark(col, 0.45))];
+      if (has('KNARREVIK')) return [[-w / 2 + 1, -d / 2 + 1, 1.6, 1.6, 0, h, blk, 0], [w / 2 - 1, -d / 2 + 1, 1.6, 1.6, 0, h, blk, 0], [-w / 2 + 1, d / 2 - 1, 1.6, 1.6, 0, h, blk, 0], [w / 2 - 1, d / 2 - 1, 1.6, 1.6, 0, h, blk, 0],
+        [0, 0, w, d, h - 1.6, h, blk, 0], [0, 0, w, d, h - 9, h - 8, blk, 0], [0, 0, w - 2, d - 2, 14, 15, blk, 0], ...lampe(-w / 6, 0, h, 0.85)];
+      return null;
+    }
+    if (t === 'bureau') {
+      if (has('MICKE')) { const uw = Math.min(36, w * 0.34); return [[0, 0, w, d, h - 2.5, h, col, K], [-w / 2 + 1, 0, 2, d, 0, h - 2.5, col, K], [w / 2 - uw / 2, 0, uw, d, 0, h - 2.5, col, K], [w / 2 - uw / 2, d / 2 + 0.3, uw - 1.2, 0.8, h - 17, h - 3.5, dark(col, 0.97), K],
+        [w / 2 - uw / 2, d / 2 - 6, uw - 4, 12, 30, h - 19, dark(col, 0.7), 0], [w / 2 - uw / 2, d / 2 + 0.3, uw - 1.2, 0.8, 2, 28, dark(col, 0.97), K], [0, -d / 2 + 1, w - 4, 1.6, 40, h - 2.5, col, K], cyl(-w / 2 + 12, -d / 2 + 8, 6, h, h + 0.4, dark(col, 0.5))]; }
+      if (has('LAGKAPTEN')) { const uw = 36, top = ikb || [0.86, 0.80, 0.70], o = [[0, 0, w, d, h - 2.6, h, top, 0], [w / 2 - uw / 2 - 1, 0, uw, 58, 0, h - 2.6, WH, 0]];
+        for (let i = 0; i < 5; i++) o.push([w / 2 - uw / 2 - 1, 29.4, uw - 1.2, 0.8, 1 + i * 14, 14 + i * 14, [0.94, 0.94, 0.92], 0], [w / 2 - uw / 2 - 1, 29.8, 10, 0.8, 11.5 + i * 14, 13 + i * 14, dark(WH, 0.8), 0]);
+        return [...o, cyl(-w / 2 + 6, -d / 2 + 6, 4, 0, h - 2.6, has('ADILS') ? blk : WH), cyl(-w / 2 + 6, d / 2 - 6, 4, 0, h - 2.6, has('ADILS') ? blk : WH)]; }
+      return null;
+    }
+    if (t === 'chaise' && has('SANDSBERG')) return [[-w / 2 + 2, -d / 2 + 2, 2, 2, 0, h - 2, blk, 0], [w / 2 - 2, -d / 2 + 2, 2, 2, 0, h - 2, blk, 0], [-w / 2 + 2, d / 2 - 2, 2, 2, 0, 45, blk, 0], [w / 2 - 2, d / 2 - 2, 2, 2, 0, 45, blk, 0],
+      [0, 0, w - 2, d - 2, 43, 46, fab === col ? blk : fab, 0], [0, -d / 2 + 2, w - 4, 1.6, h - 14, h - 3, blk, 0], [0, -d / 2 + 2, w - 4, 1.6, 15, 17, blk, 0]];
+    if (t === 'fauteuil') {
+      if (has('POÄNG')) { // structure en bois courbé : patins au sol, accoudoirs, coussin d'un seul tenant incliné
+        const fr = ikb || [0.88, 0.76, 0.58], o = [];
+        [-1, 1].forEach((sg) => { const x = sg * (w / 2 - 3); o.push([x, 4, 4, d - 12, 0, 3.5, fr, 3], [x, d / 2 - 14, 4, 6, 0, 46, fr, 3], [x, 0, 4, d - 22, 46, 50, fr, 3], [x, -d / 2 + 16, 4, 6, 3.5, 44, fr, 3]); });
+        o.push([0, 4, w - 8, 40, 30, 34, fr, 3], soft(0, 8, w - 12, 46, 34, 44, fab));
+        [[-10, 44, 62], [-18, 58, 78], [-26, 74, 94], [-32, 88, 104]].forEach(([y, a, b]) => o.push(soft(0, y, w - 12, 11, a, b, fab)));
+        return o;
+      }
+      if (has('EKTORP')) return [[0, 2, w - 30, d - 4, 0, 42, fab, 4], soft(0, 10, w - 34, d - 26, 42, 54, fab), [0, -d / 2 + 9, w - 4, 18, 0, h, fab, 4], soft(0, -d / 2 + 22, w - 34, 12, 50, h - 8, fab),
+        ...[-1, 1].map((sg) => [sg * (w / 2 - 9), 2, 18, d - 4, 0, 58, fab, 4]), ...[-1, 1].map((sg) => [sg * (w / 2 - 9), 2, 20, d - 4, 52, 66, fab, 4, { cyl: 1, ax: 'y' }])];
+      if (has('STRANDMON', 'OSKARSHAMN')) return [[0, 2, w - 6, d - 6, 18, 44, fab, 4], soft(0, 8, w - 26, d - 26, 44, 54, fab), [0, -d / 2 + 8, w - 6, 16, 18, h, fab, 4],
+        ...[-1, 1].map((sg) => [sg * (w / 2 - 7), -d / 2 + 22, 12, 28, 60, h - 6, fab, 4]), ...[-1, 1].map((sg) => [sg * (w / 2 - 7), 6, 13, d - 14, 18, 62, fab, 4]), ...[-1, 1].map((sg) => [sg * (w / 2 - 7), 6, 15, d - 12, 58, 66, fab, 4, { cyl: 1, ax: 'y' }]),
+        ...rlegs(w / 2 - 8, d / 2 - 8, 18, [0.32, 0.22, 0.15], 4.5, 1.6)];
+      return null;
+    }
+    if (t === 'armoire' && has('KLEPPSTAD', 'BRIMNES')) {
+      const n = w > 100 ? 3 : 2, dw = (w - 2) / n, o = [[0, 0, w, d, 6, h, col, K], [0, -1, w - 2, d - 3, 0, 6, col, K]];
+      for (let i = 0; i < n; i++) { const x = -w / 2 + 1 + dw * (i + 0.5), mir = has('BRIMNES') && n === 3 && i === 1; o.push([x, d / 2 + 0.4, dw - 0.6, 0.8, 7, h - 1, mir ? [0.78, 0.84, 0.87] : dark(col, 0.985), mir ? 0 : K]);
+        if (has('KLEPPSTAD')) o.push(sph(x + (i % 2 ? -1 : 1) * (dw / 2 - 5), d / 2 + 1.4, 2.4, 2, h / 2 - 1.2, h / 2 + 1.2, blk)); else if (!mir) o.push(sph(x + (i % 2 ? -1 : 1) * (dw / 2 - 4), d / 2 + 0.9, 1.2, 1, h / 2 - 5, h / 2 + 5, dark(col, 0.5))); }
+      return o;
+    }
+    if (t === 'commode' && has('STORKLINTA', 'MALM')) {
+      const n = Math.max(2, Math.round((h - 8) / 22)), cols2 = w > 100 ? 2 : 1, dh = (h - 8) / n, o = [[0, 0, w, d, 4, h, col, K], [0, -1, w - 4, d - 3, 0, 4, dark(col, 0.85), 0]];
+      for (let c = 0; c < cols2; c++) for (let i = 0; i < n; i++) { const x = -w / 2 + w / cols2 * (c + 0.5), z = 4 + dh * i; o.push([x, d / 2 + 0.3, w / cols2 - 1, 0.8, z + 0.5, z + dh - 0.5, dark(col, 0.98), K], [x, d / 2 + 0.6, Math.min(18, w / cols2 * 0.4), 0.8, z + dh - 3.5, z + dh - 1.2, dark(col, 0.6), 0]); }
+      return o;
+    }
+    if (t === 'penderie') {
+      const hang = (yy, top) => { const o = [], clc = [[0.93, 0.92, 0.89], [0.30, 0.38, 0.52], [0.70, 0.60, 0.48], [0.22, 0.22, 0.24]], nh = Math.max(3, Math.min(6, Math.floor((w - 16) / 15)));
+        for (let i = 0; i < nh; i++) { const x = -w / 2 + 12 + i * ((w - 24) / Math.max(1, nh - 1)), L = [60, 46, 76, 52, 68, 44][i % 6]; o.push(rodY(x, yy, 34, 1.3, top - 5, [0.50, 0.37, 0.26]), [x, yy, 3, 35, top - 5 - L, top - 5, clc[i % 4], 4]); } return o; };
+      if (has('MULIG')) return [...[-1, 1].flatMap((sx) => [cyl(sx * (w / 2 - 1.5), -d / 2 + 2, 2, 0, h, WH), cyl(sx * (w / 2 - 1.5), d / 2 - 2, 2, 0, h, WH), rodY(sx * (w / 2 - 1.5), 0, d - 4, 2, h - 1, WH), rodY(sx * (w / 2 - 1.5), 0, d - 4, 2, 1, WH)]),
+        rodX(0, 0, w - 3, 2.2, h - 1, WH), [0, 0, w - 4, d - 6, 18, 19.2, WH, 0], ...hang(0, h - 2)];
+      if (has('RIGGA')) return [...[-1, 1].flatMap((sx) => [rodY(sx * (w / 2 - 3), 0, d, 2.4, 6, WH), sph(sx * (w / 2 - 3), -d / 2 + 3, 5, 5, 0, 5, blk), sph(sx * (w / 2 - 3), d / 2 - 3, 5, 5, 0, 5, blk), cyl(sx * (w / 2 - 3), 0, 2.6, 6, h, WH)]),
+        rodX(0, 0, w - 6, 2.4, h - 1, WH), rodX(0, 0, w - 6, 2, 30, WH), ...hang(0, h - 2)];
+      if (has('OMAR')) { const o = [...[-1, 1].flatMap((sx) => [-1, 1].map((sy) => [sx * (w / 2 - 1.5), sy * (d / 2 - 1.5), 3, 3, 0, h, zinc, 0]))]; [10, h - 2].forEach((z) => o.push([0, 0, w, d, z, z + 2, zinc, 0])); o.push(rodX(0, 0, w - 4, 2.4, h - 14, zinc), ...hang(0, h - 15)); return o; }
+      if (has('ÄLGANÄS')) return [...[-1, 1].flatMap((sx) => [cyl(sx * (w / 2 - 1.5), 0, 2, 0, h, blk), rodY(sx * (w / 2 - 1.5), 0, d, 2, 1, blk)]), rodX(0, 0, w - 3, 2, h - 1, blk), [0, 0, w - 4, d - 8, 22, 23, blk, 0], [0, 0, w - 4, d - 8, 8, 9, blk, 0], ...hang(0, h - 2)];
+      return null;
+    }
+    if (t === 'deco') {
+      const b = it.zb || 0, glow = (x, y, dx, z0, z1) => [x, y, dx, dx, z0, z1, [1, 0.95, 0.80], 6, { sph: 1, glow: 1 }];
+      if (has('FADO')) return [cyl(0, 0, 10, b, b + 3, WH, 0, 0.8), glow(0, 0, h * 0.95, b + 2, b + h)];
+      if (has('ÅRSTID') && h > 100) return [cyl(0, 0, 26, 0, 2, brass, 0, 0.9), cyl(0, 0, 2.2, 2, h - 30, brass), [0, 0, 38, 38, h - 32, h, C.lamp, 6]];
+      if (has('ÅRSTID', 'RINGSTA')) return [cyl(0, 0, 13, b, b + 1.6, brass), cyl(0, 0, 1.6, b + 1.6, b + h * 0.6, brass), [0, 0, 26, 26, b + h * 0.55, b + h, C.lamp, 6]];
+      return null;
+    }
+    return null;
+  }
+  if (ik) { const sp = trIkModel(); if (sp) { sp.ik = true; return sp; } }
   if (trIsBed(it)) {
-    const dv = duvet || C.duvet, pw = it.t === 'lit_d' ? w / 2 - 14 : w - 26, px = it.t === 'lit_d' ? [-w / 4, w / 4] : [0];
-    const pil = px.flatMap((x) => [[x, -d / 2 + 30, pw, 36, 50, 59, C.pillow, 4], [x, -d / 2 + 31, pw - 6, 30, 59, 62, C.pillow, 4]]);
-    return [[0, 0, w, d, 10, 28, C.wood, 3], ...legs(w / 2 - 5, d / 2 - 5, 10, C.woodD, 3), [0, 2, w - 4, d - 8, 28, 50, C.white, 4],
-      [0, -d / 2 + 4, w + 6, 8, 0, 108, C.woodD, 3], [0, -d / 2 + 8.5, w - 10, 1, 58, 102, dark(C.woodD, 1.18), 3],
-      [0, d * 0.17, w, d * 0.64, 50, 55, dv, 4], [0, -d * 0.145, w, 9, 50, 56, C.white, 4], [0, d / 2 - 24, w + 0.6, 34, 50, 55.6, dark(dv, 0.78), 4], ...pil];
+    // Sommier habillé de tissu sur pieds ronds, matelas, tête de lit capitonnée.
+    const hb = 120, out = [
+      [0, 3, w, d - 6, 9, 31, tex, 4], ...rlegs(w / 2 - 8, d / 2 - 10, 9, woodD, 5, 1.3),
+      [0, 4, w - 3, d - 10, 31, 53, C.white, 4],
+      [0, -d / 2 + 4.5, w + 12, 9, 26, hb, tex, 4], [0, -d / 2 + 0.6, w + 12, 3, 0, 26, dark(tex, 0.75), 0], ...literie(w, d, 53, 0)];
+    const cols = Math.max(3, Math.round(w / 24)), sp = (w + 4) / cols;
+    for (let r = 0; r < 3; r++) for (let c = 0; c < cols - (r % 2); c++) { const z = 62 + r * 17; out.push(sph(-w / 2 - 2 + sp * (c + 0.5 + (r % 2) * 0.5), -d / 2 + 9.2, 2.6, 1.8, z - 1.3, z + 1.3, dark(tex, 0.62))); }
+    return out;
   }
-  if (it.t === 'chevet') return [[0, 0, w, d, 4, h, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, 4, C.woodD, 3), [0, d / 2 + 0.4, w - 8, 0.8, h - 17, h - 15.5, C.woodD, 0], ...(noLamp ? [] : [[0, 0, 11, 11, h, h + 2, C.metal, 0], [0, 0, 3, 3, h + 2, h + 20, C.metal, 0], [0, 0, 20, 20, h + 20, h + 38, C.lamp, 6]])];
-  if (it.t === 'bureau') return [[0, 0, w, d, h - 4, h, C.wood, 3], [0, -d / 2 + 2, w - 12, 2, h - 16, h - 4, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, h - 4, C.dark)];
-  if (it.t === 'chaise') return [[0, 1, w - 4, d - 6, 42, 47, C.textile, 4], [0, -d / 2 + 4, w - 6, 4, 52, h, C.textile, 4], [-w / 2 + 5, -d / 2 + 4, 3, 3, 42, 52, C.dark, 0], [w / 2 - 5, -d / 2 + 4, 3, 3, 42, 52, C.dark, 0], ...legs(w / 2 - 5, d / 2 - 5, 42, C.dark)];
-  if (it.t === 'fauteuil') return [[0, 2, w, d - 4, 12, 38, C.textile, 4], [0, 6, w - 30, d - 26, 38, 46, dark(C.textile, 1.08), 4], [0, -d / 2 + 9, w, 18, 38, h, C.textile, 4], [-w / 2 + 7, 4, 14, d - 10, 38, 58, C.textile, 4], [w / 2 - 7, 4, 14, d - 10, 38, 58, C.textile, 4], ...legs(w / 2 - 6, d / 2 - 6, 12, C.woodD, 3)];
-  if (it.t === 'armoire') return [[0, 0, w, d, 6, h, C.wood, 3], [0, 0, w - 6, d - 6, 0, 6, C.woodD, 0], [0, d / 2 + 0.3, 0.8, 0.6, 10, h - 4, C.woodD, 0], [-5, d / 2 + 1.5, 1.6, 3, h / 2 - 9, h / 2 + 9, C.metal, 0], [5, d / 2 + 1.5, 1.6, 3, h / 2 - 9, h / 2 + 9, C.metal, 0]];
+  if (it.t === 'chevet') {
+    const lh = 15, mid = (lh + h) / 2;
+    return [[0, 0, w, d, lh, h - 2.5, wood, WK], [0, 0, w + 1, d + 1, h - 2.5, h, wood, WK], ...rlegs(w / 2 - 5, d / 2 - 5, lh, woodD, 3.4, 1.6),
+      [0, d / 2 + 0.3, w - 4, 0.8, lh + 2, mid - 0.7, dark(wood, 0.95), WK], [0, d / 2 + 0.3, w - 4, 0.8, mid + 0.7, h - 4.5, dark(wood, 0.95), WK],
+      rodY(0, d / 2 + 1.5, 3, 2.4, (lh + mid) / 2, C.metal), rodY(0, d / 2 + 1.5, 3, 2.4, (mid + h - 4) / 2, C.metal),
+      ...(noLamp ? [[w / 6, 2, 15, 21, h, h + 3, acc, 0], [w / 6, 2, 14, 20, h + 3, h + 5, dark(tex, 0.9), 0]] : [...lampe(-w / 6, -2, h), [w / 4, 4, 13, 19, h, h + 3, acc, 0]])];
+  }
+  if (it.t === 'bureau') {
+    const dr = Math.min(42, w * 0.35);
+    return [[0, 0, w, d, h - 3, h, wood, WK], [w / 2 - dr / 2 - 3, 0, dr, d - 8, h - 16, h - 3, wood, WK], [w / 2 - dr / 2 - 3, d / 2 - 3.6, dr - 3, 0.8, h - 14.5, h - 4.5, dark(wood, 0.94), WK], rodX(w / 2 - dr / 2 - 3, d / 2 - 2, 14, 1.4, h - 9.5, C.metal),
+      ...rlegs(w / 2 - 5, d / 2 - 5, h - 3, C.dark, 3.2, 1), rodX(0, -d / 2 + 5, w - 10, 2, 12, C.dark), [0, -d / 2 + 3, w - 14, 1.6, h - 30, h - 3, wood, WK],
+      ...(noLamp ? [] : [cyl(-w / 2 + 16, -d / 2 + 14, 14, h, h + 1.5, C.dark), [-w / 2 + 16, -d / 2 + 14, 1.6, 1.6, h + 1.5, h + 38, C.dark, 0], [-w / 2 + 22, -d / 2 + 14, 14, 1.6, h + 37, h + 39, C.dark, 0], [-w / 2 + 29, -d / 2 + 14, 12, 12, h + 30, h + 40, C.lamp, 6]]),
+      [w / 6, 4, 24, 17, h, h + 1.6, C.white, 0]];
+  }
+  if (it.t === 'chaise') return [[0, 1.5, w - 2, d - 4, 41, 44, wood, WK], soft(0, 2, w - 5, d - 7, 44, 49.5, tex), ...rlegs(w / 2 - 4, d / 2 - 4, 41, wood, 3.6, 1.45),
+    cyl(-w / 2 + 4, -d / 2 + 3.5, 3.2, 41, h - 2, wood, 3), cyl(w / 2 - 4, -d / 2 + 3.5, 3.2, 41, h - 2, wood, 3), [0, -d / 2 + 3, w - 4, 3, h - 22, h, wood, WK], soft(0, -d / 2 + 5.4, w - 10, 3.5, h - 20, h - 2, tex)];
+  if (it.t === 'fauteuil') return [[0, 2, w, d - 4, 14, 40, acc, 4], soft(0, 8, w - 26, d - 22, 40, 51, dark(acc, 1.07)), [0, -d / 2 + 9, w - 2, 16, 38, h, acc, 4], soft(0, -d / 2 + 20, w - 28, 12, 48, h - 7, dark(acc, 1.07)),
+    soft(-w / 2 + 7, 3, 14, d - 8, 36, 62, acc), soft(w / 2 - 7, 3, 14, d - 8, 36, 62, acc), ...rlegs(w / 2 - 9, d / 2 - 9, 14, woodD, 4.2, 1.7), soft(w / 8, -d / 2 + 29, 34, 11, 50, 80, tex)];
+  if (it.t === 'armoire') {
+    const n = w > 110 ? 3 : 2, dw = (w - 4) / n, out = [[0, 0, w, d, 8, h - 3, wood, WK], [0, -1, w - 4, d - 4, 0, 8, woodD, 0], [0, 0, w + 2, d + 2, h - 3, h, wood, WK]];
+    for (let i = 0; i < n; i++) { const x = -w / 2 + 2 + dw * (i + 0.5); out.push([x, d / 2 + 0.4, dw - 0.8, 0.8, 10, h - 5, dark(wood, 1.04), WK], [x + (i % 2 ? -1 : 1) * (dw / 2 - 5), d / 2 + 2.2, 1.6, 1.6, h / 2 - 16, h / 2 + 16, C.metal, 0, { cyl: 1 }]); }
+    return out;
+  }
+  if (it.t === 'commode') {
+    const lh = 14, n = 3, dh = (h - lh - 4) / n, out = [[0, 0, w, d, lh, h - 2, wood, WK], [0, 0, w + 1, d + 1, h - 2, h, wood, WK], ...rlegs(w / 2 - 5, d / 2 - 5, lh, woodD, 3.6, 1.6)];
+    for (let i = 0; i < n; i++) { const z = lh + 1.5 + dh * i; out.push([0, d / 2 + 0.3, w - 4, 0.8, z + 0.6, z + dh - 0.6, dark(wood, 0.95), WK], rodX(0, d / 2 + 1.6, Math.min(30, w / 3), 1.4, z + dh / 2, C.metal)); }
+    return out;
+  }
   if (it.t === 'cuisine') {
-    // Meubles bas, plan de travail, évier, machine à café et micro-ondes ; colonne frigo au bout ; meubles hauts et ruban LED dessous.
-    const fw = Math.min(60, w / 4), bw = w - fw, bx = -w / 2 + bw / 2, fx = w / 2 - fw / 2, wh = [0.95, 0.95, 0.93], top = [0.30, 0.27, 0.24], back = -d / 2;
-    const doors = []; for (let k = 0; k < Math.floor(bw / 60); k++) { const x = -w / 2 + 30 + k * 60; doors.push([x, d / 2 + 0.4, 56, 0.8, 12, 82, dark(wh, 0.97), 0], [x + 22, d / 2 + 1.2, 1.2, 1.2, 60, 76, C.metal, 0]); }
-    return [[bx, 0, bw, d - 2, 10, 86, wh, 0], [bx, -2, bw - 4, d - 8, 0, 10, dark(wh, 0.6), 0], ...doors, [bx, 0, bw, d, 86, 90, top, 3],
-      [bx - bw / 4, 2, 50, 38, 89, 90.4, [0.68, 0.70, 0.72], 0], [bx - bw / 4, back + 8, 4, 4, 90, 118, C.metal, 0],
-      [bx + bw / 4, back + 20, 26, 30, 90, 124, [0.12, 0.12, 0.13], 0], [bx + bw / 4 - 45, back + 22, 46, 34, 90, 118, dark(wh, 0.9), 0],
-      [fx, 0, fw, d, 0, 210, wh, 0], [fx - fw / 2 + 4, d / 2 + 1.2, 1.2, 1.2, 100, 160, C.metal, 0],
+    // Meubles bas à poignées longues, plan de travail, crédence, évier et mitigeur, machine à café et micro-ondes ; colonne frigo ; meubles hauts et LED dessous.
+    const fw = Math.min(60, w / 4), bw = w - fw, bx = -w / 2 + bw / 2, fx = w / 2 - fw / 2, wh = [0.95, 0.95, 0.93], top = [0.30, 0.27, 0.24], back = -d / 2, sx = bx - bw / 4;
+    const out = [[bx, -1, bw, d - 4, 10, 86, wh, 0], [bx, -3, bw - 2, d - 10, 0, 10, dark(wh, 0.55), 0], [bx, 0, bw + 0.5, d + 1, 86, 90, top, 3], [bx, back + 0.8, bw, 1.4, 90, 145, [0.86, 0.87, 0.86], 0],
+      [sx, 2, 52, 40, 89.4, 90.3, [0.68, 0.70, 0.72], 0], cyl(sx, back + 7, 3.4, 90, 116, C.metal), rodY(sx, back + 13, 13, 2.4, 116, C.metal),
+      [bx + bw / 4, back + 21, 25, 32, 90, 125, [0.12, 0.12, 0.13], 0], [bx + bw / 4, back + 37.5, 8, 2, 104, 106, C.metal, 0], [bx + bw / 4 - 44, back + 22, 48, 36, 90, 118, dark(wh, 0.9), 0], [bx + bw / 4 - 49, back + 40.4, 30, 0.6, 94, 114, [0.10, 0.10, 0.12], 0],
+      [fx, 0, fw, d, 0, 212, wh, 0], [fx, d / 2 + 0.4, fw - 1, 0.8, 2, 84, dark(wh, 0.98), 0], [fx, d / 2 + 0.4, fw - 1, 0.8, 86, 210, dark(wh, 0.98), 0], [fx - fw / 2 + 4, d / 2 + 2, 1.4, 1.4, 120, 175, C.metal, 0, { cyl: 1 }],
       [bx, back + 17, bw, 34, 145, 215, wh, 0], [bx, back + 32, bw - 8, 2, 143, 145, C.lamp, 6]];
+    for (let x = -w / 2 + 30; x < -w / 2 + bw - 20; x += 60) out.push([x, d / 2 - 1.6, 58.6, 0.8, 11, 85, dark(wh, 0.985), 0], rodX(x, d / 2 - 0.2, 30, 1.2, 81, C.metal), [x, back + 34.4, 58.6, 0.8, 146, 214, dark(wh, 0.985), 0]);
+    return out;
   }
-  if (it.t === 'table' || it.t === 'table_r') return [[0, 0, w, d, h - 4, h, C.wood, 3], ...(it.t === 'table_r' ? [[0, 0, 8, 8, 0, h - 4, C.dark, 0], [0, 0, w * 0.5, d * 0.5, 0, 2, C.dark, 0]] : legs(w / 2 - 5, d / 2 - 5, h - 4, C.dark))];
-  if (it.t === 'banquette') return [[0, 4, w, d - 8, 0, 40, C.woodD, 3], [0, 4, w - 4, d - 10, 40, 47, C.textile, 4], [0, -d / 2 + 6, w, 12, 40, h, C.textile, 4]];
-  if (it.t === 'table_basse') return [[0, 0, w, d, h - 4, h, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, h - 4, C.woodD, 3)];
-  if (it.t === 'tapis') return [[0, 0, w, d, 0, 1.2, dark(C.textile, 0.9), 4]];
-  if (it.t === 'tableau') { const z0 = Math.max(95, 150 - h / 2); return [[0, 0, w, 3, z0, z0 + h, C.woodD, 0], [0, 1.2, w - 8, 1.2, z0 + 4, z0 + h - 4, [0.78, 0.72, 0.62], 0]]; }
-  if (it.t === 'plante') return [[0, 0, 30, 30, 0, 32, [0.91, 0.89, 0.85], 3], [0, 0, 26, 26, 32, h * 0.55, [0.25, 0.42, 0.26], 4], [0, 0, 36, 36, h * 0.55, h, [0.30, 0.48, 0.30], 4]];
-  if (it.t === 'deco') { const b = it.zb || 0; return [[0, 0, w * 0.6, d * 0.6, b, b + h, [0.86, 0.82, 0.74], 3]]; }
-  if (it.t === 'tv') return [[0, 0, w, 5, 100, 100 + h, C.dark, 0], [0, 2.8, w - 4, 0.6, 102, 98 + h, [0.07, 0.08, 0.11], 0]];
+  if (it.t === 'table') return [[0, 0, w, d, h - 3.5, h, wood, WK], [0, 0, w - 10, d - 10, h - 11, h - 3.5, dark(wood, 0.9), WK], ...rlegs(w / 2 - 6, d / 2 - 6, h - 3.5, wood, 4.6, 1.5)];
+  if (it.t === 'table_r') return [cyl(0, 0, w, h - 3.5, h, wood, 3), cyl(0, 0, w * 0.55, h - 7, h - 3.5, dark(wood, 0.9), 3), cyl(0, 0, 7, 3, h - 7, C.dark), cyl(0, 0, w * 0.52, 0, 3, C.dark, 0, 0.85)];
+  if (it.t === 'banquette') {
+    const n = Math.max(1, Math.round(w / 58)), cw = w / n, ns = Math.max(3, Math.round(w / 21)), sw = w / ns, out = [[0, 4, w, d - 8, 0, 12, woodD, 3], [0, 4, w, d - 8, 12, 39, tex, 4]];
+    for (let i = 0; i < n; i++) out.push(soft(-w / 2 + cw * (i + 0.5), 7, cw - 2, d - 16, 39, 48, dark(tex, 1.06)));
+    for (let i = 0; i < ns; i++) out.push(soft(-w / 2 + sw * (i + 0.5), -d / 2 + 7.5, sw - 1, 11, 40, h, tex));
+    return out;
+  }
+  if (it.t === 'table_basse') return Math.abs(w - d) < 8
+    ? [cyl(0, 0, w, h - 3, h, wood, 3), cyl(0, 0, w * 0.86, 12, 14, wood, 3), ...[0, 120, 240].map((a) => cyl(Math.cos(a * Math.PI / 180) * w * 0.36, Math.sin(a * Math.PI / 180) * d * 0.36, 3.4, 0, h - 3, C.dark))]
+    : [[0, 0, w, d, h - 3, h, wood, WK], [0, 0, w - 8, d - 8, 12, 14, wood, WK], ...rlegs(w / 2 - 4, d / 2 - 4, h - 3, C.dark, 3, 1)];
+  if (it.t === 'tapis') return [[0, 0, w, d, 0, 1.2, dark(tex, 0.82), 4], [0, 0, w - 16, d - 16, 1.2, 1.5, C.rug, 4], [0, 0, w - 36, d - 36, 1.5, 1.7, dark(C.rug, 0.94), 4]];
+  if (it.t === 'tableau') {
+    // Cadre, marie-louise blanche, et une composition aux couleurs de la chambre.
+    const z0 = Math.max(95, 150 - h / 2), aw = w - 16, ah = h - 16, zc = z0 + h / 2;
+    return [[0, 0, w, 3.5, z0, z0 + h, C.dark, 0], [0, 1.3, w - 3, 1, z0 + 1.5, z0 + h - 1.5, [0.96, 0.95, 0.93], 0], [0, 1.9, aw, 0.6, z0 + 8, z0 + h - 8, dark(C.rug, 1.04), 0],
+      [-aw / 5, 2.3, aw * 0.5, 0.5, zc - ah * 0.1, zc + ah * 0.3, acc, 0, { sph: 1 }], [aw / 6, 2.4, aw * 0.42, 0.5, z0 + 10, zc + ah * 0.05, tex, 0], [aw / 4, 2.6, aw * 0.18, 0.5, zc + ah * 0.18, zc + ah * 0.36, dark(acc, 0.7), 0, { sph: 1 }]];
+  }
+  if (it.t === 'plante') {
+    const g1 = [0.24, 0.42, 0.25], g2 = [0.32, 0.52, 0.30], g3 = [0.20, 0.36, 0.22];
+    return [cyl(0, 0, 34, 0, 36, CERA, 0, 1.3), cyl(0, 0, 30, 34, 35, [0.30, 0.22, 0.16]), cyl(0, 0, 2.4, 35, h * 0.55, [0.36, 0.28, 0.20]),
+      sph(0, 0, 54, 50, h * 0.42, h * 0.78, g1, 4), sph(-12, 8, 40, 36, h * 0.58, h * 0.92, g2, 4), sph(12, -6, 38, 40, h * 0.62, h, g3, 4), sph(6, 14, 30, 28, h * 0.36, h * 0.6, g2, 4)];
+  }
+  if (it.t === 'deco') {
+    const b = it.zb || 0, n = String(it.n || '').toLowerCase() + ' ' + (ik ? ik.cat : '');
+    if (/lampadaire/.test(n) || (h >= 110 && w <= 45)) return [cyl(0, 0, 28, 0, 2.5, C.dark, 0, 0.9), cyl(0, 0, 2.4, 2.5, h - 32, C.metal), [0, 0, 42, 42, h - 34, h, C.lamp, 6]];
+    if (/lampe/.test(n)) return lampe(0, 0, b, Math.max(0.6, h / 45));
+    // Un vase et quelques tiges fleuries.
+    const vc = /vase/.test(n) ? [0.80, 0.76, 0.68] : acc, out = [cyl(0, 0, Math.max(8, w * 0.65), b, b + h * 0.62, vc, 0, 0.62)];
+    [[-2, 1, 0.98], [2.5, -1, 1.1], [0, 2.5, 0.9]].forEach(([x, y, f]) => out.push(cyl(x, y, 0.8, b + h * 0.6, b + h * f, [0.28, 0.42, 0.24]), sph(x * 1.6, y * 1.6, 5, 5, b + h * f - 2, b + h * f + 3, x > 0 ? [0.95, 0.94, 0.90] : dark(acc, 1.15), 4)));
+    return out;
+  }
+  if (it.t === 'tv') return [[0, 0, w, 4, 100, 100 + h, [0.07, 0.07, 0.08], 0], [0, 2.1, w - 1.6, 0.3, 100.8, 99.2 + h, [0.04, 0.05, 0.08], 0], [0, -1, 20, 2, 100 + h * 0.3, 100 + h * 0.7, [0.1, 0.1, 0.1], 0]];
   const CER = [0.95, 0.95, 0.93], WAT = [0.80, 0.88, 0.93];
   if (it.t === 'wc') return [[0, -d / 2 + 9, w - 2, 18, 38, 78, CER, 0], [0, 6, w - 4, d - 22, 0, 38, CER, 0], [0, 6, w, d - 20, 38, 41, [0.98, 0.98, 0.97], 0], [0, -d / 2 + 9, 8, 3, 78, 79.5, C.metal, 0]];
   if (it.t === 'lavabo') return [...(w >= 80 ? [[0, 0, w, d, 12, 80, C.wood, 3], [0, d / 2 + 0.4, w - 10, 0.8, 46, 47, C.woodD, 0]] : [[0, -d / 2 + 12, 18, 18, 0, 78, CER, 0]]), [0, 0, w, d, 78, 88, CER, 0], [0, 2, w - 16, d - 18, 87.5, 88.3, WAT, 0], [0, -d / 2 + 5, 4, 12, 88, 102, C.metal, 0], [0, -d / 2 + 1.2, Math.min(w - 4, 70), 2, 108, 178, [0.78, 0.82, 0.85], 0], ...(it.n ? [[0, -d / 2 + 2.4, Math.min(w - 4, 70) + 6, 1, 105, 181, C.metal, 0]] : [])];
   if (it.t === 'baignoire') return [[0, 0, w, d, 0, 55, CER, 0], [0, 0, w - 14, d - 14, 54.5, 55.4, WAT, 0], [-w / 2 + 12, -d / 2 + 4, 5, 8, 55, 72, C.metal, 0], [-w / 2 + 12, -d / 2 + 2, 4, 3, 72, 190, C.metal, 0], [-w / 2 + 12, -d / 2 + 10, 14, 14, 186, 189, C.metal, 0]];
   if (it.t === 'douche') { const ita = /italienne/.test(it.n || ''); return [[0, 0, w, d, 0, ita ? 1 : 4, ita ? [0.55, 0.55, 0.53] : CER, ita ? 2 : 0], [0, 0, 10, 10, ita ? 1 : 4, ita ? 1.4 : 4.4, C.metal, 0], [w / 2 - 1, d / 4, 1.2, d / 2, ita ? 1 : 4, 200, [0.70, 0.84, 0.90], 7], [w / 2 - 1, d / 2 - 1, 2, 2, 0, 200, C.metal, 0], [0, -d / 2 + 2, 4, 3, 100, 200, C.metal, 0], [0, -d / 2 + 14, 22, 22, 196, 199, C.metal, 0]]; }
   if (it.t === 'penderie') {
-    const bk = -d / 2 + 4, cint = [-0.3, -0.1, 0.12, 0.3].map((f) => [f * w, bk + 10, 1.2, 30, 118, 168, f < 0 ? C.textile : dark(C.textile, 1.12), 0]);
-    return [[0, 0, w, d, 40, 45, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, 40, C.woodD, 3), [-w / 2 + 2, bk, 3, 3, 45, h, C.metal, 0], [w / 2 - 2, bk, 3, 3, 45, h, C.metal, 0],
-      [0, bk + 10, w - 4, 2.4, 168, 170.4, C.metal, 0], [-w / 2 + 2, bk + 5, 3, 13, 168, 170.4, C.metal, 0], [w / 2 - 2, bk + 5, 3, 13, 168, 170.4, C.metal, 0], [0, bk + 10, w, 24, h - 2, h, C.wood, 3], ...cint];
+    // Banc en lattes sur pieds métal, montants et tringle ronds, étagère haute, cintres en bois avec quelques vêtements, une valise posée.
+    const bk = -d / 2 + 4, ry = bk + 12, out = [...rlegs(w / 2 - 3, d / 2 - 3, 40, C.dark, 2.6, 1), rodX(0, d / 2 - 3, w - 6, 2.4, 39, C.dark), rodX(0, -d / 2 + 3, w - 6, 2.4, 39, C.dark),
+      cyl(-w / 2 + 2, bk, 2.8, 0, h, C.dark), cyl(w / 2 - 2, bk, 2.8, 0, h, C.dark), rodX(0, ry, w - 4, 2.2, 168, C.metal), rodY(-w / 2 + 2, bk + 6, 12, 2, 168, C.dark), rodY(w / 2 - 2, bk + 6, 12, 2, 168, C.dark),
+      [0, ry, w, 28, h - 2.5, h, wood, 3]];
+    for (let i = 0; i < 4; i++) out.push([0, -d / 2 + 4 + (d - 8) * (i + 0.5) / 4, w - 4, (d - 8) / 4 - 1.2, 40, 43, wood, 3]);
+    const cl = [[0.93, 0.92, 0.89], [0.30, 0.38, 0.52], [0.70, 0.60, 0.48], [0.22, 0.22, 0.24], [0.84, 0.80, 0.74]], nh = Math.max(3, Math.min(6, Math.floor((w - 20) / 14)));
+    for (let i = 0; i < nh; i++) { const x = -w / 2 + 14 + i * ((w - 28) / Math.max(1, nh - 1)), L = [62, 48, 80, 55, 70, 45][i % 6]; out.push(rodY(x, ry, 36, 1.4, 163, woodD), [x, ry, 1, 1, 163, 168, C.metal, 0], [x, ry, 3, 37, 163 - L, 163, cl[i % 5], 4]); }
+    out.push([w * 0.12, 0, w * 0.5, 22, 43, 66, [0.50, 0.32, 0.22], 0], [w * 0.12, 0, 12, 3, 66, 69, C.dark, 0]);
+    return out;
   }
-  if (it.t === 'bagages') return [[0, 0, w, d, 40, 44, C.wood, 3], [0, -d / 2 + 2, w, 3, 44, 52, C.wood, 3], ...legs(w / 2 - 4, d / 2 - 4, 40, C.woodD, 3)];
+  if (it.t === 'bagages') return [...[-1, 0, 1].map((i) => [0, i * (d / 3.2), w, d / 3.6, 41, 44, wood, 3]), [0, 0, w - 2, 2, 38, 41, woodD, 3], ...rlegs(w / 2 - 3, d / 2 - 3, 41, C.dark, 2.6, 1), ...[-w / 3, 0, w / 3].map((x) => [x, 0, 5, d + 1, 44, 44.8, C.dark, 4])];
   return [[0, 0, w, d, 0, h, C.wood, 3]];
 }
 function trScene(roomId, p) {
@@ -784,7 +971,7 @@ function trScene(roomId, p) {
   const dh = Math.min(204, H - 10), dwl = walls[p.door.wall], dL = trWallLen(p.door.wall, W, D);
   dwl.boxes.push(onWall(p.door, trDW(p) + 12, 0, dh + 6, 2, TR_COL.frame), onWall(p.door, trDW(p), 0, dh, 3.4, TR_COL.door, 3), onWall({ wall: p.door.wall, pos: Math.min(dL - 6, p.door.pos + trDW(p) / 2 - 9) }, 3, 98, 102, 9, TR_COL.metal), onWall({ wall: p.door.wall, pos: Math.min(dL - 10, p.door.pos + trDW(p) / 2 - 14) }, 12, 99, 101, 9.5, TR_COL.metal));
   // Un cadre au-dessus de la tête de lit, s'il n'y a pas de fenêtre à cet endroit.
-  if (bed0 && H >= 225) {
+  if (bed0 && H >= 225 && !p.items.some((i) => i.t === 'tableau' && ((i.r || 0) / 90) % 4 === headWall)) {
     const pos = headWall % 2 ? bed0.y : bed0.x, clear = p.win.wall !== headWall || Math.abs(p.win.pos - pos) > fw / 2 + 50;
     if (clear) walls[headWall].boxes.push(onWall({ wall: headWall, pos }, 74, 138, 190, 2.4, [0.16, 0.15, 0.14]), onWall({ wall: headWall, pos }, 66, 142, 186, 2.9, [0.94, 0.92, 0.87]), onWall({ wall: headWall, pos: pos - 6 }, 26, 152, 176, 3.2, dacc && dacc[2] ? dacc[2] : [0.60, 0.69, 0.62]));
   }
@@ -815,19 +1002,22 @@ function trScene(roomId, p) {
   // Ce qui n'est pas la chambre : un bloc plein, pour lire la vraie forme de la pièce.
   trHors(d).forEach((r) => { sdbHigh.push(box(r.x0, r.y0, 0, r.x1, r.y1, H, wc, 5)); sdbLow.push(box(r.x0, r.y0, 0, r.x1, r.y1, Math.min(H, 105), [0.55, 0.55, 0.54], 5)); });
   // Un tapis au pied du lit, s'il tient dans la pièce.
-  if (bed0) {
+  if (bed0 && !p.items.some((i) => i.t === 'tapis')) {
     const m = trDim(bed0), q = trLocal(bed0, 0, m.d / 2 - 25, m.w + 90, 150), r = { x0: Math.max(6, q.x0), y0: Math.max(6, q.y0), x1: Math.min(W - 6, q.x1), y1: Math.min(D - 6, q.y1) };
     if (r.x1 - r.x0 > 90 && r.y1 - r.y0 > 90 && !(sdb && trHit(r, sdb))) B.push(box(r.x0, r.y0, 0, r.x1, r.y1, 1.2, TR_COL.rug, 4));
   }
   const dl = trDecoOf(TR_DECO_TISSU, deco.linge), duvet = dl ? dl[2] : null;
-  const lum = trLum(deco);
+  const lum = trLum(deco), dtis = trDecoOf(TR_DECO_TISSU, deco.tissu), pal = { tex: dtis && deco.tissu !== 'blanc' ? dtis[2] : null, acc: dacc && dacc[2] ? dacc[2] : null };
   const models = []; // pour le rendu soigné : où poser un vrai modèle 3D à la place des blocs
   // Objet déco : posé sur le meuble qui est dessous (chevet, commode, bureau…), sinon au sol.
   p.items.filter((it) => it.t === 'deco').forEach((it) => { const under = p.items.filter((o) => o !== it && !trNoFloor(o) && !trIsBed(o) && trHit(trLocal(it, 0, 0, 2, 2), trRect(o))); it.zb = under.length ? Math.max(...under.map((o) => trDim(o).h)) : 0; });
   p.items.forEach((it) => {
     const dest = trOnWall(it) ? walls[((it.r || 0) / 90) % 4].boxes : B, mi = models.length, ik = it.ik && S.trCat && S.trCat.find((c) => c.ref === it.ik);
-    { const m = trDim(it); models.push({ id: it.id, tv: trOnWall(it), t: it.t, img: ik && ik.img && !trIsBed(it) && !trIsSan(it) ? trIkImg(ik) : null, zb: (it.zb || 0) * cm, wz: it.t === 'tableau' ? Math.max(95, 150 - m.h / 2) * cm : null, x: (it.x - W / 2) * cm, z: (it.y - D / 2) * cm, r: it.r || 0, w: m.w * cm, d: m.d * cm, h: m.h * cm, lim: trIsSan(it) && sdb ? [(sdb.x0 - W / 2) * cm, (sdb.y0 - D / 2) * cm, (sdb.x1 - W / 2) * cm, (sdb.y1 - D / 2) * cm] : null }); }
-    trParts(it, duvet, lum.includes('appliques')).forEach(([lx, ly, sx, sy, z0, z1, c, k]) => { const q = trLocal(it, lx, ly, sx, sy); dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp, soft: c === TR_COL.pillow, mi })); });
+    // Meubles : en 3D (modèle IKEA fait main, sinon le modèle de base aux couleurs de l'article). Déco, plantes, tableaux : la vraie photo détourée.
+    const parts = trParts(it, duvet, lum.includes('appliques'), pal, ik || null);
+    { const m = trDim(it); models.push({ id: it.id, tv: trOnWall(it), t: it.t, img: ik && ik.img && ['deco', 'plante', 'tableau'].includes(it.t) && !parts.ik ? trIkImg(ik) : null, own: !!ik, zb: (it.zb || 0) * cm, wz: it.t === 'tableau' ? Math.max(95, 150 - m.h / 2) * cm : null, x: (it.x - W / 2) * cm, z: (it.y - D / 2) * cm, r: it.r || 0, w: m.w * cm, d: m.d * cm, h: m.h * cm, lim: trIsSan(it) && sdb ? [(sdb.x0 - W / 2) * cm, (sdb.y0 - D / 2) * cm, (sdb.x1 - W / 2) * cm, (sdb.y1 - D / 2) * cm] : null }); }
+    parts.forEach(([lx, ly, sx, sy, z0, z1, c, k, ex]) => { const q = trLocal(it, lx, ly, sx, sy), e = ex || {}, ax = e.ax && (it.r || 0) % 180 ? (e.ax === 'x' ? 'y' : 'x') : e.ax;
+      dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp, soft: c === TR_COL.pillow || !!e.soft, mi, ...(e.cyl ? { cyl: 1, top: e.top, ax } : {}), ...(e.sph ? { sph: 1 } : {}), ...(e.glow ? { glow: 1 } : {}) })); });
   });
   // Éclairage choisi : appliques liseuses de chaque côté de la tête de lit, ruban LED derrière la tête de lit.
   p.items.filter(trIsBed).forEach((b) => {

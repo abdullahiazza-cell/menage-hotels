@@ -95,14 +95,24 @@ export function trRendu(o) {
     else m = new THREE.MeshStandardMaterial({ color: col(b.c), roughness: b.c[0] < 0.3 ? 0.35 : 0.62, metalness: 0 });
     mats.set(key, m); trash.push(m); return m;
   }
-  const geos = [];
+  const geos = [], unitGeos = new Map();
+  // Formes rondes de taille 1, partagées : un cylindre (éventuellement plus fin en haut, ou couché) ou une sphère.
+  function unitGeo(b) {
+    const t = b.top === undefined || b.top === null ? 1 : b.top, key = b.sph ? 'S' : `C${t}|${b.ax || ''}`;
+    if (unitGeos.has(key)) return unitGeos.get(key);
+    let g;
+    if (b.sph) g = new THREE.SphereGeometry(0.5, 20, 14);
+    else { g = new THREE.CylinderGeometry(0.5 * Math.min(1, t), 0.5 * Math.min(1, 1 / t), 1, 24); if (b.ax === 'x') g.rotateZ(Math.PI / 2); else if (b.ax === 'y') g.rotateX(Math.PI / 2); }
+    unitGeos.set(key, g); geos.push(g); return g;
+  }
   function mesh(b, opts) {
     const [sx, sy, sz] = b.s, mn = Math.min(sx, sy, sz); let g;
     const r = opts && opts.sharp ? 0 : (b.soft ? mn * 0.49 : (b.k === 4 ? Math.min(0.03, mn * 0.42) : (b.k === 3 || b.k === 0 ? Math.min(0.007, mn * 0.3) : 0)));
+    let unit = false;
     if (b.lamp) g = new THREE.CylinderGeometry(sx * 0.36, sx * 0.52, sy, 28, 1, true); // abat-jour
-    else g = r > 0.002 ? new RoundedBoxGeometry(sx, sy, sz, b.soft ? 7 : (b.k === 4 ? 4 : 2), r) : new THREE.BoxGeometry(sx, sy, sz);
-    geos.push(g);
-    const m = new THREE.Mesh(g, (opts && opts.mat) || matFor(b)); m.position.set(b.t[0], b.t[1], b.t[2]);
+    else if (b.cyl || b.sph) { g = unitGeo(b); unit = true; } // pieds ronds, tringles, plateaux ronds, boutons, feuillages : forme unitaire mise à l'échelle
+    else { g = r > 0.002 ? new RoundedBoxGeometry(sx, sy, sz, b.soft ? 7 : (b.k === 4 ? 4 : 2), r) : new THREE.BoxGeometry(sx, sy, sz); geos.push(g); }
+    const m = new THREE.Mesh(g, (opts && opts.mat) || matFor(b)); m.position.set(b.t[0], b.t[1], b.t[2]); if (unit) m.scale.set(sx, sy, sz);
     m.castShadow = !!(opts && opts.cast); m.receiveShadow = b.k !== 6; return m;
   }
   const caster = new THREE.MeshBasicMaterial({ colorWrite: false, depthWrite: false }); trash.push(caster);
@@ -168,7 +178,7 @@ export function trRendu(o) {
   const bills = [];
   (sc.models || []).forEach((it, i) => { it.mi = i; it.cx = it.x; it.cz = it.z; byItem[i] = byItem[i] || [];
     if (it.img) later.push(() => photo(it, byItem[i]));
-    else if (MODELES[it.t]) later.push(() => poser(MODELES[it.t], it.t === 'plante' ? Object.assign(it, { fitH: true }) : it, byItem[i])); });
+    else if (MODELES[it.t] && !it.own) later.push(() => poser(MODELES[it.t], it.t === 'plante' ? Object.assign(it, { fitH: true }) : it, byItem[i])); });
   // Un meuble du catalogue : sa vraie photo IKEA, détourée (le fond blanc devient transparent), à sa taille réelle.
   // Debout dans la pièce, elle se tourne vers l'œil ; un tableau ou un miroir est plaqué sur son mur. Vue du dessus : on revient aux blocs.
   function photo(it, olds) {
