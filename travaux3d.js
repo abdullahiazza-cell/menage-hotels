@@ -786,7 +786,6 @@ function trParts(it, duvet, noLamp, pal, ik) {
         [0, d / 2 - 0.2, w - 3.4, 1.6, 27, h - 2, dark(col, 0.98), K], sph(0, d / 2 + 0.6, 3, 1, h - 10, h - 7, dark(col, 0.45))];
       if (has('KNARREVIK')) return [[-w / 2 + 1, -d / 2 + 1, 1.6, 1.6, 0, h, blk, 0], [w / 2 - 1, -d / 2 + 1, 1.6, 1.6, 0, h, blk, 0], [-w / 2 + 1, d / 2 - 1, 1.6, 1.6, 0, h, blk, 0], [w / 2 - 1, d / 2 - 1, 1.6, 1.6, 0, h, blk, 0],
         [0, 0, w, d, h - 1.6, h, blk, 0], [0, 0, w, d, h - 9, h - 8, blk, 0], [0, 0, w - 2, d - 2, 14, 15, blk, 0], ...lampe(-w / 6, 0, h, 0.85)];
-      return null;
     }
     if (t === 'bureau') {
       if (has('MICKE')) { const uw = Math.min(36, w * 0.34); return [[0, 0, w, d, h - 2.5, h, col, K], [-w / 2 + 1, 0, 2, d, 0, h - 2.5, col, K], [w / 2 - uw / 2, 0, uw, d, 0, h - 2.5, col, K], [w / 2 - uw / 2, d / 2 + 0.3, uw - 1.2, 0.8, h - 17, h - 3.5, dark(col, 0.97), K],
@@ -795,6 +794,30 @@ function trParts(it, duvet, noLamp, pal, ik) {
         for (let i = 0; i < 5; i++) o.push([w / 2 - uw / 2 - 1, 29.4, uw - 1.2, 0.8, 1 + i * 14, 14 + i * 14, [0.94, 0.94, 0.92], 0], [w / 2 - uw / 2 - 1, 29.8, 10, 0.8, 11.5 + i * 14, 13 + i * 14, dark(WH, 0.8), 0]);
         return [...o, cyl(-w / 2 + 6, -d / 2 + 6, 4, 0, h - 2.6, has('ADILS') ? blk : WH), cyl(-w / 2 + 6, d / 2 - 6, 4, 0, h - 2.6, has('ADILS') ? blk : WH)]; }
       return null;
+    }
+    if (t === 'chevet' || t === 'commode') {
+      if (has('HEMNES')) { // style classique : pieds tournés, plinthe à découpe, tiroirs à boutons ronds
+        const n = t === 'chevet' ? 2 : Math.max(3, Math.round(h / 24)), lh = 10, dh = (h - lh - 4) / n, o = [[0, 0, w, d, lh, h - 2, col, K], [0, 0, w + 2, d + 2, h - 2, h, col, K], ...rlegs(w / 2 - 4, d / 2 - 4, lh, col, 5, 1.2), [0, d / 2 - 0.5, w - 6, 1, lh - 3, lh, col, K]];
+        for (let i = 0; i < n; i++) { const z = lh + 1 + dh * i; o.push([0, d / 2 + 0.3, w - 4, 1, z + 0.5, z + dh - 0.5, dark(col, 0.98), K], [0, d / 2 + 0.8, w - 9, 0.5, z + 2.5, z + dh - 2.5, dark(col, 0.94), K]);
+          (w > 70 ? [-w / 4, w / 4] : [0]).forEach((x) => o.push(sph(x, d / 2 + 2, 3, 2.6, z + dh / 2 - 1.5, z + dh / 2 + 1.5, [0.55, 0.50, 0.44]))); }
+        return o; }
+      if (has('TONSTAD', 'IDANÄS', 'GULLABERG')) { // un tiroir en haut, une niche ouverte dessous, petits pieds
+        const lh = 12; return [[0, 0, w, d, lh, h, col, K], ...rlegs(w / 2 - 3, d / 2 - 3, lh, dark(col, 0.85), 3, 1), [0, d / 2 + 0.3, w - 2, 0.8, h - 16, h - 1, dark(col, 0.97), K], [0, d / 2 + 1, 10, 1.2, h - 10, h - 8.5, dark(col, 0.6), 0], [0, d / 2 - 8, w - 4, 16, lh + 2, h - 18, dark(col, 0.72), 0]];
+      }
+    }
+    if (t === 'table' || t === 'table_r') {
+      if (has('LISABO')) return t === 'table_r' || /ronde/.test(ds) ? [cyl(0, 0, w, h - 3, h, col, 3), ...[45, 135, 225, 315].map((a) => cyl(Math.cos(a * Math.PI / 180) * w * 0.3, Math.sin(a * Math.PI / 180) * w * 0.3, 4.4, 0, h - 3, col, 3, 1.5)), cyl(0, 0, w * 0.62, h - 9, h - 7, col, 3)]
+        : [[0, 0, w, d, h - 2.4, h, col, 3], [0, 0, w - 14, d - 14, h - 8, h - 2.4, col, 3], ...rlegs(w / 2 - 8, d / 2 - 8, h - 2.4, col, 4.4, 1.5)];
+      if (has('SANDSBERG', 'VIHALS')) return [[0, 0, w, d, h - 2, h, col, K], [0, 0, w - 8, d - 8, h - 7, h - 2, col, K], ...legs(w / 2 - 3, d / 2 - 3, h - 2, col, K)];
+    }
+    if (t === 'chaise' && has('KRYLBO', 'TONSTAD', 'NÄSINGE', 'VIHALS', 'NORDMANSSKÄR')) { // chaise rembourrée, dossier enveloppant, pieds bois ou métal
+      const lg = has('NORDMANSSKÄR', 'VIHALS') ? blk : (ikc && ikc.wood ? col : [0.32, 0.22, 0.15]);
+      return [soft(0, 2, w - 2, d - 6, 42, 50, fab), ...rlegs(w / 2 - 5, d / 2 - 5, 42, lg, 3.4, lg === blk ? 1 : 1.5), soft(0, -d / 2 + 4, w - 2, 7, 46, h, fab), soft(-w / 2 + 3, -d / 2 + 10, 5, 12, 46, h - 12, fab), soft(w / 2 - 3, -d / 2 + 10, 5, 12, 46, h - 12, fab)];
+    }
+    if (t === 'chaise' && has('PINNTORP', 'LISABO', 'SKOGSTA')) { // chaise tout bois : assise, dossier à barreaux ou à bandeau
+      const o = [[0, 1.5, w - 2, d - 4, 43, 46, col, 3], ...rlegs(w / 2 - 4, d / 2 - 4, 43, col, 3.6, 1.4), cyl(-w / 2 + 4, -d / 2 + 3, 3.2, 43, h, col, 3), cyl(w / 2 - 4, -d / 2 + 3, 3.2, 43, h, col, 3), [0, -d / 2 + 3, w - 6, 3, h - 10, h - 1, col, 3]];
+      if (has('PINNTORP')) for (let i = -2; i <= 2; i++) o.push(cyl(i * (w - 12) / 5, -d / 2 + 3, 1.6, 46, h - 10, col, 3));
+      return o;
     }
     if (t === 'chaise' && has('SANDSBERG')) return [[-w / 2 + 2, -d / 2 + 2, 2, 2, 0, h - 2, blk, 0], [w / 2 - 2, -d / 2 + 2, 2, 2, 0, h - 2, blk, 0], [-w / 2 + 2, d / 2 - 2, 2, 2, 0, 45, blk, 0], [w / 2 - 2, d / 2 - 2, 2, 2, 0, 45, blk, 0],
       [0, 0, w - 2, d - 2, 43, 46, fab === col ? blk : fab, 0], [0, -d / 2 + 2, w - 4, 1.6, h - 14, h - 3, blk, 0], [0, -d / 2 + 2, w - 4, 1.6, 15, 17, blk, 0]];
@@ -931,10 +954,19 @@ function trParts(it, duvet, noLamp, pal, ik) {
   }
   if (it.t === 'tv') return [[0, 0, w, 4, 100, 100 + h, [0.07, 0.07, 0.08], 0], [0, 2.1, w - 1.6, 0.3, 100.8, 99.2 + h, [0.04, 0.05, 0.08], 0], [0, -1, 20, 2, 100 + h * 0.3, 100 + h * 0.7, [0.1, 0.1, 0.1], 0]];
   const CER = [0.95, 0.95, 0.93], WAT = [0.80, 0.88, 0.93];
-  if (it.t === 'wc') return [[0, -d / 2 + 9, w - 2, 18, 38, 78, CER, 0], [0, 6, w - 4, d - 22, 0, 38, CER, 0], [0, 6, w, d - 20, 38, 41, [0.98, 0.98, 0.97], 0], [0, -d / 2 + 9, 8, 3, 78, 79.5, C.metal, 0]];
-  if (it.t === 'lavabo') return [...(w >= 80 ? [[0, 0, w, d, 12, 80, C.wood, 3], [0, d / 2 + 0.4, w - 10, 0.8, 46, 47, C.woodD, 0]] : [[0, -d / 2 + 12, 18, 18, 0, 78, CER, 0]]), [0, 0, w, d, 78, 88, CER, 0], [0, 2, w - 16, d - 18, 87.5, 88.3, WAT, 0], [0, -d / 2 + 5, 4, 12, 88, 102, C.metal, 0], [0, -d / 2 + 1.2, Math.min(w - 4, 70), 2, 108, 178, [0.78, 0.82, 0.85], 0], ...(it.n ? [[0, -d / 2 + 2.4, Math.min(w - 4, 70) + 6, 1, 105, 181, C.metal, 0]] : [])];
-  if (it.t === 'baignoire') return [[0, 0, w, d, 0, 55, CER, 0], [0, 0, w - 14, d - 14, 54.5, 55.4, WAT, 0], [-w / 2 + 12, -d / 2 + 4, 5, 8, 55, 72, C.metal, 0], [-w / 2 + 12, -d / 2 + 2, 4, 3, 72, 190, C.metal, 0], [-w / 2 + 12, -d / 2 + 10, 14, 14, 186, 189, C.metal, 0]];
-  if (it.t === 'douche') { const ita = /italienne/.test(it.n || ''); return [[0, 0, w, d, 0, ita ? 1 : 4, ita ? [0.55, 0.55, 0.53] : CER, ita ? 2 : 0], [0, 0, 10, 10, ita ? 1 : 4, ita ? 1.4 : 4.4, C.metal, 0], [w / 2 - 1, d / 4, 1.2, d / 2, ita ? 1 : 4, 200, [0.70, 0.84, 0.90], 7], [w / 2 - 1, d / 2 - 1, 2, 2, 0, 200, C.metal, 0], [0, -d / 2 + 2, 4, 3, 100, 200, C.metal, 0], [0, -d / 2 + 14, 22, 22, 196, 199, C.metal, 0]]; }
+  // Sanitaires : cuvette suspendue arrondie et plaque de commande, vasque sur meuble à tiroir avec mitigeur et miroir, baignoire et douche avec mitigeur, pomme ronde et barre.
+  if (it.t === 'wc') return [[0, -d / 2 + 7, w - 6, 14, 20, 100, CER, 0], [0, -d / 2 + 0.7, 22, 1, 104, 118, [0.85, 0.86, 0.87], 0], [-4.5, -d / 2 + 1.4, 8, 0.8, 106, 116, C.metal, 0], [4.5, -d / 2 + 1.4, 8, 0.8, 106, 116, C.metal, 0],
+    [0, 4, w - 4, d - 18, 28, 40, CER, 0, { cyl: 1, top: 1.25 }], [0, 4, w - 6, d - 20, 40, 42.5, [0.98, 0.98, 0.97], 0, { cyl: 1 }], [0, -d / 2 + 16, w - 8, 6, 42, 44, [0.98, 0.98, 0.97], 0], [0, 6, w - 16, d - 32, 40.6, 41, WAT, 0, { cyl: 1 }]];
+  if (it.t === 'lavabo') { const big = w >= 70, mz = big ? 84 : 86;
+    return [...(big ? [[0, 0, w, d, 30, mz - 2, wood, WK], [0, d / 2 + 0.4, w - 4, 0.8, 32, mz - 4, dark(wood, 0.95), WK], [0, d / 2 + 1.4, Math.min(30, w / 3), 1.2, mz - 9, mz - 8, C.metal, 0]] : [[0, -d / 2 + 10, 16, 16, 0, 80, CER, 0, { cyl: 1, top: 1.3 }]]),
+      [0, 0, w, d, mz - 2, mz + 2, CER, 0], [0, 3, Math.min(w - 14, 52), d - 16, mz - 12, mz + 2.2, CER, 0, { cyl: 1, top: 1.2 }], [0, 3, Math.min(w - 20, 46), d - 22, mz + 1.5, mz + 2.4, WAT, 0, { cyl: 1 }],
+      cyl(0, -d / 2 + 6, 3.4, mz + 2, mz + 18, C.metal), rodY(0, -d / 2 + 10, 10, 2, mz + 17, C.metal), [0, -d / 2 + 4, 1.4, 6, mz + 19, mz + 20.5, C.metal, 0],
+      [0, -d / 2 + 1.2, Math.min(w - 4, 70), 1.6, mz + 26, 182, [0.80, 0.85, 0.88], 0], [0, -d / 2 + 2.2, Math.min(w - 4, 70) + 4, 0.8, mz + 24, mz + 26, C.lamp, 6]]; }
+  if (it.t === 'baignoire') return [[0, 0, w, d, 0, 56, CER, 0], [0, 0, w - 12, d - 12, 30, 56.6, [0.97, 0.97, 0.96], 0], [0, 0, w - 18, d - 18, 50, 50.6, WAT, 0], cyl(-w / 2 + 12, -d / 2 + 4, 4, 56, 64, C.metal), rodY(-w / 2 + 12, -d / 2 + 9, 10, 2.6, 64, C.metal),
+    [-w / 2 + 12, -d / 2 + 2, 2, 2, 64, 190, C.metal, 0, { cyl: 1 }], cyl(-w / 2 + 12, -d / 2 + 14, 20, 186, 188, C.metal), [0, -d / 2 + 1.5, w - 20, 2, 110, 112, C.metal, 0, { cyl: 1, ax: 'x' }]];
+  if (it.t === 'douche') { const ita = /italienne/.test(it.n || '');
+    return [[0, 0, w, d, 0, ita ? 1 : 4, ita ? [0.55, 0.55, 0.53] : CER, ita ? 2 : 0], [w / 4, 0, 6, d - 30, ita ? 1 : 4, ita ? 1.5 : 4.5, C.metal, 0], [w / 2 - 1, d / 4, 1.2, d / 2, ita ? 1 : 4, 200, [0.70, 0.84, 0.90], 7], cyl(w / 2 - 1, d / 2 - 1, 2.4, 0, 200, C.metal),
+      [0, -d / 2 + 2, 3, 3, 90, 205, C.metal, 0, { cyl: 1 }], rodY(0, -d / 2 + 14, 24, 2.4, 205, C.metal), cyl(0, -d / 2 + 26, 26, 201, 203.5, C.metal), [-8, -d / 2 + 3, 12, 4, 100, 110, C.metal, 0], [w / 2 - 20, -d / 2 + 2, 26, 8, 140, 141.5, C.metal, 0]]; }
   if (it.t === 'penderie') {
     // Banc en lattes sur pieds métal, montants et tringle ronds, étagère haute, cintres en bois avec quelques vêtements, une valise posée.
     const bk = -d / 2 + 4, ry = bk + 12, out = [...rlegs(w / 2 - 3, d / 2 - 3, 40, C.dark, 2.6, 1), rodX(0, d / 2 - 3, w - 6, 2.4, 39, C.dark), rodX(0, -d / 2 + 3, w - 6, 2.4, 39, C.dark),
@@ -963,7 +995,9 @@ function trScene(roomId, p) {
   const onWall = (o, width, z0, z1, deep, c, k) => { const z = trOpening(o, width, W, D, deep); return box(z.x0, z.y0, z0, z.x1, z.y1, z1, c, k); };
   walls.forEach((wl, i) => { const L = trWallLen(i, W, D); wl.boxes.push(onWall({ wall: i, pos: L / 2 }, L, 0, 8, 1.4, [0.97, 0.97, 0.96])); });
   const fw = trNum(d.fen_w) || 120, fh = trNum(d.fen_h) || 120, al = trNum(d.fen_allege) || 90, ft = Math.min(H - 11, al + fh), wwl = walls[p.win.wall];
-  wwl.boxes.push(onWall(p.win, fw + 14, al - 7, Math.min(H - 4, ft + 7), 2.2, TR_COL.frame), onWall(p.win, fw, al, ft, 3, TR_COL.glass, 6), onWall(p.win, 4, al, ft, 4, TR_COL.frame), onWall(p.win, fw + 20, al - 9, al - 6, 7, TR_COL.frame));
+  wwl.boxes.push(onWall(p.win, fw + 14, al - 7, Math.min(H - 4, ft + 7), 2.2, TR_COL.frame), onWall(p.win, fw, al, ft, 3, TR_COL.glass, 6), onWall(p.win, 4, al, ft, 4, TR_COL.frame), onWall(p.win, fw + 20, al - 9, al - 6, 7, TR_COL.frame), onWall(p.win, fw, ft - (ft - al) * 0.25 - 2, ft - (ft - al) * 0.25 + 2, 4, TR_COL.frame), onWall({ wall: p.win.wall, pos: p.win.pos - 18 }, 3, al + 50, al + 54, 6, TR_COL.metal));
+  // Un radiateur blanc sous la fenêtre, comme dans les chambres de l'hôtel.
+  if (al >= 55) { const rw = Math.min(fw, 100); wwl.boxes.push(onWall(p.win, rw, 14, Math.min(al - 8, 74), 9, [0.96, 0.96, 0.95]), onWall(p.win, rw - 4, 16, Math.min(al - 10, 72), 10.5, [0.93, 0.93, 0.92])); }
   trFen2(d).forEach((f) => { const w2 = trNum(f.w) || fw; walls[f.wall].boxes.push(onWall(f, w2 + 14, al - 7, Math.min(H - 4, ft + 7), 2.2, TR_COL.frame), onWall(f, w2, al, ft, 3, TR_COL.glass, 6), onWall(f, 4, al, ft, 4, TR_COL.frame), onWall(f, w2 + 20, al - 9, al - 6, 7, TR_COL.frame)); });
   if (deco.rideau && deco.rideau !== 'aucun') {
     const tis = trDecoOf(TR_DECO_TISSU, deco.tissu) || TR_DECO_TISSU[0], top = Math.min(H - 4, al + fh + 22), pw = Math.max(34, fw * 0.32), n = Math.max(4, Math.round(pw / 7)), sw = pw / n;
