@@ -15,7 +15,7 @@ import { ShaderPass } from './vendor/three/postprocessing/ShaderPass.js';
 import { GLTFLoader } from './vendor/three/loaders/GLTFLoader.js';
 
 // Vrais modèles 3D (libres, dossier vendor/modeles) : ils remplacent les blocs dès qu'ils sont chargés. Gardés en mémoire d'une chambre à l'autre.
-const MODELES = { fauteuil: 'SheenChair.glb', plante: 'DiffuseTransmissionPlant.glb' };
+const MODELES = { fauteuil: 'SheenChair.glb', plante: 'DiffuseTransmissionPlant.glb', canape: 'GlamVelvetSofa.glb' };
 const glbCache = new Map(); // (le tissu du fauteuil est reteint en bleu gris, comme les chaises)
 function glb(f) {
   if (!glbCache.has(f)) glbCache.set(f, new GLTFLoader().loadAsync('./vendor/modeles/' + f).then((g) => { g.scene.traverse((x) => { if (x.isMesh && x.material && /^fabric/i.test(x.material.name || '')) x.material.color.setRGB(0.26, 0.44, 0.66, THREE.SRGBColorSpace); }); return g.scene; }).catch((e) => { glbCache.delete(f); throw e; }));
@@ -168,7 +168,9 @@ export function trRendu(o) {
   function poser(f, it, olds) {
     glb(f).then((src) => {
       if (dead) return;
-      const inner = src.clone(true), kill = []; inner.traverse((x) => { if (x.isLight || x.isCamera) kill.push(x); else if (x.isMesh) { x.castShadow = true; x.receiveShadow = true; } }); kill.forEach((x) => x.removeFromParent());
+      const inner = src.clone(true), kill = []; inner.traverse((x) => { if (x.isLight || x.isCamera) kill.push(x); else if (x.isMesh) { x.castShadow = true; x.receiveShadow = true;
+        // Le tissu prend la couleur de la déco choisie (chaque meuble a sa propre copie de la matière).
+        if (it.tint && x.material && /fabric/i.test(x.material.name || '')) { x.material = x.material.clone(); x.material.color.setRGB(Math.min(1, it.tint[0] * 1.25), Math.min(1, it.tint[1] * 1.25), Math.min(1, it.tint[2] * 1.25), THREE.SRGBColorSpace); trash.push(x.material); } } }); kill.forEach((x) => x.removeFromParent());
       inner.updateMatrixWorld(true); const bb = new THREE.Box3().setFromObject(inner), sz = bb.getSize(new THREE.Vector3()), c = bb.getCenter(new THREE.Vector3());
       const u = it.fitH ? it.h / sz.y : Math.min(1.15, it.w / sz.x); // jamais plus large que la place prévue sur le plan inner.position.set(-c.x, -bb.min.y, -c.z);
       const g = new THREE.Group(); g.add(inner); g.scale.setScalar(u); g.position.set(it.cx !== undefined ? it.cx : it.x, 0, it.cz !== undefined ? it.cz : it.z); if (it.mi >= 0) { g.userData.mi = it.mi; olds.push(g); } g.rotation.y = -(it.r || 0) * Math.PI / 180; scene.add(g);

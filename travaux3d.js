@@ -10,7 +10,7 @@ const TR_FURN = {
   chaise: { l: 'Chaise', s: '', w: 45, d: 45, h: 85 }, fauteuil: { l: 'Fauteuil', s: 'Faut.', w: 75, d: 75, h: 80 },
   armoire: { l: 'Armoire', s: 'Armoire', w: 100, d: 60, h: 200 }, tv: { l: 'Télé murale', s: 'TV', w: 100, d: 8, h: 56 },
   bagages: { l: 'Porte-bagages', s: 'Bag.', w: 60, d: 45, h: 50 }, penderie: { l: 'Penderie ouverte (banc bagages + portant)', s: 'Pend.', w: 100, d: 45, h: 180 },
-  commode: { l: 'Commode', s: 'Com.', w: 80, d: 45, h: 82 },
+  commode: { l: 'Commode', s: 'Com.', w: 80, d: 45, h: 82 }, canape: { l: 'Canapé', s: 'Canapé', w: 200, d: 92, h: 80 },
   tableau: { l: 'Tableau', s: 'Tab.', w: 60, d: 3, h: 80 },
   // Salle du petit-déjeuner
   cuisine: { l: 'Cuisine linéaire', s: 'Cuisine', w: 300, d: 62, h: 220 }, table: { l: 'Table', s: 'Table', w: 110, d: 70, h: 75 }, table_r: { l: 'Table ronde', s: 'T.', w: 90, d: 90, h: 75 },
@@ -123,7 +123,7 @@ const trOnWall = (it) => it.t === 'tv' || it.t === 'tableau';
 const trNoFloor = (it) => trOnWall(it) || it.t === 'deco' || it.t === 'tapis';
 const trIsTable = (it) => it.t === 'table' || it.t === 'table_r';
 // Places assises : chaises, fauteuils, et une place tous les 58 cm de banquette.
-const trSeats = (p) => (p.items || []).reduce((a, i) => a + (i.t === 'chaise' || i.t === 'fauteuil' ? 1 : i.t === 'banquette' ? Math.floor(trDim(i).w / 58) : 0), 0);
+const trSeats = (p) => (p.items || []).reduce((a, i) => a + (i.t === 'chaise' || i.t === 'fauteuil' ? 1 : i.t === 'banquette' ? Math.floor(trDim(i).w / 58) : i.t === 'canape' ? Math.floor(trDim(i).w / 60) : 0), 0);
 /* ---------- salle de bain dans un coin : cloisons, porte, équipements ---------- */
 // Les deux cloisons qui la séparent de la chambre, et la porte (70 cm) sur la plus longue, près de leur jonction.
 function trSdbDoor(s, p, W, D) {
@@ -514,7 +514,10 @@ function trPdj(roomId, nv, base, n) {
     } }
   // 3. Contre le mur de la porte : coin salon (deux fauteuils, table basse, tapis) en Confort et Prestige, puis des tables pour 2.
   const row = (x0) => { const g = []; let x = x0;
-    if (lvl >= 1) { g.push(mk('tapis', x + 105, 62, 0, { w: 220, d: 125 }), mk('fauteuil', x + 37.5, 37.5, 0), mk('table_basse', x + 105, 40, 0, { w: 50, d: 45 }), mk('fauteuil', x + 172.5, 37.5, 0));
+    // Prestige : un canapé et une table basse devant ; Confort : deux fauteuils et une table basse entre eux.
+    if (lvl === 2) { g.push(mk('tapis', x + 95, 70, 0, { w: 210, d: 125 }), mk('canape', x + 95, 42.5, 0, { w: 185, d: 85 }), mk('table_basse', x + 95, 112, 0, { w: 70, d: 40 }), mk('deco', x + 95, 112, 0, { w: 16, d: 16, h: 26, n: 'Vase' }), mk('tableau', x + 95, 1.5, 0, { w: 90, d: 3, h: 60, n: 'Tableau' }));
+      x += 195; g.push(mk('deco', x + 15, 20, 0, { w: 30, d: 30, h: 155, n: 'Lampadaire' })); x += 35; }
+    else if (lvl >= 1) { g.push(mk('tapis', x + 105, 62, 0, { w: 220, d: 125 }), mk('fauteuil', x + 37.5, 37.5, 0), mk('table_basse', x + 105, 40, 0, { w: 50, d: 45 }), mk('fauteuil', x + 172.5, 37.5, 0));
       if (lvl === 2) g.push(mk('deco', x + 105, 40, 0, { w: 16, d: 16, h: 26, n: 'Vase' }), mk('tableau', x + 105, 1.5, 0, { w: 70, d: 3, h: 50, n: 'Tableau' })); x += 215;
       if (lvl === 2) { g.push(mk('deco', x + 15, 20, 0, { w: 30, d: 30, h: 155, n: 'Lampadaire' })); x += 35; } }
     return { g, x }; };
@@ -870,6 +873,9 @@ function trParts(it, duvet, noLamp, pal, ik) {
     cyl(-w / 2 + 4, -d / 2 + 3.5, 3.2, 41, h - 2, wood, 3), cyl(w / 2 - 4, -d / 2 + 3.5, 3.2, 41, h - 2, wood, 3), [0, -d / 2 + 3, w - 4, 3, h - 22, h, wood, WK], soft(0, -d / 2 + 5.4, w - 10, 3.5, h - 20, h - 2, tex)];
   if (it.t === 'fauteuil') return [[0, 2, w, d - 4, 14, 40, acc, 4], soft(0, 8, w - 26, d - 22, 40, 51, dark(acc, 1.07)), [0, -d / 2 + 9, w - 2, 16, 38, h, acc, 4], soft(0, -d / 2 + 20, w - 28, 12, 48, h - 7, dark(acc, 1.07)),
     soft(-w / 2 + 7, 3, 14, d - 8, 36, 62, acc), soft(w / 2 - 7, 3, 14, d - 8, 36, 62, acc), ...rlegs(w / 2 - 9, d / 2 - 9, 14, woodD, 4.2, 1.7), soft(w / 8, -d / 2 + 29, 34, 11, 50, 80, tex)];
+  if (it.t === 'canape') { const nc = w >= 170 ? 3 : 2, cw = (w - 30) / nc, o = [[0, 2, w - 28, d - 6, 12, 40, acc, 4], [0, -d / 2 + 10, w - 4, 18, 12, h, acc, 4], soft(-w / 2 + 8, 3, 16, d - 6, 12, 60, acc), soft(w / 2 - 8, 3, 16, d - 6, 12, 60, acc), ...rlegs(w / 2 - 8, d / 2 - 8, 12, C.dark, 3.4, 1.4)];
+    for (let i = 0; i < nc; i++) o.push(soft(-w / 2 + 15 + cw * (i + 0.5), 8, cw - 1.5, d - 26, 40, 50, dark(acc, 1.06)), soft(-w / 2 + 15 + cw * (i + 0.5), -d / 2 + 22, cw - 1.5, 13, 48, h - 4, dark(acc, 1.06)));
+    return [...o, soft(-w / 2 + 30, -d / 2 + 32, 38, 11, 50, 82, tex), soft(w / 2 - 30, -d / 2 + 32, 38, 11, 50, 82, tex)]; }
   if (it.t === 'armoire') {
     const n = w > 110 ? 3 : 2, dw = (w - 4) / n, out = [[0, 0, w, d, 8, h - 3, wood, WK], [0, -1, w - 4, d - 4, 0, 8, woodD, 0], [0, 0, w + 2, d + 2, h - 3, h, wood, WK]];
     for (let i = 0; i < n; i++) { const x = -w / 2 + 2 + dw * (i + 0.5); out.push([x, d / 2 + 0.4, dw - 0.8, 0.8, 10, h - 5, dark(wood, 1.04), WK], [x + (i % 2 ? -1 : 1) * (dw / 2 - 5), d / 2 + 2.2, 1.6, 1.6, h / 2 - 16, h / 2 + 16, C.metal, 0, { cyl: 1 }]); }
@@ -1015,7 +1021,7 @@ function trScene(roomId, p) {
     const dest = trOnWall(it) ? walls[((it.r || 0) / 90) % 4].boxes : B, mi = models.length, ik = it.ik && S.trCat && S.trCat.find((c) => c.ref === it.ik);
     // Meubles : en 3D (modèle IKEA fait main, sinon le modèle de base aux couleurs de l'article). Déco, plantes, tableaux : la vraie photo détourée.
     const parts = trParts(it, duvet, lum.includes('appliques'), pal, ik || null);
-    { const m = trDim(it); models.push({ id: it.id, tv: trOnWall(it), t: it.t, img: ik && ik.img && ['deco', 'plante', 'tableau'].includes(it.t) && !parts.ik ? trIkImg(ik) : null, own: !!ik, zb: (it.zb || 0) * cm, wz: it.t === 'tableau' ? Math.max(95, 150 - m.h / 2) * cm : null, x: (it.x - W / 2) * cm, z: (it.y - D / 2) * cm, r: it.r || 0, w: m.w * cm, d: m.d * cm, h: m.h * cm, lim: trIsSan(it) && sdb ? [(sdb.x0 - W / 2) * cm, (sdb.y0 - D / 2) * cm, (sdb.x1 - W / 2) * cm, (sdb.y1 - D / 2) * cm] : null }); }
+    { const m = trDim(it); models.push({ id: it.id, tv: trOnWall(it), t: it.t, img: ik && ik.img && ['deco', 'plante', 'tableau'].includes(it.t) && !parts.ik ? trIkImg(ik) : null, own: !!ik, tint: it.t === 'fauteuil' || it.t === 'canape' ? (pal.acc || pal.tex || null) : null, zb: (it.zb || 0) * cm, wz: it.t === 'tableau' ? Math.max(95, 150 - m.h / 2) * cm : null, x: (it.x - W / 2) * cm, z: (it.y - D / 2) * cm, r: it.r || 0, w: m.w * cm, d: m.d * cm, h: m.h * cm, lim: trIsSan(it) && sdb ? [(sdb.x0 - W / 2) * cm, (sdb.y0 - D / 2) * cm, (sdb.x1 - W / 2) * cm, (sdb.y1 - D / 2) * cm] : null }); }
     parts.forEach(([lx, ly, sx, sy, z0, z1, c, k, ex]) => { const q = trLocal(it, lx, ly, sx, sy), e = ex || {}, ax = e.ax && (it.r || 0) % 180 ? (e.ax === 'x' ? 'y' : 'x') : e.ax;
       dest.push(box(q.x0, q.y0, z0, q.x1, q.y1, z1, c, k, { cast: it.t !== 'tv', lamp: c === TR_COL.lamp, soft: c === TR_COL.pillow || !!e.soft, mi, ...(e.cyl ? { cyl: 1, top: e.top, ax } : {}), ...(e.sph ? { sph: 1 } : {}), ...(e.glow ? { glow: 1 } : {}) })); });
   });
@@ -1397,7 +1403,8 @@ function trPlanSheet(roomId, keep) {
     ${P.view === '3d' ? `<div class="segc" role="group" aria-label="Point de vue">${[['orbit', 'Vue d’ensemble'], ['porte', 'Depuis la porte'], ['dessus', 'Du dessus']].map(([k, l]) => `<button data-a="trCam" data-k="${k}" aria-pressed="${((P.cam && P.cam.mode) || 'orbit') === k}">${l}</button>`).join('')}</div>
     <div class="segc" role="group" aria-label="Ambiance">${[['', '☀️ Jour'], ['1', '🌙 Soir']].map(([k, l]) => `<button data-a="trAmb" data-k="${k}" aria-pressed="${!!P.soir === !!k}">${l}</button>`).join('')}</div>
     <label class="tr-lumi"><span>💡 Puissance des lumières</span><input type="range" min="15" max="130" step="5" value="${P.lumi || 100}" data-input="trLumi" aria-label="Puissance des lumières"></label>
-    <p class="muted sm">${can ? 'Les trois boutons sur l’image : une nouvelle proposition à chaque appui. « Déplacer : oui » pour toucher, glisser, tourner ou enlever un meuble. ' : ''}Un doigt pour tourner la vue, deux doigts pour s’approcher. ⤢ plein écran, 📸 garder l’image.</p>` : ''}
+    <p class="muted sm">${can ? 'Les trois boutons sur l’image : une nouvelle proposition à chaque appui. « Déplacer : oui » pour toucher, glisser, tourner ou enlever un meuble. ' : ''}Un doigt pour tourner la vue, deux doigts pour s’approcher. ⤢ plein écran, 📸 garder l’image.</p>
+    <p class="muted sm" style="font-size:11px;opacity:.75">Modèles 3D : canapé « Glam Velvet Sofa » © Wayfair, licence CC BY 4.0 ; fauteuil « Sheen Chair » et plante « Diffuse Transmission Plant » (CC0), via Khronos glTF Sample Assets. Meubles IKEA modélisés d’après leurs cotes.</p>` : ''}
     ${P.view === 'plan' ? '<div id="tr-plan-bar"></div>' : ''}
     ${P.view === 'plan' && P.edit ? `<div class="card"><h3>✏️ Corriger le plan</h3><p class="muted sm">Ces corrections changent la chambre elle-même : toutes les versions en tiennent compte.</p>
       <p class="tr-cap">Mesures de la chambre</p><div class="row"><label class="tr-num"><span>Longueur</span><input type="number" inputmode="numeric" min="100" value="${W}" data-change="trEdNum" data-k="len"> cm</label><label class="tr-num"><span>Largeur</span><input type="number" inputmode="numeric" min="100" value="${D}" data-change="trEdNum" data-k="wid"> cm</label></div>
