@@ -203,7 +203,7 @@ async function refresh(force) {
       S.me = d.me; S.device = d.device; S.cfg = d.cfg || DEFAULT_CFG; S.vapid = d.vapid; S.urls = d.urls || {};
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
-      S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] }; S.occRooms = d.occRooms || [];
+      S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] }; S.occRooms = d.occRooms || []; S.clients = d.clients || [];
       S.verif = d.verif || { lignes: [], log: [], mois: [] };
       S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || []; S.banque = d.banque || null; S.chorus = d.chorus || null; S.courrier = d.courrier || null;
       S.loaded = true;
@@ -225,7 +225,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 // Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
 // Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
-const APP_V = 'v74';
+const APP_V = 'v75';
 async function onlineVersion() {
   const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
   const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
@@ -699,7 +699,9 @@ function viewRegistre() {
   const todo = inboxTodo().length;
   const subs = [['chambres', 'Chambres', 0], ['personnes', 'Personnes', 0], ['atraiter', 'À traiter', todo], ['fins', 'Fins PEC', finsCount()], ...(canReg('reg_full') && (S.reg.ids || []).length ? [['ids', 'Pièces d’identité', (S.reg.ids || []).filter(idOld).length]] : []), ...(canReg('reg_full') ? [['journal', 'Journal', 0]] : [])];
   const body = { chambres: regRooms, personnes: regPeople, atraiter: regInbox, fins: regFins, ids: regIds, journal: regJournal }[S.rsub] || regRooms;
-  return `<div class="segc" role="group" aria-label="Registre">${subs.map(([k, l, n]) => `<button data-a="rsub" data-k="${k}" aria-pressed="${S.rsub === k}">${l}${n ? ` <span class="badge sm">${n}</span>` : ''}</button>`).join('')}</div>${body()}`;
+  const nc = (S.clients || []).length, due = (S.clients || []).filter((c) => c.depart_prevu && c.depart_prevu <= todayISO()).length;
+  return `<div class="segc" role="group" aria-label="Registre">${subs.map(([k, l, n]) => `<button data-a="rsub" data-k="${k}" aria-pressed="${S.rsub === k}">${l}${n ? ` <span class="badge sm">${n}</span>` : ''}</button>`).join('')}</div>
+    ${nc ? `<button class="btn soft" style="margin:8px 0" data-a="prolong">🛏️ Prolonger un séjour · ${nc} client${nc > 1 ? 's' : ''} hôtel${due ? ` · <b>${due} départ${due > 1 ? 's' : ''} aujourd’hui ou dépassé${due > 1 ? 's' : ''}</b>` : ''}</button>` : ''}${body()}`;
 }
 function occLine(o) { const ps = pecState(o); return `<span class="ol"><span>${esc(occName(o))}${eats(o) ? ' <span title="Repas sur place" aria-label="repas sur place">🍽️</span>' : ''}${o.categorie ? ` <span class="muted">· ${esc(o.categorie)}</span>` : ''}</span><span class="pill p-${ps.c}">${ps.t}</span></span>`; }
 // Pièces d'identité gardées : effacées à la main par un gérant. Au-delà de 6 mois (durée de la fiche de police), la ligne passe en rouge.
@@ -798,6 +800,7 @@ function occSheet(id, preset) {
       <div class="two"><label>Hôtel<select id="o-hotel" data-change="oHotelC">${HOTELS.map((h) => opt(h.id, o.hotel, h.name)).join('')}</select></label><label>Chambre<select id="o-room">${freeRoomOpts(o.hotel, o.room_id || '')}</select></label></div>
       <div class="two"><label>Arrivée<input id="o-entree" type="date" value="${esc(o.entree || '')}" data-change="oNuits"></label><label>Nombre de nuits<input id="o-nuits" type="number" min="1" inputmode="numeric" value="${esc(o.nuits || '')}" data-change="oNuits"></label></div>
       <p class="muted sm" id="o-depart">${o.entree && o.nuits ? 'Départ prévu le ' + fdate(addDaysISO(o.entree, +o.nuits)) : 'Le départ prévu se calcule avec le nombre de nuits.'}</p>
+      ${id && o.statut === 'present' ? `<button type="button" class="btn small soft" data-a="prolong" data-id="${id}">🛏️ Prolonger le séjour (+1 nuit, +N nuits)</button>` : ''}
       <div class="card sub"><h3>🪪 Pièce d’identité</h3><p class="muted sm">Recto et verso. La photo est gardée jusqu’à ce qu’un gérant l’efface.</p>
         <div class="col">${idThumb('piece_recto', 'Recto', hasR)}${D.passeport || (id && o.piece_recto && !o.piece_verso) ? '' : idThumb('piece_verso', 'Verso', hasV)}</div>
         <label class="check"><input type="checkbox" id="o-passeport" data-change="oPass" ${D.passeport || (id && o.piece_recto && !o.piece_verso) ? 'checked' : ''}> Passeport (pas de verso)</label>
@@ -855,6 +858,18 @@ function idViewSheet(id, urls) {
     ${['piece_recto', 'piece_verso', 'signature'].filter((k) => urls[k]).map((k) => `<div class="card"><h3>${{ piece_recto: 'Recto', piece_verso: 'Verso', signature: 'Signature' }[k]}</h3><img src="${esc(urls[k])}" alt="" style="width:100%;border-radius:10px;background:#fff"></div>`).join('')}
     <p class="muted sm">Chaque consultation est notée dans l’historique de la fiche.</p>
     <button class="btn ghost" data-a="occOpen" data-id="${id}">← Retour à la fiche</button>`);
+}
+// « Prolonger un séjour » : femmes de ménage, intendant et gérants. +1 nuit d'un geste, ou le nombre de nuits voulu.
+function prolongSheet(only) {
+  const t = todayISO(), L = (S.clients || []).filter((c) => !only || c.id === only).sort((a, b) => String(a.depart_prevu || '').localeCompare(String(b.depart_prevu || '')));
+  const when = (c) => { const d = c.depart_prevu; if (!d) return ''; return d < t ? `<span class="pill p-red">Départ dépassé (${fdate(d).slice(0, 5)})</span>` : d === t ? '<span class="pill p-amber">Part aujourd’hui</span>' : d === addDaysISO(t, 1) ? '<span class="pill p-amber">Part demain</span>' : `<span class="muted sm">Départ le ${fdate(d)}</span>`; };
+  openSheet('prolong', `${sheetHead('Prolonger un séjour')}
+    ${L.length ? `<p class="muted">Le client reste plus longtemps ? Ajoute ses nuits ici : la date de départ est recalculée et le responsable est prévenu.</p>
+    <div class="col">${L.map((c) => `<div class="card"><div class="row between"><b>${esc([c.prenom, c.nom].filter(Boolean).join(' ') || 'Client')}</b>${when(c)}</div>
+      <p class="muted sm">${esc(hotelName(c.hotel))} · ${esc(occPlace(c))}${c.nuits ? ` · ${c.nuits} nuit${c.nuits > 1 ? 's' : ''} prévue${c.nuits > 1 ? 's' : ''}` : ''}</p>
+      <div class="row" style="gap:8px;flex-wrap:wrap"><button class="btn pri" data-a="prolongGo" data-id="${c.id}" data-n="1">＋ 1 nuit</button><button class="btn soft" data-a="prolongGo" data-id="${c.id}" data-n="2">＋ 2</button><button class="btn soft" data-a="prolongGo" data-id="${c.id}" data-n="7">＋ 1 semaine</button>
+        <label class="row" style="gap:6px;align-items:center"><input id="pn-${c.id}" type="number" min="1" max="60" inputmode="numeric" placeholder="Nb" style="width:70px"><button class="btn soft" data-a="prolongGo" data-id="${c.id}" data-n="x">OK</button></label></div></div>`).join('')}</div>`
+    : '<div class="card empty"><div class="e">🛏️</div><h2>Aucun client hôtel en ce moment</h2><p class="muted">Seuls les clients de l’hôtel (pas les jeunes du Département) se prolongent ici.</p></div>'}`);
 }
 // Tuile « Nouveau client » (femmes de ménage, intendant) : on crée la fiche, on ne voit ni ne modifie le registre.
 function arrTypeSheet() {
@@ -2263,6 +2278,7 @@ function viewBrico() {
       <button class="tile" data-a="go" data-k="securite"><span class="ti-ic t-red">${ico('shield')}</span>${secDueBrico().length ? `<span class="badge">${secDueBrico().length}</span>` : ''}<span class="ti-t">Sécurité</span><span class="ti-s">${secDueBrico().length ? secDueBrico().length + ' contrôle' + (secDueBrico().length > 1 ? 's' : '') + ' à faire' : 'Contrôles faits'}</span></button>
       <button class="tile" data-a="go" data-k="menage"><span class="ti-ic t-blue">${ico('menage')}</span><span class="ti-t">Ménage</span><span class="ti-s">Qui a nettoyé quoi</span></button>
       <button class="tile" data-a="arrNew"><span class="ti-ic t-purple">${ico('plus')}</span><span class="ti-t">Nouveau client</span><span class="ti-s">Client de l’hôtel ou MNA</span></button>
+      <button class="tile" data-a="prolong"><span class="ti-ic t-purple">${ico('book')}</span>${(S.clients || []).filter((c) => c.depart_prevu && c.depart_prevu <= todayISO()).length ? `<span class="badge">${(S.clients || []).filter((c) => c.depart_prevu && c.depart_prevu <= todayISO()).length}</span>` : ''}<span class="ti-t">Prolonger un séjour</span><span class="ti-s">${(S.clients || []).length ? (S.clients || []).length + ' client' + ((S.clients || []).length > 1 ? 's' : '') + ' hôtel' : 'Ajouter des nuits'}</span></button>
       ${canReg('reg_pec') ? `<button class="tile" data-a="go" data-k="registre"><span class="ti-ic t-purple">${ico('book')}</span>${inboxTodo().length ? `<span class="badge">${inboxTodo().length}</span>` : ''}<span class="ti-t">Registre</span><span class="ti-s">${inboxTodo().length ? inboxTodo().length + ' PEC à traiter' : occCount(presentOcc())}</span></button>` : ''}
       ${vTile()}
       <button class="tile" data-a="convList"><span class="ti-ic t-green">${ico('chat')}</span>${un ? `<span class="badge">${un}</span>` : ''}<span class="ti-t">Messages</span><span class="ti-s">${un ? un + ' non lu' + (un > 1 ? 's' : '') : 'Tout est lu'}</span></button>
@@ -2525,6 +2541,7 @@ function viewCleanHome() {
     ${done.length ? `<h2>Terminées aujourd’hui</h2><div class="col">${done.map(card).join('')}</div>` : ''}
     ${holdBtn('boss', 'Garde appuyé pour parler au responsable', 'big soft')}
     <button class="btn big" data-a="arrNew">🛎️ Nouveau client</button>
+    <button class="btn big" data-a="prolong">🛏️ Prolonger un séjour</button>
     <button class="btn big" data-a="report">🔧 Signaler un problème</button>
   </div>
   <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' nouveaux' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
@@ -2717,6 +2734,14 @@ const A = {
   },
   async occRestore(d) { await act(() => api('reg_occ_restore', { id: d.id }), 'Fiche rétablie'); },
   arrNew() { arrTypeSheet(); },
+  prolong(d) { S.prolongOnly = d && d.id ? d.id : null; prolongSheet(S.prolongOnly); },
+  async prolongGo(d) {
+    const c = (S.clients || []).find((x) => x.id === d.id); if (!c) { toast('Ce client n’est plus présent.'); return; }
+    const n = d.n === 'x' ? Math.round(+(($('pn-' + d.id) || {}).value || 0)) : +d.n; if (!(n >= 1 && n <= 60)) { toast('Indique un nombre de nuits entre 1 et 60.'); return; }
+    const base = +c.nuits > 0 ? +c.nuits : 1, dep = c.entree ? addDaysISO(c.entree, base + n) : null, nm = [c.prenom, c.nom].filter(Boolean).join(' ') || 'ce client';
+    if (!confirm(`Prolonger ${nm} de ${n} nuit${n > 1 ? 's' : ''} ?${dep ? `\nNouveau départ prévu : ${fdate(dep)}.` : ''}`)) return;
+    if (await act(() => api('occ_prolong', { id: c.id, n }), `Séjour prolongé ✓${dep ? ' Départ le ' + fdate(dep) + '.' : ''} Le responsable est prévenu.`)) prolongSheet(S.prolongOnly || null);
+  },
   arrPick(d) { S.arr.type = d.k; arrSheet(); },
   async arrShot(d) {
     const k = occKeep(); const f = await pickFile('image/*', null); if (!f) return;

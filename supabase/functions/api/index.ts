@@ -289,6 +289,9 @@ async function actState(me: any, device: any) {
   const out: any = { me, cfg, rooms: rooms || [], vapid: (await vapid()).pub, day: parisDay(), device: device.id };
   // Chambres occupées (sans les noms) : pour la tuile « Nouveau client » de l'équipe.
   { const { data: oc } = await sb.from("occupants").select("room_id").eq("statut", "present").not("room_id", "is", null); out.occRooms = [...new Set((oc || []).map((x: any) => x.room_id))]; }
+  // Clients hôtel présents (prénom, nom, chambre, départ prévu) : pour « Prolonger un séjour », équipe et gérants.
+  { const ids = new Set((rooms || []).map((r: any) => r.id)), { data: cl } = await sb.from("occupants").select("id,type,categorie,prenom,nom,room_id,hotel,entree,nuits,depart_prevu").eq("statut", "present");
+    out.clients = (cl || []).filter((x: any) => (x.type || (x.categorie === "Conventionnel" ? "client" : "departement")) === "client" && ids.has(x.room_id)).map(({ type, categorie, ...x }: any) => x); }
   const paths: string[] = [];
   (rooms || []).forEach((r: any) => {
     if (r.ref_photo) paths.push(r.ref_photo);
@@ -589,6 +592,21 @@ async function arriveeNew(me: any, body: any) {
   await regLog(me, "Arrivée", data.id, `${fullName(row)} · ${place}`, `Saisie par ${String(me.label).split(" ")[0]} (tuile Nouveau client)`, [TYPE_L[type], type === "client" ? `${row.nuits} nuit${row.nuits > 1 ? "s" : ""}, départ prévu le ${frD(row.depart_prevu)} · pièce d’identité photographiée` : row.categorie].join(" · "));
   await pushTo((await managerIds(hotel)).filter((x: string) => x !== me.id), { title: type === "client" ? "🛎️ Nouveau client hôtel" : "🏛️ Nouvelle arrivée (Département)", body: `${fullName(row)} · ${place} · saisi par ${String(me.label).split(" ")[0]}${type === "departement" ? " · prise en charge à rattacher" : ""}`, tag: "arrivee" });
   return { ok: true, id: data.id };
+}
+// Prolonger le séjour d'un client hôtel présent (+1 nuit, +N nuits) : femmes de ménage, intendant et gérants.
+async function occProlong(me: any, body: any) {
+  const n = Number(body.n); if (!Number.isInteger(n) || n < 1 || n > 60) throw new E("bad");
+  const { data: o } = await sb.from("occupants").select("*").eq("id", String(body.id || "")).maybeSingle();
+  if (!o || o.statut !== "present") throw new E("not_found", 404);
+  if ((o.type || (o.categorie === "Conventionnel" ? "client" : "departement")) !== "client") throw new E("bad");
+  if (me.only_hotel && o.hotel !== me.only_hotel) throw new E("forbidden", 403);
+  const entree = o.entree || new Date().toISOString().slice(0, 10), base = Number(o.nuits) > 0 ? Number(o.nuits) : 1, nuits = base + n;
+  const depart_prevu = new Date(Date.UTC(+entree.slice(0, 4), +entree.slice(5, 7) - 1, +entree.slice(8, 10) + nuits)).toISOString().slice(0, 10);
+  const { error } = await sb.from("occupants").update({ nuits, depart_prevu, updated_at: new Date().toISOString(), updated_by: me.id }).eq("id", o.id); if (error) throw new E("db");
+  const place = await placeLabel(o.room_id, o.hotel, "hebergement"), who = String(me.label).split(" ")[0];
+  await regLog(me, "Prolongation", o.id, `${fullName(o)} · ${place}`, `Prolongé par ${who}`, `+${n} nuit${n > 1 ? "s" : ""} · ${nuits} nuits en tout · départ prévu le ${frD(depart_prevu)} (au lieu du ${frD(o.depart_prevu)})`);
+  await pushTo((await managerIds(o.hotel)).filter((x) => x !== me.id), { title: "🛏️ Séjour prolongé", body: `${fullName(o)} · ${place} · +${n} nuit${n > 1 ? "s" : ""}, départ le ${frD(depart_prevu)} · par ${who}`, tag: "prolong" });
+  return { ok: true, nuits, depart_prevu };
 }
 // Pièce d'identité des clients hôtel : stockage privé « identite », visible seulement de ceux qui gèrent tout le registre.
 // Elle est gardée jusqu'à ce qu'un gérant l'efface lui-même (choix du propriétaire, 12/11/2026).
@@ -1454,6 +1472,9 @@ async function handle(req: Request) {
     }
 
     // --- registre ---
+    case "occ_prolong":
+      if (!isMgr(me) && !isBrico(me) && me.role !== "menage") throw new E("forbidden", 403);
+      return await occProlong(me, body);
     case "arrivee_new":
       if (!isMgr(me) && !isBrico(me) && me.role !== "menage") throw new E("forbidden", 403);
       return await arriveeNew(me, body);
