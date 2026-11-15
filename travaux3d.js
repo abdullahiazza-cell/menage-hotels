@@ -1121,19 +1121,59 @@ function trTourStops(roomId, p) {
     add(spot(dc[0] + ddx / dl * 80, dc[1] + ddy / dl * 80), sc2, 'Salle de bain', `${su.sdb ? trFr(su.sdb) + ' m² · ' : ''}${sh ? (/italienne/.test(sh.n || '') ? 'douche à l’italienne' : 'douche') : ba ? 'baignoire' : 'salle d’eau'}${p.items.some((i) => i.t === 'wc') ? ', WC' : ''}, vasque et miroir éclairé`, 1.0); }
   return { stops, fin: { t: 'Vue d’ensemble', s: `${trRoomName(roomId)} · ${surf}${nv ? ' · ' + nv.l : ''}` } };
 }
-// Musique douce de la visite, jouée par le téléphone lui-même (aucun fichier son) : quelques accords tenus, très bas.
-const TR_MUS = { ctx: null, g: null, t: 0 };
+// Musique de la visite : un petit morceau de smooth jazz original (saxophone, piano électrique, contrebasse, balais), joué par le téléphone lui-même, sans fichier son.
+// iPhone : le son passe en mode « lecture » (il ne se coupe pas avec le bouton silencieux) et démarre dans le geste du doigt, sinon Safari le bloque.
+const TR_MUS = { ctx: null, out: null, t: 0, next: 0, step: 0 };
+const TR_JAZZ = (() => {
+  const C = [[[50, 53, 57, 60, 64], 38], [[43, 53, 59, 64], 43], [[48, 52, 59, 62], 36], [[45, 55, 61, 64], 45]]; // Ré m9, Sol 13, Do maj9, La 7
+  const M = [[[0.5, 69, 0.5], [1, 72, 0.5], [1.5, 74, 1], [2.5, 72, 0.5], [3, 69, 1]], [[0.5, 71, 0.5], [1, 74, 0.5], [1.5, 76, 1.5], [3, 74, 1]], [[0, 76, 1], [1, 74, 0.5], [1.5, 71, 0.5], [2, 72, 1.5]], [[0.5, 73, 0.5], [1, 76, 0.5], [1.5, 79, 1], [2.5, 77, 0.5], [3, 76, 1]],
+    [[0, 77, 1.5], [1.5, 76, 0.5], [2, 74, 1], [3, 72, 1]], [[0.5, 71, 0.5], [1, 72, 0.5], [1.5, 74, 0.5], [2, 77, 2]], [[0.5, 76, 0.5], [1, 74, 0.5], [1.5, 72, 0.5], [2, 71, 0.5], [2.5, 72, 1.5]], [[0, 73, 1], [1, 69, 1], [2, 73, 0.5], [2.5, 76, 1.5]]];
+  return { C, M, beat: 60 / 78 };
+})();
+const trHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+function trJazzBar(ctx, out, t0, bar) {
+  const { C, M, beat } = TR_JAZZ, [ch, root] = C[bar % 4], mel = M[bar % 8], sw = (b) => b + (b % 1 === 0.5 ? 0.16 : 0); // un peu de swing sur les contretemps
+  const env = (g, t, a, peak, d, len) => { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.setTargetAtTime(0.0001, t + Math.max(a, len - d), d / 3); };
+  // Piano électrique : deux sinus légèrement désaccordés, attaque douce, accord au premier temps et petit rappel syncopé.
+  [[0, 2.4, 0.055], [2.5, 1.2, 0.035]].forEach(([b, len, v]) => ch.forEach((m) => { const t = t0 + sw(b) * beat; [0, 3].forEach((dt) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = trHz(m); o.detune.value = dt; env(g, t, 0.012, v, 0.9, len * beat); o.connect(g); g.connect(out.keys); o.start(t); o.stop(t + len * beat + 1.2); }); }));
+  // Contrebasse : fondamentale, quinte, octave, puis une note de passage vers l'accord suivant.
+  const nr = C[(bar + 1) % 4][1], bl = [[0, root, 1.4], [1.5, root + 7, 0.45], [2, root + 12, 0.9], [3, nr + (nr > root ? -1 : 1), 0.9]];
+  bl.forEach(([b, m, len]) => { const t = t0 + sw(b) * beat, o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'triangle'; o.frequency.value = trHz(m); env(g, t, 0.01, 0.32, 0.5, len * beat); o.connect(g); g.connect(out.bass); o.start(t); o.stop(t + len * beat + 0.8); });
+  // Balais et charleston : souffle filtré sur les croches, caisse claire douce aux temps 2 et 4, grosse caisse feutrée.
+  for (let k = 0; k < 8; k++) { const b = k / 2, t = t0 + sw(b) * beat, n = ctx.createBufferSource(), g = ctx.createGain(), f = ctx.createBiquadFilter(); n.buffer = out.noise; f.type = 'highpass'; f.frequency.value = k % 2 ? 7000 : 5000; env(g, t, 0.004, k % 2 ? 0.05 : 0.035, 0.08, 0.09); n.connect(f); f.connect(g); g.connect(out.drums); n.start(t); n.stop(t + 0.2); }
+  [1, 3].forEach((b) => { const t = t0 + b * beat, n = ctx.createBufferSource(), g = ctx.createGain(), f = ctx.createBiquadFilter(); n.buffer = out.noise; f.type = 'bandpass'; f.frequency.value = 1800; f.Q.value = 0.7; env(g, t, 0.01, 0.06, 0.25, 0.3); n.connect(f); f.connect(g); g.connect(out.drums); n.start(t); n.stop(t + 0.5); });
+  [0, 2.5].forEach((b) => { const t = t0 + sw(b) * beat, o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.18); env(g, t, 0.005, 0.28, 0.25, 0.3); o.connect(g); g.connect(out.drums); o.start(t); o.stop(t + 0.5); });
+  // Saxophone : deux dents de scie filtrées, petite glissade vers la note, vibrato qui arrive après l'attaque.
+  mel.forEach(([b, m, len]) => { const t = t0 + sw(b) * beat, L = len * beat, g = ctx.createGain(), f = ctx.createBiquadFilter(), lfo = ctx.createOscillator(), lg = ctx.createGain();
+    f.type = 'lowpass'; f.frequency.setValueAtTime(900, t); f.frequency.linearRampToValueAtTime(2300, t + 0.08); f.Q.value = 1.2; lfo.frequency.value = 5.2; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(9, t + Math.min(0.35, L)); lfo.connect(lg);
+    [-6, 6].forEach((dt) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = trHz(m); o.detune.setValueAtTime(dt - 35, t); o.detune.linearRampToValueAtTime(dt, t + 0.07); lg.connect(o.detune); o.connect(f); o.start(t); o.stop(t + L + 0.6); });
+    env(g, t, 0.06, 0.09, 0.22, L); f.connect(g); g.connect(out.sax); lfo.start(t); lfo.stop(t + L + 0.6); });
+}
 function trMusicStart() {
   try {
-    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; const ctx = TR_MUS.ctx || (TR_MUS.ctx = new AC()); ctx.resume();
-    const g = ctx.createGain(), lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400; g.gain.value = 0; g.connect(lp); lp.connect(ctx.destination); g.gain.linearRampToValueAtTime(0.06, ctx.currentTime + 2);
-    TR_MUS.g = g; const chords = [[261.6, 329.6, 392.0, 493.9], [220.0, 261.6, 329.6, 392.0], [174.6, 220.0, 261.6, 329.6], [196.0, 246.9, 293.7, 392.0]];
-    let i = 0; const play = () => { if (TR_MUS.g !== g) return; const t = ctx.currentTime, ch = chords[i++ % chords.length];
-      ch.forEach((f, k) => { const o = ctx.createOscillator(), v = ctx.createGain(); o.type = k % 2 ? 'triangle' : 'sine'; o.frequency.value = f * (k === 0 ? 0.5 : 1); v.gain.setValueAtTime(0, t); v.gain.linearRampToValueAtTime(0.25, t + 1.2); v.gain.linearRampToValueAtTime(0, t + 4.6); o.connect(v); v.connect(g); o.start(t); o.stop(t + 4.8); }); };
-    play(); TR_MUS.t = setInterval(play, 4000);
+    if (navigator.audioSession) { try { navigator.audioSession.type = 'playback'; } catch (_) {} }
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+    const ctx = TR_MUS.ctx || (TR_MUS.ctx = new AC()); if (ctx.state !== 'running') ctx.resume();
+    // Débloque le son tout de suite, dans le geste : un instant de silence joué.
+    { const b = ctx.createBuffer(1, 1, 22050), s0 = ctx.createBufferSource(); s0.buffer = b; s0.connect(ctx.destination); s0.start(0); }
+    trMusicStop(true);
+    const master = ctx.createGain(), comp = ctx.createDynamicsCompressor(), rev = ctx.createConvolver(), wet = ctx.createGain();
+    master.gain.value = 0.0001; master.gain.exponentialRampToValueAtTime(0.9, ctx.currentTime + 1.5); comp.threshold.value = -20; comp.ratio.value = 3;
+    const len = Math.floor(ctx.sampleRate * 2.2), ir = ctx.createBuffer(2, len, ctx.sampleRate); for (let c = 0; c < 2; c++) { const dd = ir.getChannelData(c); for (let i = 0; i < len; i++) dd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
+    rev.buffer = ir; wet.gain.value = 0.28; rev.connect(wet); wet.connect(comp); master.connect(comp); comp.connect(ctx.destination);
+    const bus = (v, r) => { const g = ctx.createGain(); g.gain.value = v; g.connect(master); if (r) { const s2 = ctx.createGain(); s2.gain.value = r; g.connect(s2); s2.connect(rev); } return g; };
+    const noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate); { const dd = noise.getChannelData(0); for (let i = 0; i < dd.length; i++) dd[i] = Math.random() * 2 - 1; }
+    const out = { keys: bus(1, 0.5), bass: bus(1, 0.1), drums: bus(0.9, 0.2), sax: bus(1, 0.7), noise, master };
+    TR_MUS.out = out; TR_MUS.step = 0; TR_MUS.next = ctx.currentTime + 0.15; const barLen = 4 * TR_JAZZ.beat;
+    // On prépare les mesures un peu à l'avance pour que le rythme reste régulier.
+    const sched = () => { if (TR_MUS.out !== out) return; while (TR_MUS.next < ctx.currentTime + 1.2) { trJazzBar(ctx, out, TR_MUS.next, TR_MUS.step++); TR_MUS.next += barLen; } };
+    sched(); TR_MUS.t = setInterval(sched, 250);
   } catch (e) { console.warn('musique', e); }
 }
-function trMusicStop() { clearInterval(TR_MUS.t); const g = TR_MUS.g; TR_MUS.g = null; if (g && TR_MUS.ctx) { try { g.gain.linearRampToValueAtTime(0, TR_MUS.ctx.currentTime + 1.2); setTimeout(() => g.disconnect(), 1500); } catch (_) {} } }
+function trMusicStop(now) {
+  clearInterval(TR_MUS.t); const out = TR_MUS.out, ctx = TR_MUS.ctx; TR_MUS.out = null; if (!out || !ctx) return;
+  try { const g = out.master.gain; g.cancelScheduledValues(ctx.currentTime); g.setValueAtTime(g.value || 0.0001, ctx.currentTime); g.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (now ? 0.2 : 1.5)); setTimeout(() => { try { out.master.disconnect(); } catch (_) {} }, now ? 400 : 1800); } catch (_) {}
+}
 // Joystick de la marche : on le tire dans la direction voulue, plus loin = plus vite.
 let trJoyOn = false;
 function trJoyBind() {
@@ -1567,10 +1607,10 @@ Object.assign(A, {
   },
   // Visite guidée : on part de la porte, on passe par chaque coin, on finit en vue d'ensemble.
   trTour() {
-    const P = S.trP; if (!P || !TR_GL.three || !TR_GL.three.tour) { toast('La visite guidée a besoin de la 3D soignée.'); return; }
+    const P = S.trP; if (P && !P.mute) trMusicStart(); // le son doit démarrer tout de suite, dans le geste du doigt
+    if (!P || !TR_GL.three || !TR_GL.three.tour) { trMusicStop(true); toast('La visite guidée a besoin de la 3D soignée.'); return; }
     const { stops, fin } = trTourStops(P.rid, P.p), ov = $('tr-tour'), j = $('tr-joy'); if (j) j.hidden = true;
     const st = document.querySelector('.tr-stage'); if (st && !st.classList.contains('big')) { st.classList.add('big'); P.big = true; P.tourBig = true; }
-    if (!P.mute) trMusicStart();
     const show = (e) => { if (!ov) return; if (e.end) { trTourEnd(false); return; }
       ov.hidden = false; ov.innerHTML = `<div class="tt-top"><span>${Math.min(e.i + 1, e.n + 1)} / ${e.n + 1}</span><button data-a="trTourMute">${P.mute ? '🔇' : '🎵'}</button><button data-a="trTourStop">✕ Arrêter</button></div><div class="tt-lab"><b>${esc(e.t)}</b><span>${esc(e.s || '')}</span></div>`; ov.classList.remove('tt-in'); void ov.offsetWidth; ov.classList.add('tt-in'); };
     document.querySelectorAll('[data-a="trCam"]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
