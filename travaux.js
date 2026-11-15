@@ -54,7 +54,10 @@ const trCommuns = () => [...trExtras().filter((r) => r.kind === 'commun'), ...co
 const trRetirees = () => [...roomsOf(TR_HOTEL), ...communsOf(TR_HOTEL)].filter((r) => trMasque(r.id));
 const trData = (rid) => (S.tr && S.tr.rooms[rid] && S.tr.rooms[rid].data) || {};
 const trIsMesh = (p) => /\.glb$/i.test(String(p && p.path || ''));
-const trPhotosOf = (rid) => S.tr.photos.filter((p) => p.room_id === rid && !trIsMesh(p));
+// Musique de la visite guidée : un fichier son déposé par le propriétaire ou l'intendant (rangé avec la réception, jamais affiché comme une photo).
+const trIsAudio = (p) => /\.(mp3|m4a|aac|wav|ogg)$/i.test(String(p && p.path || ''));
+const trMusicOf = () => S.tr && S.tr.photos ? S.tr.photos.filter(trIsAudio).slice(-1)[0] || null : null;
+const trPhotosOf = (rid) => S.tr.photos.filter((p) => p.room_id === rid && !trIsMesh(p) && !trIsAudio(p));
 const trMeshOf = (rid) => S.tr.photos.filter((p) => p.room_id === rid && trIsMesh(p)).slice(-1)[0] || null;
 const trItemPhotos = (id) => S.tr.photos.filter((p) => p.item_id === id);
 const trUrl = (p) => p ? (S.localUrls[p] || S.trUrls[p] || null) : null;
@@ -454,6 +457,16 @@ Object.assign(A, {
     try { const x = await api('tr_photo_add', { room_id: d.rid, path, label: d.l }); S.tr.photos.push(x.photo); toast('Photo enregistrée ✓'); }
     catch (e) { toast(errMsg(e)); }
     if (trSheetRoom() === d.rid) trRoomSheet(d.rid);
+  },
+  async trMusicPick() {
+    S.trCtx = 'arc__x_reception'; if (!trCan()) { toast('Seuls le propriétaire et l’intendant choisissent la musique.'); return; }
+    const f = await pickFile('audio/*,.mp3,.m4a,.aac,.wav'); if (!f) return;
+    const ext = (/\.(mp3|m4a|aac|wav|ogg)$/i.exec(f.name) || [])[1]; if (!ext) { toast('Il faut un fichier son : MP3 ou M4A.', 5000); return; }
+    if (f.size > 20 * 1024 * 1024) { toast('Fichier trop lourd (plus de 20 Mo).', 5000); return; }
+    toast('Envoi de la musique…', 8000);
+    try { const path = await upload(f, f.type || 'audio/mpeg', ext.toLowerCase()); const x = await api('tr_photo_add', { room_id: 'arc__x_reception', path, label: 'Musique : ' + f.name.replace(/\.[a-z0-9]+$/i, '').slice(0, 60) }); S.tr.photos.push(x.photo); toast('Musique enregistrée ✓ Elle jouera pendant la visite guidée.'); }
+    catch (e) { toast(errMsg(e)); return; }
+    if (S.trP) trPlanSheet(S.trP.rid, true);
   },
   async trMeshAdd(d) {
     S.trCtx = d.rid; if (!trCan()) return;

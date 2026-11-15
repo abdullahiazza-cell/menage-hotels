@@ -1121,58 +1121,21 @@ function trTourStops(roomId, p) {
     add(spot(dc[0] + ddx / dl * 80, dc[1] + ddy / dl * 80), sc2, 'Salle de bain', `${su.sdb ? trFr(su.sdb) + ' m² · ' : ''}${sh ? (/italienne/.test(sh.n || '') ? 'douche à l’italienne' : 'douche') : ba ? 'baignoire' : 'salle d’eau'}${p.items.some((i) => i.t === 'wc') ? ', WC' : ''}, vasque et miroir éclairé`, 1.0); }
   return { stops, fin: { t: 'Vue d’ensemble', s: `${trRoomName(roomId)} · ${surf}${nv ? ' · ' + nv.l : ''}` } };
 }
-// Musique de la visite : un petit morceau de smooth jazz original (saxophone, piano électrique, contrebasse, balais), joué par le téléphone lui-même, sans fichier son.
-// iPhone : le son passe en mode « lecture » (il ne se coupe pas avec le bouton silencieux) et démarre dans le geste du doigt, sinon Safari le bloque.
-const TR_MUS = { ctx: null, out: null, t: 0, next: 0, step: 0 };
-const TR_JAZZ = (() => {
-  const C = [[[50, 53, 57, 60, 64], 38], [[43, 53, 59, 64], 43], [[48, 52, 59, 62], 36], [[45, 55, 61, 64], 45]]; // Ré m9, Sol 13, Do maj9, La 7
-  const M = [[[0.5, 69, 0.5], [1, 72, 0.5], [1.5, 74, 1], [2.5, 72, 0.5], [3, 69, 1]], [[0.5, 71, 0.5], [1, 74, 0.5], [1.5, 76, 1.5], [3, 74, 1]], [[0, 76, 1], [1, 74, 0.5], [1.5, 71, 0.5], [2, 72, 1.5]], [[0.5, 73, 0.5], [1, 76, 0.5], [1.5, 79, 1], [2.5, 77, 0.5], [3, 76, 1]],
-    [[0, 77, 1.5], [1.5, 76, 0.5], [2, 74, 1], [3, 72, 1]], [[0.5, 71, 0.5], [1, 72, 0.5], [1.5, 74, 0.5], [2, 77, 2]], [[0.5, 76, 0.5], [1, 74, 0.5], [1.5, 72, 0.5], [2, 71, 0.5], [2.5, 72, 1.5]], [[0, 73, 1], [1, 69, 1], [2, 73, 0.5], [2.5, 76, 1.5]]];
-  return { C, M, beat: 60 / 78 };
-})();
-const trHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
-function trJazzBar(ctx, out, t0, bar) {
-  const { C, M, beat } = TR_JAZZ, [ch, root] = C[bar % 4], mel = M[bar % 8], sw = (b) => b + (b % 1 === 0.5 ? 0.16 : 0); // un peu de swing sur les contretemps
-  const env = (g, t, a, peak, d, len) => { g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(peak, t + a); g.gain.setTargetAtTime(0.0001, t + Math.max(a, len - d), d / 3); };
-  // Piano électrique : deux sinus légèrement désaccordés, attaque douce, accord au premier temps et petit rappel syncopé.
-  [[0, 2.4, 0.055], [2.5, 1.2, 0.035]].forEach(([b, len, v]) => ch.forEach((m) => { const t = t0 + sw(b) * beat; [0, 3].forEach((dt) => { const o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'sine'; o.frequency.value = trHz(m); o.detune.value = dt; env(g, t, 0.012, v, 0.9, len * beat); o.connect(g); g.connect(out.keys); o.start(t); o.stop(t + len * beat + 1.2); }); }));
-  // Contrebasse : fondamentale, quinte, octave, puis une note de passage vers l'accord suivant.
-  const nr = C[(bar + 1) % 4][1], bl = [[0, root, 1.4], [1.5, root + 7, 0.45], [2, root + 12, 0.9], [3, nr + (nr > root ? -1 : 1), 0.9]];
-  bl.forEach(([b, m, len]) => { const t = t0 + sw(b) * beat, o = ctx.createOscillator(), g = ctx.createGain(); o.type = 'triangle'; o.frequency.value = trHz(m); env(g, t, 0.01, 0.32, 0.5, len * beat); o.connect(g); g.connect(out.bass); o.start(t); o.stop(t + len * beat + 0.8); });
-  // Balais et charleston : souffle filtré sur les croches, caisse claire douce aux temps 2 et 4, grosse caisse feutrée.
-  for (let k = 0; k < 8; k++) { const b = k / 2, t = t0 + sw(b) * beat, n = ctx.createBufferSource(), g = ctx.createGain(), f = ctx.createBiquadFilter(); n.buffer = out.noise; f.type = 'highpass'; f.frequency.value = k % 2 ? 7000 : 5000; env(g, t, 0.004, k % 2 ? 0.05 : 0.035, 0.08, 0.09); n.connect(f); f.connect(g); g.connect(out.drums); n.start(t); n.stop(t + 0.2); }
-  [1, 3].forEach((b) => { const t = t0 + b * beat, n = ctx.createBufferSource(), g = ctx.createGain(), f = ctx.createBiquadFilter(); n.buffer = out.noise; f.type = 'bandpass'; f.frequency.value = 1800; f.Q.value = 0.7; env(g, t, 0.01, 0.06, 0.25, 0.3); n.connect(f); f.connect(g); g.connect(out.drums); n.start(t); n.stop(t + 0.5); });
-  [0, 2.5].forEach((b) => { const t = t0 + sw(b) * beat, o = ctx.createOscillator(), g = ctx.createGain(); o.frequency.setValueAtTime(110, t); o.frequency.exponentialRampToValueAtTime(48, t + 0.18); env(g, t, 0.005, 0.28, 0.25, 0.3); o.connect(g); g.connect(out.drums); o.start(t); o.stop(t + 0.5); });
-  // Saxophone : deux dents de scie filtrées, petite glissade vers la note, vibrato qui arrive après l'attaque.
-  mel.forEach(([b, m, len]) => { const t = t0 + sw(b) * beat, L = len * beat, g = ctx.createGain(), f = ctx.createBiquadFilter(), lfo = ctx.createOscillator(), lg = ctx.createGain();
-    f.type = 'lowpass'; f.frequency.setValueAtTime(900, t); f.frequency.linearRampToValueAtTime(2300, t + 0.08); f.Q.value = 1.2; lfo.frequency.value = 5.2; lg.gain.setValueAtTime(0, t); lg.gain.linearRampToValueAtTime(9, t + Math.min(0.35, L)); lfo.connect(lg);
-    [-6, 6].forEach((dt) => { const o = ctx.createOscillator(); o.type = 'sawtooth'; o.frequency.value = trHz(m); o.detune.setValueAtTime(dt - 35, t); o.detune.linearRampToValueAtTime(dt, t + 0.07); lg.connect(o.detune); o.connect(f); o.start(t); o.stop(t + L + 0.6); });
-    env(g, t, 0.06, 0.09, 0.22, L); f.connect(g); g.connect(out.sax); lfo.start(t); lfo.stop(t + L + 0.6); });
-}
+const TR_MUS = { audio: null, fade: 0 };
+// La visite joue la musique déposée (un vrai enregistrement), comme une vidéo : elle passe aussi en mode silencieux sur iPhone.
 function trMusicStart() {
   try {
-    if (navigator.audioSession) { try { navigator.audioSession.type = 'playback'; } catch (_) {} }
-    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
-    const ctx = TR_MUS.ctx || (TR_MUS.ctx = new AC()); if (ctx.state !== 'running') ctx.resume();
-    // Débloque le son tout de suite, dans le geste : un instant de silence joué.
-    { const b = ctx.createBuffer(1, 1, 22050), s0 = ctx.createBufferSource(); s0.buffer = b; s0.connect(ctx.destination); s0.start(0); }
-    trMusicStop(true);
-    const master = ctx.createGain(), comp = ctx.createDynamicsCompressor(), rev = ctx.createConvolver(), wet = ctx.createGain();
-    master.gain.value = 0.0001; master.gain.exponentialRampToValueAtTime(0.9, ctx.currentTime + 1.5); comp.threshold.value = -20; comp.ratio.value = 3;
-    const len = Math.floor(ctx.sampleRate * 2.2), ir = ctx.createBuffer(2, len, ctx.sampleRate); for (let c = 0; c < 2; c++) { const dd = ir.getChannelData(c); for (let i = 0; i < len; i++) dd[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 3); }
-    rev.buffer = ir; wet.gain.value = 0.28; rev.connect(wet); wet.connect(comp); master.connect(comp); comp.connect(ctx.destination);
-    const bus = (v, r) => { const g = ctx.createGain(); g.gain.value = v; g.connect(master); if (r) { const s2 = ctx.createGain(); s2.gain.value = r; g.connect(s2); s2.connect(rev); } return g; };
-    const noise = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate); { const dd = noise.getChannelData(0); for (let i = 0; i < dd.length; i++) dd[i] = Math.random() * 2 - 1; }
-    const out = { keys: bus(1, 0.5), bass: bus(1, 0.1), drums: bus(0.9, 0.2), sax: bus(1, 0.7), noise, master };
-    TR_MUS.out = out; TR_MUS.step = 0; TR_MUS.next = ctx.currentTime + 0.15; const barLen = 4 * TR_JAZZ.beat;
-    // On prépare les mesures un peu à l'avance pour que le rythme reste régulier.
-    const sched = () => { if (TR_MUS.out !== out) return; while (TR_MUS.next < ctx.currentTime + 1.2) { trJazzBar(ctx, out, TR_MUS.next, TR_MUS.step++); TR_MUS.next += barLen; } };
-    sched(); TR_MUS.t = setInterval(sched, 250);
-  } catch (e) { console.warn('musique', e); }
+    const m = trMusicOf(), u = m && trUrl(m.path); if (!u) return false;
+    trMusicStop(true); const a = new Audio(u); a.loop = true; a.volume = 0; a.preload = 'auto'; TR_MUS.audio = a;
+    const p = a.play(); if (p && p.catch) p.catch((e) => console.warn('musique', e));
+    let v = 0; clearInterval(TR_MUS.fade); TR_MUS.fade = setInterval(() => { v = Math.min(0.85, v + 0.05); try { a.volume = v; } catch (_) {} if (v >= 0.85) clearInterval(TR_MUS.fade); }, 90);
+    return true;
+  } catch (e) { console.warn('musique', e); return false; }
 }
 function trMusicStop(now) {
-  clearInterval(TR_MUS.t); const out = TR_MUS.out, ctx = TR_MUS.ctx; TR_MUS.out = null; if (!out || !ctx) return;
-  try { const g = out.master.gain; g.cancelScheduledValues(ctx.currentTime); g.setValueAtTime(g.value || 0.0001, ctx.currentTime); g.exponentialRampToValueAtTime(0.0001, ctx.currentTime + (now ? 0.2 : 1.5)); setTimeout(() => { try { out.master.disconnect(); } catch (_) {} }, now ? 400 : 1800); } catch (_) {}
+  clearInterval(TR_MUS.fade); const a = TR_MUS.audio; TR_MUS.audio = null; if (!a) return;
+  if (now) { try { a.pause(); } catch (_) {} return; }
+  let v = a.volume; const t = setInterval(() => { v = Math.max(0, v - 0.06); try { a.volume = v; } catch (_) {} if (v <= 0) { clearInterval(t); try { a.pause(); } catch (_) {} } }, 90);
 }
 // Joystick de la marche : on le tire dans la direction voulue, plus loin = plus vite.
 let trJoyOn = false;
@@ -1543,7 +1506,8 @@ function trPlanSheet(roomId, keep) {
         <div class="tr-acts">${can ? `${TR_NIVEAUX.map((nv) => `<button data-a="trNiveauGo" data-k="${nv.k}" aria-pressed="${P.p.niv === nv.k}">${nv.e} ${nv.l}</button>`).join('')}<button data-a="trMove" aria-pressed="${!!P.move}">${P.move ? '✋ Déplacer : oui' : '🔒 Déplacer : non'}</button>` : ''}</div>
         <div id="tr-plan-bar" class="tr-selbar"></div></div>`}</div>
     ${P.view === '3d' ? `<div class="segc" role="group" aria-label="Point de vue">${[['orbit', 'Ensemble'], ['porte', 'Porte'], ['marche', '🚶 Marcher'], ['dessus', 'Dessus']].map(([k, l]) => `<button data-a="trCam" data-k="${k}" aria-pressed="${((P.cam && P.cam.mode) || 'orbit') === k}">${l}</button>`).join('')}</div>
-    ${P.view === '3d' ? '<button class="btn pri" style="width:100%;margin:6px 0 8px" data-a="trTour">▶ Visite guidée</button>' : ''}
+    ${P.view === '3d' ? `<button class="btn pri" style="width:100%;margin:6px 0 4px" data-a="trTour">▶ Visite guidée</button>
+      <div class="row between" style="margin:0 2px 8px;gap:8px"><span class="muted sm">🎵 ${trMusicOf() ? esc(String(trMusicOf().label || 'Musique').replace(/^Musique : /, '')) : 'Pas de musique pour la visite'}</span>${trCan() ? `<button class="btn small soft" data-a="trMusicPick">${trMusicOf() ? 'Changer' : 'Choisir un fichier son'}</button>` : ''}</div>` : ''}
     <div class="segc" role="group" aria-label="Ambiance">${[['', '☀️ Jour'], ['1', '🌙 Soir']].map(([k, l]) => `<button data-a="trAmb" data-k="${k}" aria-pressed="${!!P.soir === !!k}">${l}</button>`).join('')}</div>
     <label class="tr-lumi"><span>💡 Puissance des lumières</span><input type="range" min="15" max="130" step="5" value="${P.lumi || 100}" data-input="trLumi" aria-label="Puissance des lumières"></label>
     <p class="muted sm">${can ? 'Les trois boutons sur l’image : une nouvelle proposition à chaque appui. « Déplacer : oui » pour toucher, glisser, tourner ou enlever un meuble. ' : ''}Un doigt pour tourner la vue, deux doigts pour s’approcher. ⤢ plein écran, 📸 garder l’image.</p>
