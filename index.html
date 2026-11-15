@@ -435,6 +435,14 @@ body.trmode,body.mgr.trmode{--hz:#FBE3C0;--hz-ink:#8A4B00;--bg:#F6F2EC;--accent:
 .tr-tools{position:absolute;top:10px;right:10px;display:flex;gap:8px}
 .tr-tools button{width:42px;height:42px;border-radius:50%;border:0;background:rgba(255,255,255,.88);color:#1c1c1e;font-size:19px;box-shadow:0 2px 8px rgba(0,0,0,.18)}
 .tr-stage.big{position:fixed;inset:0;z-index:60;border-radius:0;border:0}
+.tr-joy{position:absolute;left:18px;bottom:22px;width:104px;height:104px;border-radius:50%;background:rgba(255,255,255,.28);border:2px solid rgba(255,255,255,.75);box-shadow:0 4px 18px rgba(0,0,0,.18);backdrop-filter:blur(4px);z-index:3;touch-action:none}
+.tr-joy i{position:absolute;left:31px;top:31px;width:42px;height:42px;border-radius:50%;background:rgba(255,255,255,.92);box-shadow:0 2px 8px rgba(0,0,0,.25);transition:transform .08s}
+.tr-stage.big .tr-joy{bottom:calc(28px + env(safe-area-inset-bottom,0px))}
+.tr-tour{position:absolute;left:0;right:0;bottom:0;z-index:4;padding:14px 16px calc(16px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,rgba(20,16,12,.72) 38%);color:#fff;pointer-events:none}
+.tr-tour .tt-top{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-bottom:10px;pointer-events:auto} .tr-tour .tt-top span{margin-right:auto;font:600 13px/1 inherit;opacity:.85}
+.tr-tour .tt-top button{border:0;border-radius:999px;padding:7px 12px;font:600 13px/1 inherit;background:rgba(255,255,255,.9);color:#2a2622}
+.tr-tour .tt-lab b{display:block;font:700 24px/1.15 inherit;letter-spacing:-.01em;text-shadow:0 1px 8px rgba(0,0,0,.35)} .tr-tour .tt-lab span{display:block;margin-top:5px;font:500 15px/1.35 inherit;opacity:.92}
+.tr-tour.tt-in .tt-lab{animation:ttIn .7s ease both} @keyframes ttIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
 .tr-stage.big .tr-3d{height:100%}
 .tr-selbar{position:absolute;left:10px;right:10px;bottom:calc(10px + env(safe-area-inset-bottom,0px));display:none;background:var(--card);border-radius:16px;padding:8px 10px 8px 14px;box-shadow:0 6px 24px rgba(0,0,0,.22);z-index:3}
 .tr-selbar.on{display:block}

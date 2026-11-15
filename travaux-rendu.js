@@ -293,8 +293,12 @@ export function trRendu(o) {
     const dpr = Math.max(1, Math.min(hi === true ? 3 : Math.min(2, window.devicePixelRatio || 1), Math.sqrt((hi === true ? 4.2e6 : 2.6e6) / (w * h))));
     renderer.setPixelRatio(dpr); renderer.setSize(w, h, false);
     const soir = !!(o.soir && o.soir()); setMood(soir, o.lumi ? Math.min(1.4, Math.max(0.1, o.lumi())) : 1);
-    const inside = cam.mode === 'porte'; let eye, tg, fov = 42;
-    if (inside) { const yaw = sc.dYaw + cam.ly, cp = Math.cos(cam.lp); eye = sc.dEye; tg = [eye[0] + cp * Math.sin(yaw), eye[1] + Math.sin(cam.lp), eye[2] + cp * Math.cos(yaw)]; fov = Math.min(100, Math.max(50, 2 * Math.atan(Math.tan(36 * Math.PI / 180) / (w / h)) * 180 / Math.PI)); }
+    const now = performance.now(), dt = Math.min(0.08, (now - (frame.t || now)) / 1000); frame.t = now; let go = false;
+    if (tour) go = tourStep(now, dt) || go;
+    if (cam.mode === 'marche' && (joy[0] || joy[1])) { walkStep(dt); go = true; }
+    const inside = cam.mode === 'porte' || cam.mode === 'marche'; let eye, tg, fov = 42;
+    if (cam.mode === 'marche') { const cp = Math.cos(cam.lp); eye = [cam.wx, 1.55, cam.wz]; tg = [eye[0] + cp * Math.sin(cam.ly), eye[1] + Math.sin(cam.lp), eye[2] + cp * Math.cos(cam.ly)]; fov = Math.min(100, Math.max(56, 2 * Math.atan(Math.tan(38 * Math.PI / 180) / (w / h)) * 180 / Math.PI)); }
+    else if (inside) { const yaw = sc.dYaw + cam.ly, cp = Math.cos(cam.lp); eye = sc.dEye; tg = [eye[0] + cp * Math.sin(yaw), eye[1] + Math.sin(cam.lp), eye[2] + cp * Math.cos(yaw)]; fov = Math.min(100, Math.max(50, 2 * Math.atan(Math.tan(36 * Math.PI / 180) / (w / h)) * 180 / Math.PI)); }
     else { const cp = Math.cos(cam.pitch), ty = sc.H * 0.32; eye = [cam.dist * cp * Math.sin(cam.yaw), ty + cam.dist * Math.sin(cam.pitch), cam.dist * cp * Math.cos(cam.yaw)]; tg = [0, ty, 0]; }
     camera.fov = fov; camera.aspect = w / h; camera.position.set(eye[0], eye[1], eye[2]); camera.up.set(0, 1, 0); camera.lookAt(tg[0], tg[1], tg[2]); camera.updateProjectionMatrix();
     // Vue d'ensemble : les murs entre l'œil et la pièce s'effacent. De l'intérieur : tout est là, plafond compris.
@@ -322,8 +326,46 @@ export function trRendu(o) {
       }
       o.lab.innerHTML = out.map(([q2, t]) => `<span style="left:${q2[0].toFixed(1)}px;top:${q2[1].toFixed(1)}px">${t}</span>`).join('');
     }
+    if (go) ask();
   }
   const ask = () => { if (!raf && !dead) raf = requestAnimationFrame(frame); };
+
+  /* ----- marcher dans la pièce : un joystick pour avancer, un doigt pour tourner la tête. On ne traverse ni les murs ni les meubles. ----- */
+  const joy = [0, 0];
+  const RAY = 0.2, solids = () => {
+    const out = [];
+    (sc.models || []).forEach((it) => { if (it.tv || ['tapis', 'deco', 'tableau'].includes(it.t)) return; const [hx, hz] = half(it); out.push([it.cx - hx, it.cz - hz, it.cx + hx, it.cz + hz]); });
+    (sc.sdbHigh || []).forEach((b) => { const z0 = b.t[1] - b.s[1] / 2, z1 = b.t[1] + b.s[1] / 2; if (z0 < 1 && z1 > 1) out.push([b.t[0] - b.s[0] / 2, b.t[2] - b.s[2] / 2, b.t[0] + b.s[0] / 2, b.t[2] + b.s[2] / 2]); });
+    return out;
+  };
+  const freeAt = (x, z, S2) => Math.abs(x) <= sc.W / 2 - RAY && Math.abs(z) <= sc.D / 2 - RAY && !S2.some((r) => x > r[0] - RAY && x < r[2] + RAY && z > r[1] - RAY && z < r[3] + RAY);
+  function walkStep(dt) {
+    const sp = 1.1 * dt, fx = Math.sin(cam.ly), fz = Math.cos(cam.ly), dx = (fx * joy[1] - fz * joy[0]) * sp, dz = (fz * joy[1] + fx * joy[0]) * sp, S2 = solids();
+    // On glisse le long des obstacles : on essaie d'avancer en x puis en z séparément.
+    if (freeAt(cam.wx + dx, cam.wz, S2)) cam.wx += dx; if (freeAt(cam.wx, cam.wz + dz, S2)) cam.wz += dz;
+  }
+  function startWalk() { if (cam.mode !== 'marche') { const e = sc.dEye; cam.wx = e[0]; cam.wz = e[2]; cam.ly = sc.dYaw + (cam.mode === 'porte' ? cam.ly : 0); cam.lp = -0.08; cam.mode = 'marche'; } }
+
+  /* ----- visite guidée : la caméra va d'un point d'intérêt à l'autre, s'arrête, puis s'élève vers la vue d'ensemble ----- */
+  let tour = null;
+  const ease = (t) => t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2, lerpA = (a, b, t) => { let d = b - a; while (d > Math.PI) d -= 2 * Math.PI; while (d < -Math.PI) d += 2 * Math.PI; return a + d * t; };
+  const aimOf = (eyeXZ, look) => [Math.atan2(look[0] - eyeXZ[0], look[1] - eyeXZ[1]), Math.atan2((look[2] === undefined ? 1.1 : look[2]) - 1.55, Math.hypot(look[0] - eyeXZ[0], look[1] - eyeXZ[1]) || 1)];
+  // Le temps de la visite avance image par image (au plus 1/10 s par image) : un téléphone lent la joue plus lentement, sans sauter d'arrêt.
+  function tourStep(now, dt) {
+    const T = tour; if (!T) return false; T.el = (T.el || 0) + Math.min(0.1, dt || 0.016); const st = T.stops[T.i], el = T.el;
+    if (T.rise) { // fin : on s'élève vers la vue d'ensemble
+      const k = ease(Math.min(1, el / 3.2)); cam.mode = 'orbit'; cam.dist = T.rise.d0 + (T.rise.d1 - T.rise.d0) * k; cam.pitch = 0.1 + (0.62 - 0.1) * k; cam.yaw = lerpA(T.rise.y0, T.rise.y0 + 0.5, k);
+      if (k >= 1) { tour = null; T.cb && T.cb({ end: true }); return false; } return true;
+    }
+    const mv = T.i === 0 ? 0.01 : 2.6, k = ease(Math.min(1, el / mv)), [ty, tp] = aimOf(st.eye, st.look);
+    cam.mode = 'marche'; cam.wx = T.from.x + (st.eye[0] - T.from.x) * k; cam.wz = T.from.z + (st.eye[1] - T.from.z) * k; cam.ly = lerpA(T.from.ly, ty, k); cam.lp = T.from.lp + (tp - T.from.lp) * k;
+    if (!T.shown && el >= mv * 0.6) { T.shown = true; T.cb && T.cb({ i: T.i, n: T.stops.length, t: st.t, s: st.s }); }
+    if (el >= mv + (st.hold || 3)) {
+      if (T.i + 1 < T.stops.length) { T.from = { x: cam.wx, z: cam.wz, ly: cam.ly, lp: cam.lp }; T.i++; T.t0 = now; T.el = 0; T.shown = false; }
+      else { T.rise = { d0: 1.2, d1: Math.max(sc.W, sc.D) * 1.3 + sc.H * 0.75 + 0.9, y0: Math.atan2(cam.wx, cam.wz) }; T.t0 = now; T.el = 0; T.cb && T.cb({ i: T.i + 1, n: T.stops.length, t: T.fin.t, s: T.fin.s }); }
+    }
+    return true;
+  }
   // Un doigt pour tourner autour de la chambre (ou regarder autour de soi depuis la porte), deux doigts ou la molette pour s'approcher.
   const pts = new Map(); let pinch = 0;
   // Toucher un meuble : le choisir. Le glisser : il suit le doigt sur le sol, sans sortir de la pièce, et se colle aux murs.
@@ -366,9 +408,10 @@ export function trRendu(o) {
       ask(); return;
     }
     if (pts.size === 1) {
-      if (cam.mode === 'porte') { cam.ly += dx * 0.005; cam.lp = Math.min(0.7, Math.max(-0.8, cam.lp + dy * 0.004)); }
+      if (tour) return;
+      if (cam.mode === 'porte' || cam.mode === 'marche') { cam.ly += dx * 0.005; cam.lp = Math.min(0.7, Math.max(-0.8, cam.lp + dy * 0.004)); }
       else { cam.yaw -= dx * 0.008; cam.pitch = Math.min(1.5, Math.max(0.12, cam.pitch + dy * 0.006)); }
-    } else if (pts.size === 2 && cam.mode !== 'porte') { const [a, b] = [...pts.values()], dd = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) cam.dist = Math.min(30, Math.max(1.5, cam.dist * pinch / dd)); pinch = dd; }
+    } else if (pts.size === 2 && cam.mode !== 'porte' && cam.mode !== 'marche') { const [a, b] = [...pts.values()], dd = Math.hypot(a[0] - b[0], a[1] - b[1]); if (pinch) cam.dist = Math.min(30, Math.max(1.5, cam.dist * pinch / dd)); pinch = dd; }
     ask();
   };
   const up = (e) => {
@@ -378,11 +421,17 @@ export function trRendu(o) {
     else if (tap && !tap[2] && o.onSelect && e.type === 'pointerup' && (!o.move || o.move())) o.onSelect(grab ? grab.it.id : null);
     grab = null; tap = null; ask();
   };
-  const wheel = (e) => { if (cam.mode !== 'porte') cam.dist = Math.min(30, Math.max(1.5, cam.dist * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); ask(); };
+  const wheel = (e) => { if (cam.mode !== 'porte' && cam.mode !== 'marche') cam.dist = Math.min(30, Math.max(1.5, cam.dist * (e.deltaY > 0 ? 1.08 : 0.93))); e.preventDefault(); ask(); };
   canvas.addEventListener('pointerdown', down); canvas.addEventListener('pointermove', move); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up); canvas.addEventListener('wheel', wheel, { passive: false });
   ask(); later.forEach((fn) => fn());
   return {
     ask,
+    // Joystick : x vers la droite, y vers l'avant, entre -1 et 1.
+    joy(x, y) { if (tour) return; startWalk(); joy[0] = x; joy[1] = y; ask(); },
+    walk() { startWalk(); ask(); },
+    tour(stops, fin, cb) { const e = sc.dEye; if (!stops.length) return; tour = { stops, fin, cb, i: 0, t0: performance.now(), from: { x: e[0], z: e[2], ly: sc.dYaw, lp: -0.08 }, shown: false }; joy[0] = joy[1] = 0; ask(); },
+    tourStop() { if (!tour) return; tour = null; cam.mode = 'marche'; ask(); },
+    touring: () => !!tour,
     whereDoor: (k) => { const m = doorMeshes.find((x) => x.userData.door === k); if (!m) return null; const r = canvas.getBoundingClientRect(), v = new THREE.Vector3(m.position.x, 0.9, m.position.z).project(camera); return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (1 - (v.y * 0.5 + 0.5)) * r.height]; },
     // Où un meuble se trouve à l'écran (pour les essais automatiques).
     where: (id) => { const it = (sc.models || []).find((m) => m.id === id); if (!it) return null; const r = canvas.getBoundingClientRect(), v = new THREE.Vector3(it.cx, it.tv ? 1.2 : Math.min(0.4, it.h * 0.6), it.cz).project(camera); return [r.left + (v.x * 0.5 + 0.5) * r.width, r.top + (1 - (v.y * 0.5 + 0.5)) * r.height]; },

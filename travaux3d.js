@@ -1009,6 +1009,10 @@ function trScene(roomId, p) {
     if (deco.rideau !== 'occultant') wwl.glass.push(onWall(p.win, fw + 16, 3, top, 5.5, [1, 1, 1]));
   }
   const dh = Math.min(204, H - 10), dwl = walls[p.door.wall], dL = trWallLen(p.door.wall, W, D);
+  // Petits détails qui font vrai : interrupteur à côté de la porte, prises de chaque côté du lit, détecteur de fumée au plafond.
+  { const WH = [0.97, 0.97, 0.96], sw = Math.min(dL - 8, p.door.pos + trDW(p) / 2 + 18); dwl.boxes.push(onWall({ wall: p.door.wall, pos: sw }, 8, 104, 112, 1.2, WH), onWall({ wall: p.door.wall, pos: sw }, 4.5, 106, 110, 1.8, [0.92, 0.92, 0.91]));
+    const b0 = p.items.filter(trIsBed)[0]; if (b0) { const hw = ((b0.r || 0) / 90) % 4, m = trDim(b0), along = hw % 2 ? b0.y : b0.x, L2 = trWallLen(hw, W, D);
+      [-1, 1].forEach((sg) => { const q = along + sg * (m.w / 2 + 48); if (q > 8 && q < L2 - 8) walls[hw].boxes.push(onWall({ wall: hw, pos: q }, 8, 26, 34, 1.2, WH), onWall({ wall: hw, pos: q }, 4, 28, 32, 1.6, [0.85, 0.85, 0.84])); }); } }
   dwl.boxes.push(onWall(p.door, trDW(p) + 12, 0, dh + 6, 2, TR_COL.frame), onWall(p.door, trDW(p), 0, dh, 3.4, TR_COL.door, 3), onWall({ wall: p.door.wall, pos: Math.min(dL - 6, p.door.pos + trDW(p) / 2 - 9) }, 3, 98, 102, 9, TR_COL.metal), onWall({ wall: p.door.wall, pos: Math.min(dL - 10, p.door.pos + trDW(p) / 2 - 14) }, 12, 99, 101, 9.5, TR_COL.metal));
   // Un cadre au-dessus de la tête de lit, s'il n'y a pas de fenêtre à cet endroit.
   if (bed0 && H >= 225 && !p.items.some((i) => i.t === 'tableau' && ((i.r || 0) / 90) % 4 === headWall)) {
@@ -1033,6 +1037,7 @@ function trScene(roomId, p) {
     if (sd ? sd.hIn : true) { const hy = sd ? sd.hy : (p.sdb.c[0] === 's' ? sdb.y0 : sdb.y1); if (hy > 0.5 && hy < D - 0.5) part(false, hy, sdb.x0, sdb.x1); }
     }
   }
+  sdbHigh.push(box(W / 2 - 6, D / 2 - 6, H - 3.5, W / 2 + 6, D / 2 + 6, H, [0.97, 0.97, 0.96], 0, { cyl: 1 }));
   // Murs intérieurs du scan (ou ajoutés) : pleine hauteur dedans, coupés à mi-hauteur en vue d'ensemble. Porte : linteau au-dessus.
   trCls(d).forEach((c) => {
     const r = trClRect(c, TR_CL_T);
@@ -1078,6 +1083,67 @@ function trScene(roomId, p) {
   return { doorPick, W: W * cm, D: D * cm, H: H * cm, B, glass, walls, plants, models, lum: { plaf: lum.includes('plafonnier'), corniche: lum.includes('corniche'), spots }, ceil: box(-T, -T, H, W + T, D + T, H + 6, [0.955, 0.955, 0.95], 6), sdbWall: null, sdbLow, sdbHigh, Wc: W, Dc: D, Hc: H, win: { wall: p.win.wall, pos: p.win.pos, w: fw, z0: al, z1: ft }, dEye, dYaw: Math.atan2(-dEye[0], -dEye[2]) };
 }
 const TR_GL = { gl: null, raf: 0, ask: null, snap: null, three: null, token: null };
+
+/* ---------- visite guidée : les arrêts (en mètres, repère de la 3D), avec un titre et un atout à chaque fois ---------- */
+// Fin de visite : la musique s'éteint, l'étiquette reste un instant puis s'en va ; on revient à la taille normale si on l'avait agrandie.
+function trTourEnd(now) {
+  trMusicStop(); const ov = $('tr-tour'), P = S.trP;
+  const done = () => { const o2 = $('tr-tour'); if (o2) { o2.hidden = true; o2.innerHTML = ''; } if (P && P.tourBig) { P.tourBig = false; const st = document.querySelector('.tr-stage'); if (st) st.classList.remove('big'); P.big = false; if (TR_GL.ask) setTimeout(() => TR_GL.ask && TR_GL.ask(), 60); } };
+  if (now || !ov) done(); else { const b = ov.querySelector('.tt-top'); if (b) b.innerHTML = '<span>Fin de la visite</span><button data-a="trTour">↻ Revoir</button><button data-a="trTourClose">✕ Fermer</button>'; document.querySelectorAll('[data-a="trCam"]').forEach((x) => x.setAttribute('aria-pressed', String(x.dataset.k === 'orbit'))); }
+}
+function trTourStops(roomId, p) {
+  const d = trData(roomId), { W, D } = trWDH(d), sdb = trSdbRect(d, p, W, D), M = (x, y) => [(x - W / 2) / 100, (y - D / 2) / 100], cx = W / 2, cy = D / 2, pdj = d.usage === 'pdj';
+  const solid = p.items.filter((i) => !trNoFloor(i)).map(trRect).concat(sdb ? [sdb] : [], trBatiMurs(d));
+  const ok = (x, y) => x > 25 && y > 25 && x < W - 25 && y < D - 25 && !solid.some((r) => x > r.x0 - 22 && x < r.x1 + 22 && y > r.y0 - 22 && y < r.y1 + 22);
+  // Un point de vue libre : on part du point voulu et on recule vers le milieu de la pièce jusqu'à trouver de la place.
+  const spot = (x, y) => { for (let k = 0; k <= 1.0001; k += 0.1) { const a = x + (cx - x) * k, b = y + (cy - y) * k; if (ok(a, b)) return [a, b]; } for (let r = 30; r < Math.max(W, D); r += 20) for (let a = 0; a < 6.28; a += 0.5) { const qx = cx + Math.cos(a) * r, qy = cy + Math.sin(a) * r; if (ok(qx, qy)) return [qx, qy]; } return [cx, cy]; };
+  const front = (it, dist) => { const m = trDim(it), f = trRot(0, 1, it.r || 0); return spot(it.x + f[0] * (m.d / 2 + dist), it.y + f[1] * (m.d / 2 + dist)); };
+  const stops = [], add = (eye, look, t, s2, lz) => stops.push({ eye: M(eye[0], eye[1]), look: [...M(look[0], look[1]), lz === undefined ? 1.0 : lz], t, s: s2, hold: 3.2 });
+  const su = trSurf(d), surf = su.tot ? `${trFr(su.tot)} m²` : `${trM(W)} × ${trM(D)}`, nv = TR_NIVEAUX.find((x) => x.k === p.niv), ik = (it) => it && it.ik && S.trCat && S.trCat.find((c) => c.ref === it.ik);
+  // 1. L'entrée : on découvre la pièce.
+  const sc0 = trOpening(p.door, 10, W, D, 60), e0 = [(sc0.x0 + sc0.x1) / 2, (sc0.y0 + sc0.y1) / 2];
+  add(e0, [cx, cy], trRoomName(roomId), `${surf}${nv ? ' · finition ' + nv.l : ''}${pdj ? ` · ${trSeats(p)} places assises` : ''}`, 0.9);
+  // 2. Le lit (ou la banquette et les tables de la salle petit-déjeuner).
+  const bed = p.items.filter(trIsBed).sort((a, b) => trDim(b).w - trDim(a).w)[0];
+  if (bed) { const m = trDim(bed), k = ik(bed); add(front(bed, 110), [bed.x, bed.y], `${bed.t === 'lit_d' ? 'Lit double' : 'Lit simple'} ${m.w} × ${m.d}`, k ? `IKEA ${k.name} · linge hôtelier, coussins assortis` : 'Tête de lit capitonnée, linge hôtelier, liseuses de chaque côté', 0.6); }
+  const bq = p.items.find((i) => i.t === 'banquette'); if (bq) add(front(bq, 170), [bq.x, bq.y], 'Banquette et tables pour 4', 'Petit-déjeuner au calme, suspensions au-dessus de chaque table', 0.7);
+  const ku = p.items.find((i) => i.t === 'cuisine'); if (ku) add(front(ku, 120), [ku.x, ku.y], 'Coin cuisine', 'Café, micro-ondes, réfrigérateur, rangements en hauteur', 1.1);
+  // 3. La fenêtre.
+  { const wz = trOpening(p.win, trNum(d.fen_w) || 100, W, D, 1), wc = [(wz.x0 + wz.x1) / 2, (wz.y0 + wz.y1) / 2], inw = [[0, 1], [-1, 0], [0, -1], [1, 0]][p.win.wall];
+    add(spot(wc[0] + inw[0] * 190, wc[1] + inw[1] * 190), wc, 'La fenêtre', `${trNum(d.fen_w) ? trNum(d.fen_w) + ' cm de large · ' : ''}lumière naturelle${p.deco && p.deco.rideau && p.deco.rideau !== 'aucun' ? ', double rideau occultant' : ''}`, 1.3); }
+  // 4. Un coin de vie : bureau, salon, fauteuil.
+  const coin = p.items.find((i) => i.t === 'canape') || p.items.find((i) => i.t === 'bureau') || p.items.find((i) => i.t === 'fauteuil');
+  if (coin) { const k = ik(coin); add(front(coin, 120), [coin.x, coin.y], coin.t === 'bureau' ? 'Coin bureau' : 'Coin détente', k ? `IKEA ${k.name}` : coin.t === 'bureau' ? 'Pour travailler au calme, lampe d’appoint' : 'Un fauteuil pour lire ou se poser', 0.7); }
+  const pend = p.items.find((i) => i.t === 'penderie' || i.t === 'armoire'); if (pend && !pdj) add(front(pend, 120), [pend.x, pend.y], pend.t === 'penderie' ? 'Penderie ouverte' : 'Rangement', pend.t === 'penderie' ? 'Banc pour la valise, portant et cintres' : 'Armoire', 1.0);
+  // 5. La salle de bain, vue depuis sa porte.
+  if (sdb) { const sd = trSdbDoor(sdb, p, W, D), z = sd && sd.zone, dc = z ? [(z.x0 + z.x1) / 2, (z.y0 + z.y1) / 2] : [(sdb.x0 + sdb.x1) / 2, (sdb.y0 + sdb.y1) / 2], sc2 = [(sdb.x0 + sdb.x1) / 2, (sdb.y0 + sdb.y1) / 2];
+    const ddx = dc[0] - sc2[0], ddy = dc[1] - sc2[1], dl = Math.hypot(ddx, ddy) || 1, sh = p.items.find((i) => i.t === 'douche'), ba = p.items.find((i) => i.t === 'baignoire');
+    add(spot(dc[0] + ddx / dl * 80, dc[1] + ddy / dl * 80), sc2, 'Salle de bain', `${su.sdb ? trFr(su.sdb) + ' m² · ' : ''}${sh ? (/italienne/.test(sh.n || '') ? 'douche à l’italienne' : 'douche') : ba ? 'baignoire' : 'salle d’eau'}${p.items.some((i) => i.t === 'wc') ? ', WC' : ''}, vasque et miroir éclairé`, 1.0); }
+  return { stops, fin: { t: 'Vue d’ensemble', s: `${trRoomName(roomId)} · ${surf}${nv ? ' · ' + nv.l : ''}` } };
+}
+// Musique douce de la visite, jouée par le téléphone lui-même (aucun fichier son) : quelques accords tenus, très bas.
+const TR_MUS = { ctx: null, g: null, t: 0 };
+function trMusicStart() {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return; const ctx = TR_MUS.ctx || (TR_MUS.ctx = new AC()); ctx.resume();
+    const g = ctx.createGain(), lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 1400; g.gain.value = 0; g.connect(lp); lp.connect(ctx.destination); g.gain.linearRampToValueAtTime(0.06, ctx.currentTime + 2);
+    TR_MUS.g = g; const chords = [[261.6, 329.6, 392.0, 493.9], [220.0, 261.6, 329.6, 392.0], [174.6, 220.0, 261.6, 329.6], [196.0, 246.9, 293.7, 392.0]];
+    let i = 0; const play = () => { if (TR_MUS.g !== g) return; const t = ctx.currentTime, ch = chords[i++ % chords.length];
+      ch.forEach((f, k) => { const o = ctx.createOscillator(), v = ctx.createGain(); o.type = k % 2 ? 'triangle' : 'sine'; o.frequency.value = f * (k === 0 ? 0.5 : 1); v.gain.setValueAtTime(0, t); v.gain.linearRampToValueAtTime(0.25, t + 1.2); v.gain.linearRampToValueAtTime(0, t + 4.6); o.connect(v); v.connect(g); o.start(t); o.stop(t + 4.8); }); };
+    play(); TR_MUS.t = setInterval(play, 4000);
+  } catch (e) { console.warn('musique', e); }
+}
+function trMusicStop() { clearInterval(TR_MUS.t); const g = TR_MUS.g; TR_MUS.g = null; if (g && TR_MUS.ctx) { try { g.gain.linearRampToValueAtTime(0, TR_MUS.ctx.currentTime + 1.2); setTimeout(() => g.disconnect(), 1500); } catch (_) {} } }
+// Joystick de la marche : on le tire dans la direction voulue, plus loin = plus vite.
+let trJoyOn = false;
+function trJoyBind() {
+  if (trJoyOn) return; trJoyOn = true; let id = null, c = null;
+  const set = (e) => { const el = $('tr-joy'); if (!el || !c) return; let x = (e.clientX - c[0]) / 46, y = (e.clientY - c[1]) / 46; const n = Math.hypot(x, y); if (n > 1) { x /= n; y /= n; } const k = el.querySelector('i'); if (k) k.style.transform = `translate(${x * 30}px,${y * 30}px)`; if (TR_GL.three && TR_GL.three.joy) TR_GL.three.joy(x, -y); };
+  document.addEventListener('pointerdown', (e) => { const el = e.target.closest && e.target.closest('#tr-joy'); if (!el) return; e.preventDefault(); id = e.pointerId; const r = el.getBoundingClientRect(); c = [r.left + r.width / 2, r.top + r.height / 2]; try { el.setPointerCapture(id); } catch (_) {} set(e); });
+  document.addEventListener('pointermove', (e) => { if (e.pointerId === id) set(e); });
+  const end = (e) => { if (e.pointerId !== id) return; id = null; c = null; const k = document.querySelector('#tr-joy i'); if (k) k.style.transform = ''; if (TR_GL.three && TR_GL.three.joy) TR_GL.three.joy(0, 0); };
+  document.addEventListener('pointerup', end); document.addEventListener('pointercancel', end);
+}
 window.addEventListener('resize', () => { if (TR_GL.gl && TR_GL.ask) TR_GL.ask(); });
 function trGlStop() { TR_GL.token = null; if (TR_GL.three) { try { TR_GL.three.stop(); } catch (_) {} TR_GL.three = null; } if (TR_GL.raf) cancelAnimationFrame(TR_GL.raf); TR_GL.raf = 0; if (TR_GL.gl) { const x = TR_GL.gl.getExtension('WEBGL_lose_context'); if (x) x.loseContext(); } TR_GL.gl = null; TR_GL.ask = null; TR_GL.snap = null; }
 // Petites matrices 4×4 (colonnes d'abord), juste ce qu'il faut pour une caméra et une lampe.
@@ -1432,9 +1498,12 @@ function trPlanSheet(roomId, keep) {
     <div class="tr-stage${P.big && P.view === '3d' ? ' big' : ''}">${P.view === 'plan'
       ? `<svg id="tr-svg" viewBox="${-pad} ${-pad} ${W + pad * 1.4} ${D + pad * 1.4}" preserveAspectRatio="xMidYMid meet"><g id="tr-plan-g"></g></svg>`
       : `<div class="tr-3d"><canvas id="tr-gl"></canvas><div id="tr-lab"></div><div class="tr-tools"><button data-a="trFull" aria-label="Plein écran">⤢</button><button data-a="trSnap" aria-label="Enregistrer l’image">📸</button></div>
+        <div id="tr-joy" class="tr-joy" ${P.cam && P.cam.mode === 'marche' ? '' : 'hidden'} aria-label="Avancer"><i></i></div>
+        <div id="tr-tour" class="tr-tour" hidden></div>
         <div class="tr-acts">${can ? `${TR_NIVEAUX.map((nv) => `<button data-a="trNiveauGo" data-k="${nv.k}" aria-pressed="${P.p.niv === nv.k}">${nv.e} ${nv.l}</button>`).join('')}<button data-a="trMove" aria-pressed="${!!P.move}">${P.move ? '✋ Déplacer : oui' : '🔒 Déplacer : non'}</button>` : ''}</div>
         <div id="tr-plan-bar" class="tr-selbar"></div></div>`}</div>
-    ${P.view === '3d' ? `<div class="segc" role="group" aria-label="Point de vue">${[['orbit', 'Vue d’ensemble'], ['porte', 'Depuis la porte'], ['dessus', 'Du dessus']].map(([k, l]) => `<button data-a="trCam" data-k="${k}" aria-pressed="${((P.cam && P.cam.mode) || 'orbit') === k}">${l}</button>`).join('')}</div>
+    ${P.view === '3d' ? `<div class="segc" role="group" aria-label="Point de vue">${[['orbit', 'Ensemble'], ['porte', 'Porte'], ['marche', '🚶 Marcher'], ['dessus', 'Dessus']].map(([k, l]) => `<button data-a="trCam" data-k="${k}" aria-pressed="${((P.cam && P.cam.mode) || 'orbit') === k}">${l}</button>`).join('')}</div>
+    ${P.view === '3d' ? '<button class="btn pri" style="width:100%;margin:6px 0 8px" data-a="trTour">▶ Visite guidée</button>' : ''}
     <div class="segc" role="group" aria-label="Ambiance">${[['', '☀️ Jour'], ['1', '🌙 Soir']].map(([k, l]) => `<button data-a="trAmb" data-k="${k}" aria-pressed="${!!P.soir === !!k}">${l}</button>`).join('')}</div>
     <label class="tr-lumi"><span>💡 Puissance des lumières</span><input type="range" min="15" max="130" step="5" value="${P.lumi || 100}" data-input="trLumi" aria-label="Puissance des lumières"></label>
     <p class="muted sm">${can ? 'Les trois boutons sur l’image : une nouvelle proposition à chaque appui. « Déplacer : oui » pour toucher, glisser, tourner ou enlever un meuble. ' : ''}Un doigt pour tourner la vue, deux doigts pour s’approcher. ⤢ plein écran, 📸 garder l’image.</p>
@@ -1487,12 +1556,29 @@ Object.assign(A, {
   trPlanView(d) { if (!S.trP) return; S.trP.view = d.k; S.trP.sel = null; trPlanSheet(S.trP.rid, true); },
   trCam(d) {
     const P = S.trP; if (!P || !P.cam) return; const c = P.cam;
-    if (d.k === 'porte') { c.mode = 'porte'; c.ly = 0; c.lp = -0.1; }
+    if (TR_GL.three && TR_GL.three.tourStop) TR_GL.three.tourStop(); trTourEnd(true);
+    const j = $('tr-joy'); if (j) j.hidden = d.k !== 'marche'; trJoyBind();
+    if (d.k === 'marche') { c.mode = 'porte'; c.ly = 0; if (TR_GL.three && TR_GL.three.walk) TR_GL.three.walk(); toast('Tire le rond pour avancer, glisse sur l’image pour tourner la tête.', 3500); }
+    else if (d.k === 'porte') { c.mode = 'porte'; c.ly = 0; c.lp = -0.1; }
     else if (d.k === 'dessus') { c.mode = 'dessus'; c.yaw = 0; c.pitch = 1.5; }
     else { c.mode = 'orbit'; c.yaw = 0.65; c.pitch = 0.58; }
     document.querySelectorAll('[data-a="trCam"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === d.k)));
     if (TR_GL.ask) TR_GL.ask();
   },
+  // Visite guidée : on part de la porte, on passe par chaque coin, on finit en vue d'ensemble.
+  trTour() {
+    const P = S.trP; if (!P || !TR_GL.three || !TR_GL.three.tour) { toast('La visite guidée a besoin de la 3D soignée.'); return; }
+    const { stops, fin } = trTourStops(P.rid, P.p), ov = $('tr-tour'), j = $('tr-joy'); if (j) j.hidden = true;
+    const st = document.querySelector('.tr-stage'); if (st && !st.classList.contains('big')) { st.classList.add('big'); P.big = true; P.tourBig = true; }
+    if (!P.mute) trMusicStart();
+    const show = (e) => { if (!ov) return; if (e.end) { trTourEnd(false); return; }
+      ov.hidden = false; ov.innerHTML = `<div class="tt-top"><span>${Math.min(e.i + 1, e.n + 1)} / ${e.n + 1}</span><button data-a="trTourMute">${P.mute ? '🔇' : '🎵'}</button><button data-a="trTourStop">✕ Arrêter</button></div><div class="tt-lab"><b>${esc(e.t)}</b><span>${esc(e.s || '')}</span></div>`; ov.classList.remove('tt-in'); void ov.offsetWidth; ov.classList.add('tt-in'); };
+    document.querySelectorAll('[data-a="trCam"]').forEach((b) => b.setAttribute('aria-pressed', 'false'));
+    TR_GL.three.tour(stops, fin, show);
+  },
+  trTourStop() { if (TR_GL.three && TR_GL.three.tourStop) TR_GL.three.tourStop(); trTourEnd(true); const P = S.trP; if (P && P.cam) P.cam.mode = 'marche'; const j = $('tr-joy'); if (j) j.hidden = false; trJoyBind(); document.querySelectorAll('[data-a="trCam"]').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.k === 'marche'))); },
+  trTourClose() { trTourEnd(true); },
+  trTourMute() { const P = S.trP; if (!P) return; P.mute = !P.mute; if (P.mute) trMusicStop(); else trMusicStart(); const b = document.querySelector('[data-a="trTourMute"]'); if (b) b.textContent = P.mute ? '🔇' : '🎵'; },
   trAmb(d) { const P = S.trP; if (!P) return; P.soir = !!d.k; document.querySelectorAll('[data-a="trAmb"]').forEach((b) => b.setAttribute('aria-pressed', String(!!b.dataset.k === P.soir))); if (TR_GL.ask) TR_GL.ask(); },
   trMove() { const P = S.trP; if (!P) return; P.move = !P.move; if (!P.move) P.sel = null; const b = document.querySelector('[data-a="trMove"]'); if (b) { b.setAttribute('aria-pressed', String(P.move)); b.textContent = P.move ? '✋ Déplacer : oui' : '🔒 Déplacer : non'; } trPlanBar(); if (TR_GL.ask) TR_GL.ask(); },
   trFull() { const st = document.querySelector('.tr-stage'); if (!st) return; st.classList.toggle('big'); if (S.trP) S.trP.big = st.classList.contains('big'); if (TR_GL.ask) { TR_GL.ask(); setTimeout(() => TR_GL.ask && TR_GL.ask(), 60); } },
