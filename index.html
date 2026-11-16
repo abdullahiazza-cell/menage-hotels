@@ -219,6 +219,8 @@ audio,video{width:100%;max-width:100%;border-radius:12px}
 .hold.rec{background:#EF6A5B!important;border-color:#EF6A5B!important;color:#fff!important}
 #recov{position:fixed;z-index:80;left:50%;top:40%;transform:translate(-50%,-50%);background:var(--card);border-radius:24px;padding:22px 26px;box-shadow:0 20px 50px rgba(0,0,0,.35);display:flex;flex-direction:column;align-items:center;gap:8px;pointer-events:none;min-width:240px;text-align:center}
 #recov .dot{width:22px;height:22px;border-radius:50%;background:#EF6A5B;animation:blink 1s infinite}
+#recov.wait .dot{background:#F2A93B;animation:none}
+#recov.done .dot{background:#4CAF7A;animation:none}
 #recov .t{font-family:var(--f-round);font-size:34px;font-weight:600;font-variant-numeric:tabular-nums}
 @keyframes blink{50%{opacity:.25}}
 .qr svg{width:220px;height:220px;max-width:100%;background:#fff;border-radius:12px;padding:6px}
@@ -454,7 +456,7 @@ body.trmode,body.mgr.trmode{--hz:#FBE3C0;--hz-ink:#8A4B00;--bg:#F6F2EC;--accent:
 <div id="app"><div class="wrap"><div class="empty"><div class="e">🛎️</div><h2>Chargement…</h2></div></div></div>
 <div id="sheet" hidden></div>
 <div id="toast" hidden></div>
-<div id="recov" hidden><div class="dot"></div><div class="t" id="rect">0:00</div><b>Je t’écoute…</b><span class="muted">Relâche pour envoyer</span></div>
+<div id="recov" hidden><div class="dot"></div><div class="t" id="rect">0:00</div><b id="recl">Je t’écoute…</b><span class="muted" id="recs">Relâche pour envoyer</span></div>
 <div id="print"></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcode-generator/1.4.4/qrcode.min.js"></script>
 <script src="app.js"></script>

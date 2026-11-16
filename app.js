@@ -225,7 +225,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 // Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
 // Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
-const APP_V = 'v78';
+const APP_V = 'v79';
 async function onlineVersion() {
   const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
   const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
@@ -313,65 +313,179 @@ async function takeVideo() {
 }
 
 /* ---------- enregistrement vocal (garder appuyé) ---------- */
+// v79 : le son est capté en continu (Web Audio) tant que le micro est ouvert, au lieu de lancer l'enregistreur au moment de l'appui.
+// - avant l'appui : la dernière seconde est gardée en mémoire et ajoutée au début (rien n'est perdu si on parle un peu tôt) ;
+// - micro pas encore ouvert : la bulle reste orange « Une seconde… » puis passe au rouge avec une vibration quand le son arrive vraiment ;
+// - après le relâchement : on continue 0,7 s pour ne pas couper le dernier mot ;
+// - le vocal part en WAV (16 kHz, mono), lisible sur iPhone et Android.
+// L'ancien enregistreur (MediaRecorder) tourne en même temps, en secours : il sert seulement si le son capté est vide.
+const PRE_MS = 1000, POST_MS = 700, OUT_RATE = 16000, REC_MAX = 120;
 const recMime = () => ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus'].find((m) => window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) || '';
 let recTimer = null;
-// Le micro reste ouvert quelques minutes après un vocal : l'iPhone ne redemande pas l'autorisation à chaque fois.
+// Le micro reste ouvert quelques minutes après un vocal : l'iPhone ne redemande pas l'autorisation à chaque fois,
+// et le vocal suivant démarre tout de suite (avec la seconde d'avant).
 const MIC_KEEP = 3 * 60000;
 let micStream = null, micTimer = null;
+const VC = { ctx: null, mod: null, modCtx: null, src: null, node: null, mute: null, stream: null, ring: [], ringN: 0, cap: null, capN: 0 };
 async function getMic() {
   clearTimeout(micTimer);
   if (micStream && micStream.getAudioTracks().some((t) => t.readyState === 'live')) return micStream;
-  micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  vcDetach();
+  micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   return micStream;
 }
-function releaseMic() { clearTimeout(micTimer); if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; } }
-function releaseMicLater() { clearTimeout(micTimer); micTimer = setTimeout(releaseMic, MIC_KEEP); }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && !S.rec) releaseMic(); });
+function releaseMic() {
+  clearTimeout(micTimer); vcDetach();
+  if (VC.ctx && VC.ctx.state === 'running') VC.ctx.suspend().catch(() => {});
+  if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
+}
+function releaseMicLater() { clearTimeout(micTimer); micTimer = setTimeout(() => { if (!S.rec && !S.recBusy) releaseMic(); }, MIC_KEEP); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && !S.rec && !S.recBusy) releaseMic(); });
+
+function vcCtx() {
+  if (VC.ctx && VC.ctx.state !== 'closed') return VC.ctx;
+  const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null;
+  try { VC.ctx = new AC(); } catch (_) { VC.ctx = null; }
+  return VC.ctx;
+}
+function vcPush(f) {
+  if (!f || !f.length) return;
+  if (VC.cap) { VC.cap.push(f); VC.capN += f.length; return; }
+  VC.ring.push(f); VC.ringN += f.length;
+  const max = VC.ctx.sampleRate * PRE_MS / 1000;
+  while (VC.ring.length > 1 && VC.ringN - VC.ring[0].length >= max) VC.ringN -= VC.ring.shift().length;
+}
+const VC_WORKLET = `class C extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(1024);this.n=0}process(i){const c=i[0]&&i[0][0];if(c){for(let k=0;k<c.length;k++){this.b[this.n++]=c[k];if(this.n===1024){this.port.postMessage(this.b);this.b=new Float32Array(1024);this.n=0}}}return true}}registerProcessor('mh-cap',C);`;
+async function vcAttach(stream) {
+  const ctx = vcCtx(); if (!ctx) throw new Error('noctx');
+  if (VC.src && VC.stream === stream) return;
+  vcDetach();
+  const src = ctx.createMediaStreamSource(stream);
+  let node = null;
+  try {
+    if (!ctx.audioWorklet || !window.AudioWorkletNode) throw new Error('nowk');
+    if (!VC.mod || VC.modCtx !== ctx) { VC.modCtx = ctx; VC.mod = ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([VC_WORKLET], { type: 'application/javascript' }))); }
+    await VC.mod;
+    node = new AudioWorkletNode(ctx, 'mh-cap', { numberOfInputs: 1, numberOfOutputs: 1, channelCount: 1, channelCountMode: 'explicit' });
+    node.port.onmessage = (e) => vcPush(e.data);
+  } catch (_) {
+    node = ctx.createScriptProcessor(2048, 1, 1);
+    node.onaudioprocess = (e) => vcPush(new Float32Array(e.inputBuffer.getChannelData(0)));
+  }
+  const mute = ctx.createGain(); mute.gain.value = 0; // rien n'est joué dans le haut-parleur
+  src.connect(node); node.connect(mute); mute.connect(ctx.destination);
+  Object.assign(VC, { src, node, mute, stream, ring: [], ringN: 0 });
+}
+function vcDetach() {
+  for (const k of ['src', 'node', 'mute']) { try { VC[k] && VC[k].disconnect(); } catch (_) {} }
+  if (VC.node && VC.node.port) VC.node.port.onmessage = null;
+  Object.assign(VC, { src: null, node: null, mute: null, stream: null, ring: [], ringN: 0, cap: null, capN: 0 });
+}
+// Ramène le son capté à 16 kHz, remonte un peu le volume si c'est faible, et fabrique le fichier WAV.
+function vcWav(chunks, n, rate) {
+  const ratio = rate / OUT_RATE, outN = Math.floor(n / ratio), out = new Float32Array(outN);
+  let ci = 0, co = 0, pos = 0, peak = 0;
+  for (let o = 0; o < outN; o++) {
+    const end = Math.round((o + 1) * ratio); let s = 0, c = 0;
+    while (pos < end) { while (ci < chunks.length && co >= chunks[ci].length) { ci++; co = 0; } if (ci >= chunks.length) break; s += chunks[ci][co++]; c++; pos++; }
+    const x = c ? s / c : 0; out[o] = x; const a = x < 0 ? -x : x; if (a > peak) peak = a;
+  }
+  const gain = peak > 0.001 ? Math.min(3, 0.9 / peak) : 1;
+  const buf = new ArrayBuffer(44 + outN * 2), v = new DataView(buf);
+  const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + outN * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
+  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, OUT_RATE, true);
+  v.setUint32(28, OUT_RATE * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, outN * 2, true);
+  for (let o = 0; o < outN; o++) { const x = Math.max(-1, Math.min(1, out[o] * gain)); v.setInt16(44 + o * 2, x < 0 ? x * 0x8000 : x * 0x7fff, true); }
+  return { blob: new Blob([buf], { type: 'audio/wav' }), peak, secs: outN / OUT_RATE };
+}
+function recUI(state) {
+  const ov = $('recov'); if (!ov) return;
+  ov.hidden = state === 'off'; ov.classList.toggle('wait', state === 'wait'); ov.classList.toggle('done', state === 'done');
+  const l = $('recl'), s = $('recs');
+  if (l) l.textContent = state === 'wait' ? 'Une seconde…' : (state === 'done' ? 'Je finis…' : 'Je t’écoute…');
+  if (s) s.textContent = state === 'wait' ? 'Attends le rouge pour parler' : (state === 'done' ? 'Envoi juste après' : 'Relâche pour envoyer');
+}
 async function startRec(ctx, btn) {
-  if (S.rec) return;
-  if (!navigator.mediaDevices || !window.MediaRecorder) { toast('Ce téléphone ne permet pas d’enregistrer ici. Mets à jour le navigateur.'); return; }
-  S.rec = { ctx, btn, starting: true, chunks: [], t0: Date.now() };
+  if (S.rec || S.recBusy) return;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { toast('Ce téléphone ne permet pas d’enregistrer ici. Mets à jour le navigateur.'); return; }
+  const r = S.rec = { ctx, btn, starting: true, chunks: [], press: Date.now(), t0: 0, live: false };
   if (btn) btn.classList.add('rec');
   // Un vocal en lecture bloque le micro sur iPhone : on le met en pause.
   document.querySelectorAll('audio,video').forEach((m) => { try { m.pause(); } catch (_) {} });
+  const ac = vcCtx(); if (ac && ac.state !== 'running') ac.resume().catch(() => {}); // pendant le geste : obligatoire sur certains téléphones
+  // Micro déjà ouvert : on enregistre tout de suite, avec la seconde d'avant.
+  const warm = !!(VC.src && micStream && VC.stream === micStream && ac && ac.state === 'running' && VC.ringN > 0);
+  if (warm) { VC.cap = VC.ring.slice(); VC.capN = VC.ringN; VC.ring = []; VC.ringN = 0; r.live = true; r.t0 = r.press; recUI('on'); if (navigator.vibrate) navigator.vibrate(30); }
+  else recUI('wait');
+  recTimer = setInterval(() => {
+    if (!r.live && VC.cap && VC.capN > 0) { r.live = true; r.t0 = Date.now(); recUI('on'); if (navigator.vibrate) navigator.vibrate(30); }
+    if (!r.live && r.mrOn && Date.now() - r.mrOn > 600) { r.live = true; r.t0 = Date.now(); recUI('on'); if (navigator.vibrate) navigator.vibrate(30); }
+    const s = r.live ? Math.floor((Date.now() - r.t0) / 1000) : 0; $('rect').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+    if (s >= REC_MAX && S.rec === r) stopRec(true);
+  }, 100);
   try {
     const stream = await getMic();
-    const r = S.rec;
-    if (!r || r.cancelled) { releaseMicLater(); return; }
-    const mime = recMime();
-    const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
-    mr.ondataavailable = (e) => { if (e.data && e.data.size) r.chunks.push(e.data); };
-    mr.start(250);
-    Object.assign(r, { stream, mr, mime: mr.mimeType || mime, starting: false, t0: Date.now() });
-    $('recov').hidden = false; $('rect').textContent = '0:00';
-    recTimer = setInterval(() => {
-      const s = Math.floor((Date.now() - r.t0) / 1000); $('rect').textContent = Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
-      if (s >= 120) stopRec(true);
-    }, 250);
-    if (navigator.vibrate) navigator.vibrate(30);
+    LS.set('mh-mic', true);
+    if (S.rec !== r || r.cancelled) { releaseMicLater(); return; }
+    r.stream = stream;
+    if (!warm) {
+      try { await vcAttach(stream); if (ac && ac.state !== 'running') await ac.resume(); } catch (_) {}
+      if (S.rec !== r || r.cancelled) { releaseMicLater(); return; }
+      if (VC.src && ac && ac.state === 'running') { VC.cap = VC.ring.slice(); VC.capN = VC.ringN; VC.ring = []; VC.ringN = 0; }
+    }
+    // Enregistreur de secours (l'ancien), en parallèle.
+    if (window.MediaRecorder) {
+      try {
+        const mime = recMime();
+        const mr = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 32000 } : undefined);
+        mr.ondataavailable = (e) => { if (e.data && e.data.size) r.chunks.push(e.data); };
+        mr.start(250); r.mr = mr; r.mime = mr.mimeType || mime; r.mrOn = Date.now();
+      } catch (_) {}
+    }
+    if (!VC.cap && !r.mr) throw new Error('norec');
+    r.starting = false;
   } catch (e) {
-    if (S.rec && S.rec.btn) S.rec.btn.classList.remove('rec');
-    S.rec = null;
+    if (S.rec === r) { clearInterval(recTimer); recUI('off'); if (btn) btn.classList.remove('rec'); S.rec = null; VC.cap = null; }
     toast('Le micro est refusé. Autorise le micro pour cette appli dans les réglages du téléphone.', 6000);
   }
 }
 async function stopRec(send) {
   const r = S.rec; if (!r) return;
-  S.rec = null; clearInterval(recTimer); $('recov').hidden = true; if (r.btn) r.btn.classList.remove('rec');
-  if (r.starting) { r.cancelled = true; toast('Garde le doigt appuyé pendant que tu parles.'); return; }
+  S.rec = null; if (r.btn) r.btn.classList.remove('rec');
+  if (!r.live) {
+    clearInterval(recTimer); recUI('off'); r.cancelled = true; VC.cap = null;
+    if (r.mr) { try { r.mr.stop(); } catch (_) {} }
+    if (send) toast('Attends que la bulle devienne rouge, puis parle en gardant le doigt appuyé.', 5000);
+    releaseMicLater(); return;
+  }
   const secs = (Date.now() - r.t0) / 1000;
-  try { if (r.mr.state === 'recording') r.mr.requestData(); } catch (_) {}
-  await new Promise((res) => { r.mr.onstop = res; try { r.mr.stop(); } catch (e) { res(); } });
-  await new Promise((res) => setTimeout(res, 150)); // derniers morceaux parfois en retard
-  releaseMicLater();
-  if (!send) return;
-  if (secs < 0.8) { toast('Garde le doigt appuyé pendant que tu parles, puis relâche.'); return; }
-  const type = (r.mime || 'audio/webm').split(';')[0];
-  const blob = new Blob(r.chunks, { type });
-  if (blob.size < 1000) { releaseMic(); toast('Le micro n’a rien enregistré. Rien n’est parti : réessaie.', 6000); return; }
-  const ext = type.includes('mp4') ? 'm4a' : (type.includes('ogg') ? 'ogg' : 'webm');
-  await sendVoice(r.ctx, blob, type, ext, Math.round(secs));
-  if (S.dirty) softRender();
+  S.recBusy = true;
+  try {
+    if (send && secs >= 0.8) { recUI('done'); await new Promise((res) => setTimeout(res, POST_MS)); } // on laisse finir le dernier mot
+    clearInterval(recTimer); recUI('off');
+    const cap = VC.cap, capN = VC.capN, rate = VC.ctx ? VC.ctx.sampleRate : 48000;
+    VC.cap = null; VC.capN = 0;
+    if (r.mr) {
+      try { if (r.mr.state === 'recording') r.mr.requestData(); } catch (_) {}
+      await new Promise((res) => { r.mr.onstop = res; try { r.mr.stop(); } catch (e) { res(); } setTimeout(res, 1500); });
+      await new Promise((res) => setTimeout(res, 150)); // derniers morceaux parfois en retard
+    }
+    releaseMicLater();
+    if (!send) return;
+    if (secs < 0.8) { toast('Garde le doigt appuyé pendant que tu parles, puis relâche.'); return; }
+    let out = null;
+    if (cap && capN > OUT_RATE / 2) { const w = vcWav(cap, capN, rate); if (w.peak > 0.0005) out = w; }
+    if (out) { await sendVoice(r.ctx, out.blob, 'audio/wav', 'wav', Math.max(1, Math.round(out.secs))); }
+    else {
+      const type = (r.mime || 'audio/webm').split(';')[0];
+      const blob = new Blob(r.chunks, { type });
+      if (!r.mr || blob.size < 1000) { releaseMic(); toast('Le micro n’a rien enregistré. Rien n’est parti : réessaie.', 6000); return; }
+      const ext = type.includes('mp4') ? 'm4a' : (type.includes('ogg') ? 'ogg' : 'webm');
+      await sendVoice(r.ctx, blob, type, ext, Math.round(secs));
+    }
+    if (S.dirty) softRender();
+  } finally { S.recBusy = false; }
 }
 async function sendVoice(ctx, blob, type, ext, secs) {
   const [kind, arg] = splitCtx(ctx);
