@@ -169,10 +169,12 @@ const ERR = {
 const RO_OK = ['state', 'push_sub', 'push_test', 'logout', 'read_mark', 'msg_send', 'msg_edit', 'msg_delete', 'upload_url', 'doc_get', 'stats', 'activate', 'invite_info', 'bank_tx', 'tr_state', 'tr_catalog'];
 async function api(a, payload = {}) {
   if (S.me && S.me.readonly && !RO_OK.includes(a)) { const err = new Error('readonly'); err.code = 'readonly'; throw err; }
+  // Hors ligne (plus.js) : les photos gardées sur le téléphone partent d'abord ; sans réseau, l'action attend son tour.
+  if (typeof offPrep === 'function') { const q = await offPrep(a, payload); if (q && q.queued) return q; if (q && q.payload) payload = q.payload; }
   let r;
   try {
     r = await fetch(API, { method: 'POST', headers: { 'content-type': 'application/json', ...(S.secret ? { 'x-device': S.secret } : {}) }, body: JSON.stringify({ a, ...payload }) });
-  } catch (e) { const err = new Error('net'); err.code = 'net'; throw err; }
+  } catch (e) { if (typeof offQueue === 'function') { const q = await offQueue(a, payload); if (q) return q; } const err = new Error('net'); err.code = 'net'; throw err; }
   const j = await r.json().catch(() => ({}));
   if (!r.ok) {
     const code = j.error || 'server';
@@ -199,20 +201,34 @@ async function refresh(force) {
   if (refreshing && !force) return refreshing;
   refreshing = (async () => {
     try {
+      if (typeof offFlush === 'function') await offFlush();
       const d = await api('state');
+      applyState(d);
+      if (typeof offSave === 'function') offSave(d);
+    } catch (e) {
+      if (e.code === 'net') {
+        if (typeof offMark === 'function') offMark(true);
+        // Pas de réseau à l'ouverture : on rouvre sur le dernier état gardé dans le téléphone.
+        const old = !S.loaded && typeof offLoad === 'function' ? await offLoad() : null;
+        if (old) applyState(old.d);
+        else if (!S.loaded) { $('app').innerHTML = `<div class="wrap"><div class="card empty"><div class="e">📶</div><h2>Pas de connexion</h2><p>Vérifie le wifi ou la 4G, puis réessaie.</p><button class="btn pri" data-a="reload">Réessayer</button></div></div>`; }
+      }
+    }
+    finally { refreshing = null; }
+  })();
+  return refreshing;
+}
+function applyState(d) {
       S.me = d.me; S.device = d.device; S.cfg = d.cfg || DEFAULT_CFG; S.vapid = d.vapid; S.urls = d.urls || {};
       S.rooms = {}; (d.rooms || []).forEach((r) => S.rooms[r.id] = normRoom(r));
       S.staff = d.staff || []; S.devices = d.devices || []; S.invites = d.invites || [];
       S.reg = d.reg || { occ: [], pecs: [], inbox: [], log: [] }; S.occRooms = d.occRooms || []; S.clients = d.clients || [];
       S.verif = d.verif || { lignes: [], log: [], mois: [] };
       S.plan = d.plan || { avail: {} }; S.issues = d.issues || []; S.notes = d.notes || []; S.contacts = d.contacts || []; S.sec = d.sec || { checks: [], logs: [], docs: [], mail: [] }; S.projects = d.projects || []; S.tasks = d.tasks || []; S.msgs = (d.msgs || []).slice().reverse(); S.reads = d.reads || []; S.points = d.points || []; S.pointSubs = d.point_subs || []; S.banque = d.banque || null; S.chorus = d.chorus || null; S.courrier = d.courrier || null;
+      if (typeof plusApply === 'function') plusApply(d);
       S.loaded = true;
       if (S.me.role === 'menage' || S.me.role === 'bricoleur') S.preview = false;
       softRender();
-    } catch (e) { if (e.code === 'net' && !S.loaded) { $('app').innerHTML = `<div class="wrap"><div class="card empty"><div class="e">📶</div><h2>Pas de connexion</h2><p>Vérifie le wifi ou la 4G, puis réessaie.</p><button class="btn pri" data-a="reload">Réessayer</button></div></div>`; } }
-    finally { refreshing = null; }
-  })();
-  return refreshing;
 }
 const isTyping = () => { const a = document.activeElement; return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)); };
 const isPlaying = () => [...document.querySelectorAll('audio,video')].some((m) => !m.paused);
@@ -225,7 +241,7 @@ document.addEventListener('visibilitychange', () => { if (document.visibilitySta
 setInterval(() => { if (document.visibilityState === 'visible') refresh(); }, 20000);
 // Mise à jour : l'appli compare sa version à celle qui est en ligne (à l'ouverture, au retour sur l'appli, puis toutes les 5 minutes).
 // Si une version plus récente existe, elle se recharge toute seule quand personne n'est en train d'écrire ; sinon un bandeau le propose.
-const APP_V = 'v79';
+const APP_V = 'v80';
 async function onlineVersion() {
   const r = await fetch('sw.js?t=' + Date.now(), { cache: 'no-store' }); if (!r.ok) throw new Error('net');
   const m = (await r.text()).match(/VERSION = '([^']+)'/); return m ? m[1] : null;
@@ -288,11 +304,17 @@ async function shrink(file, label) {
   return await new Promise((r) => c.toBlob(r, 'image/jpeg', .72));
 }
 async function upload(blob, type, ext) {
-  const u = await api('upload_url', { ext });
-  const r = await fetch(u.url, { method: 'PUT', headers: { 'content-type': type, 'x-upsert': 'false' }, body: blob });
-  if (!r.ok) { const e = new Error('upload'); e.code = 'upload'; throw e; }
-  S.localUrls[u.path] = URL.createObjectURL(blob);
-  return u.path;
+  try {
+    const u = await api('upload_url', { ext });
+    const r = await fetch(u.url, { method: 'PUT', headers: { 'content-type': type, 'x-upsert': 'false' }, body: blob });
+    if (!r.ok) { const e = new Error('upload'); e.code = 'upload'; throw e; }
+    S.localUrls[u.path] = URL.createObjectURL(blob);
+    return u.path;
+  } catch (e) {
+    // Pas de réseau (plus.js) : la photo ou le vocal reste dans le téléphone et partira plus tard.
+    if (typeof offKeep === 'function') { const k = await offKeep(blob, type, ext, e); if (k) return k; }
+    throw e;
+  }
 }
 // « gallery » : la personne choisit entre l'appareil photo et ses photos déjà prises (réparations, signalements, mode travaux).
 // Sans « gallery », l'appareil photo s'ouvre directement : c'est le cas de la preuve de ménage, qui doit être prise sur le moment.
@@ -673,6 +695,7 @@ function viewManager() {
   else if (S.tab === 'msgs') { body = viewThreads(); right = `<button class="nb-act" data-a="newMsg" aria-label="Nouveau message">${ico('plus')}</button>`; }
   else if (S.tab === 'team') { body = viewTeam(); right = `<button class="nb-act" data-a="personNew" aria-label="Ajouter une personne">${ico('plus')}</button>`; }
   else if (S.tab === 'verif') { body = viewVerif(); }
+  else if (typeof plusView === 'function' && plusView(S.tab) !== null) { body = plusView(S.tab); right = plusRight(S.tab); }
   else body = viewSettings();
   return `${navBar(SECTIONS[S.tab].t, right)}<div class="wrap">${body}</div>
     ${S.tab !== 'msgs' && !S.sel.size && unread ? `<button class="bubble ping" data-a="convList" aria-label="Messages, ${unread} non lus">💬<span class="badge">${unread}</span></button>` : ''}`;
@@ -726,6 +749,7 @@ function viewHome() {
       ${tile('projets', myTasks().length ? `${myTasks().length} tâche${myTasks().length > 1 ? 's' : ''} pour vous` : `${S.projects.filter((p) => p.statut !== 'termine').length} projets`, myTasks().filter((t) => tLate(t) || tToday(t)).length)}
       ${tile('team', `${S.staff.filter((s) => s.active !== false).length} personnes`, locked)}
       ${tile('contacts', `${S.contacts.length} contacts`)}
+      ${typeof plusTiles === 'function' ? plusTiles() : ''}
       ${courrierTile()}${bankTile()}${chorusTile()}
     </div>
     <div class="group views"><div class="prow ro"><span class="pr-t"><b>Voir comme</b><span class="muted">et faire à leur place si besoin</span></span></div>
@@ -2373,6 +2397,9 @@ const pvBar = () => S.preview ? `<div class="pvbar"><span>👁 Vue ${S.preview =
 /* ----- bricoleur : réparations + ménage en lecture ----- */
 function viewBrico() {
   const un = unreadTotal(), open = S.issues.filter((i) => repEtat(i) !== 'fait'), todo = open.filter((i) => repEtat(i) === 'a_faire'), urg = open.filter((i) => i.priority === 'urgent').length;
+  const plusTab = typeof plusView === 'function' && typeof PLUS_TABS !== 'undefined' && PLUS_TABS.includes(S.tab);
+  if (plusTab) return `${navBar(SECTIONS[S.tab].t, plusRight(S.tab))}<div class="wrap">${pvBar()}${plusView(S.tab)}</div>
+      <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' non lus' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
   if (S.tab === 'issues' || S.tab === 'menage' || S.tab === 'securite' || (S.tab === 'contacts' && canPresta()) || (S.tab === 'registre' && canReg('reg_pec')) || S.tab === 'verif') {
     const body = S.tab === 'verif' ? viewVerif() : S.tab === 'issues' ? viewIssues() : (S.tab === 'registre' ? viewRegistre() : (S.tab === 'contacts' ? viewContacts() : (S.tab === 'securite' ? viewSecBrico() : viewMenageRead())));
     const right = S.tab === 'issues' ? `<button class="nb-act" data-a="repNew" aria-label="Nouvelle réparation">${ico('plus')}</button>` : (S.tab === 'registre' && canReg('reg_full') ? `<button class="nb-act" data-a="occNew" aria-label="Nouvelle arrivée">${ico('plus')}</button>` : '');
@@ -2398,6 +2425,7 @@ function viewBrico() {
       <button class="tile" data-a="convList"><span class="ti-ic t-green">${ico('chat')}</span>${un ? `<span class="badge">${un}</span>` : ''}<span class="ti-t">Messages</span><span class="ti-s">${un ? un + ' non lu' + (un > 1 ? 's' : '') : 'Tout est lu'}</span></button>
       ${canPresta() ? `<button class="tile" data-a="go" data-k="contacts"><span class="ti-ic t-brown">${ico('phone')}</span><span class="ti-t">Prestataires</span><span class="ti-s">Électriciens, alarme…</span></button>` : ''}
       <button class="tile" data-a="repNew"><span class="ti-ic t-red">${ico('plus')}</span><span class="ti-t">Nouvelle</span><span class="ti-s">réparation</span></button>
+      ${typeof plusTiles === 'function' ? plusTiles() : ''}
     </div></div>`;
 }
 // Ménage en lecture seule : l'état de chaque lieu et qui l'a nettoyé.
@@ -2473,7 +2501,7 @@ function msgHtml(m, conv) {
   }
   const menu = can && S.msgMenu === m.id ? `<div class="mrow">${m.text ? `<button class="btn small" data-a="msgEdit" data-id="${id}">✏️ Modifier</button>` : ''}<button class="btn small ${S.msgDelOk === m.id ? 'bad' : ''}" data-a="msgDel" data-id="${id}">${S.msgDelOk === m.id ? 'Touche encore pour supprimer' : `🗑️ Supprimer${m.media_path ? ' le vocal' : ''}`}</button><button class="btn small" data-a="msgMenu" data-id="${id}">Annuler</button></div>` : '';
   return `<div class="msg ${mine ? 'me' : ''}">${head}
-    ${m.text ? `<span class="txt">${esc(m.text)}</span>` : ''}${media}${m.duration ? `<span class="meta">${m.duration} s</span>` : ''}${heard ? `<span class="meta" style="align-self:flex-end">${heard}</span>` : ''}${menu}</div>`;
+    ${m.text ? `<span class="txt">${esc(m.text)}</span>` : ''}${media}${typeof plusMsgExtra === 'function' ? plusMsgExtra(m) : ''}${m.duration ? `<span class="meta">${m.duration} s</span>` : ''}${heard ? `<span class="meta" style="align-self:flex-end">${heard}</span>` : ''}${menu}</div>`;
 }
 function threadSheet(conv, auto) {
   if (conv === 'all') conv = 'team';
@@ -2613,6 +2641,7 @@ function viewSettings() {
       ${!isStandalone() ? '<p class="muted">Astuce : installe l’appli sur l’écran d’accueil pour recevoir les notifications.</p>' : ''}
       <button class="btn" data-a="appUpdate">🔄 Mettre à jour l’appli <span class="muted sm">· version ${APP_V}</span></button>
       <button class="btn ghost" data-a="logout">Se déconnecter de ce téléphone</button></div>
+    ${typeof plusSettings === 'function' ? plusSettings() : ''}
     ${pointSubsCard()}
     <div class="card"><h2>⏱️ Temps prévus</h2><p class="muted">Servent à répartir le travail selon les heures de chacune.</p>
       <div class="row">${[['blanc', '🛏️ À blanc'], ['recouche', '🔄 Recouche'], ['fond', '⭐ Tâche de fond'], ['commun', '🧽 Partie commune']].map(([k, l]) => `<label class="muted" for="min-${k}">${l}</label><input id="min-${k}" type="number" min="5" max="120" step="5" value="${c.minutes[k]}" style="width:80px"><span class="muted">min</span>`).join('')}</div>
@@ -2649,7 +2678,7 @@ function viewCleanHome() {
       <span class="txt"><b>${isCommun(r) ? esc(r.num) : t.e + ' ' + t.l}</b><span class="muted">${esc(hotelName(r.hotel))}${r.status === 'en_cours' ? ' · en cours' : ''}${r.status === 'a_controler' ? ' · terminée ' + hm(r.doneAt) : ''}</span>${r.rejectNote ? '<span class="chip c-red">🔁 À refaire</span>' : ''}</span></button>`; };
   return `<div class="wrap">
     ${pvBar()}
-    <div class="card"><div class="hero"><h1>${ge} ${gt} ${esc(first(S.me.label))}</h1><span class="day">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
+    <div class="card"><div class="hero"><h1>${ge} ${gt} ${esc(first(S.me.label))}${typeof helpBtn === 'function' ? helpBtn('menage') : ''}</h1><span class="day">${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
       ${total ? `<div class="row between"><b>${done.length} terminé${done.length > 1 ? 's' : ''} sur ${total}</b>${left ? `<span class="muted">Encore environ ${mn(left)}</span>` : ''}</div><div class="prog"><i style="width:${Math.round(100 * done.length / total)}%"></i></div>` : ''}</div>
     ${todo.length ? `<div class="col">${todo.map(card).join('')}</div>` : `<div class="card empty"><div class="e">${total ? '🎉' : '☕'}</div><h2>${total ? 'Tout est fait, bravo !' : 'Pas de chambre pour l’instant'}</h2><p class="muted">${total ? 'Le responsable va contrôler.' : 'Tu seras prévenue quand on te donne des chambres.'}</p></div>`}
     ${done.length ? `<h2>Terminées aujourd’hui</h2><div class="col">${done.map(card).join('')}</div>` : ''}
@@ -2657,6 +2686,7 @@ function viewCleanHome() {
     <button class="btn big" data-a="arrNew">🛎️ Nouveau client</button>
     <button class="btn big" data-a="prolong">🛏️ Prolonger un séjour</button>
     <button class="btn big" data-a="report">🔧 Signaler un problème</button>
+    ${typeof plusCleanHome === 'function' ? plusCleanHome() : ''}
   </div>
   <button class="bubble ${un ? 'ping' : ''}" data-a="convList" aria-label="Messages${un ? ', ' + un + ' nouveaux' : ''}">💬${un ? `<span class="badge">${un}</span>` : ''}</button>`;
 }
@@ -2677,7 +2707,7 @@ function viewCleanRoom() {
   let main = '';
   if (r.status === 'a_faire') main = `<button class="btn big pri" data-a="start" data-id="${r.id}">▶ Je commence</button>`;
   else if (r.status === 'en_cours') {
-    main = `<div class="row between"><h2>À faire</h2><span class="chip ${nChk === items.length ? 'c-green' : 'c-amber'}">${nChk} / ${items.length}</span></div>
+    main = `${typeof edlCard === 'function' ? edlCard(r) : ''}<div class="row between"><h2>À faire</h2><span class="chip ${nChk === items.length ? 'c-green' : 'c-amber'}">${nChk} / ${items.length}</span></div>
       <div class="col">${items.map((i) => `<button class="chk ${w.checks[i.key] ? 'on' : ''} ${i.extra ? 'extra' : ''}" data-a="chk" data-k="${i.key}" aria-pressed="${!!w.checks[i.key]}"><span class="box">${w.checks[i.key] ? '✓' : ''}</span><span class="em" aria-hidden="true">${esc(i.e)}</span><span class="lb">${esc(i.l)}</span></button>`).join('')}</div>
       <div class="row between"><h2>Photos</h2><span class="chip ${nPh === shots.length ? 'c-green' : 'c-amber'}">${nPh} / ${shots.length}</span></div>
       <div class="shots">${shots.map((l) => { const p = w.photos[l], u = mediaUrl(p), busy = S.busy[l];
@@ -2685,13 +2715,13 @@ function viewCleanRoom() {
       <button class="btn big ${ready ? 'pri' : ''}" data-a="finish" data-id="${r.id}">✓ Terminé</button>`;
   } else main = `<div class="banner c-green">✅ Terminée à ${hm(r.doneAt)}. Le responsable va contrôler.</div>${jobPhotos(r.lastJob)}`;
   const ref = mediaUrl(r.refPhoto);
-  return `<div class="wrap"><button class="btn ghost" data-a="back" style="align-self:flex-start">← Ma liste</button>
+  return `<div class="wrap"><div class="row between"><button class="btn ghost" data-a="back">← Ma liste</button>${typeof helpBtn === 'function' ? helpBtn('menage') : ''}</div>
     <div class="banner-ph" style="background-image:${photoUrl(r.hotel)}">${isCommun(r) ? '' : `<span class="n">${esc(r.num)}</span>`}<div><p>${esc(hotelName(r.hotel))}</p><h2>${isCommun(r) ? '🧽 ' + esc(r.num) : t.e + ' ' + t.l}</h2></div></div>
     ${r.rejectNote ? `<div class="banner c-red">🔁 À refaire : ${esc(r.rejectNote)}</div>` : ''}
     ${ref ? `<div class="card"><h3>👀 Le modèle : fais pareil</h3><img class="big-img" alt="" src="${esc(ref)}"></div>` : ''}
     ${main}
     ${holdBtn('room:' + r.id, isCommun(r) ? 'Garde appuyé : message sur ce lieu' : 'Garde appuyé : message sur cette chambre', 'big soft')}
-    <button class="btn big" data-a="report" data-room="${r.id}">🔧 Signaler un problème</button></div>`;
+    <button class="btn big" data-a="report" data-room="${r.id}">🔧 Signaler un problème</button>${typeof plusCleanRoom === 'function' ? plusCleanRoom(r) : ''}</div>`;
 }
 
 /* ---------- feuilles ---------- */
@@ -2702,7 +2732,7 @@ function openSheet(kind, html, cls) {
   S.sheet = kind; s.innerHTML = `<div class="panel ${cls || ''}" role="dialog" aria-modal="true">${html}</div>`; s.hidden = false;
   if (top) { const p = s.querySelector('.panel'); if (p) p.scrollTop = top; }
 }
-function closeSheet() { if (S.trMeshV) { S.trMeshV.stop(); S.trMeshV = null; } S.sheet = null; S.rep = null; S.trCtx = null; const s = $('sheet'); s.hidden = true; s.innerHTML = ''; if (S.dirty || S.mode === 'travaux') softRender(); }
+function closeSheet() { if (typeof tutoStop === 'function') tutoStop(); if (S.trMeshV) { S.trMeshV.stop(); S.trMeshV = null; } S.sheet = null; S.rep = null; S.trCtx = null; const s = $('sheet'); s.hidden = true; s.innerHTML = ''; if (S.dirty || S.mode === 'travaux') softRender(); }
 function refreshSheet() {
   if (!S.sheet) return;
   if (S.sheet.startsWith('room:')) roomSheet(S.sheet.slice(5));
@@ -2733,6 +2763,7 @@ function roomSheet(id) {
       ${r.status === 'a_controler' ? `<div class="row"><button class="btn ok" data-a="validate" data-id="${r.id}">✓ Valider</button><button class="btn bad" data-a="redo" data-id="${r.id}">🔁 À refaire</button></div>` : ''}</div>` : ''}
     <div class="card"><h3>👀 Photo modèle</h3><p class="muted">La femme de ménage la voit avant de commencer.</p>${ref ? `<img class="big-img" alt="" src="${esc(ref)}">` : ''}
       <button class="btn soft" data-a="refPhoto" data-id="${r.id}">📷 ${r.refPhoto ? 'Changer' : 'Ajouter'} la photo modèle</button></div>
+    ${typeof plusRoomSheet === 'function' ? plusRoomSheet(r) : ''}
     <div class="card"><h3>📌 Tâches en plus pour ${com ? 'ce lieu' : 'cette chambre'}</h3>
       <div class="list">${(r.extras || []).map((t, i) => `<div class="li"><span class="t">${esc(t)}</span><button class="x" data-a="delExtra" data-id="${r.id}" data-i="${i}" aria-label="Supprimer">✕</button></div>`).join('') || '<p class="muted">Aucune.</p>'}</div>
       <div class="row"><input id="extra-in" placeholder="Ex. : surveiller l’humidité de la fenêtre" style="flex:1"><button class="btn small" data-a="addExtra" data-id="${r.id}">Ajouter</button></div></div>
@@ -3379,6 +3410,7 @@ const A = {
     const r = S.rooms[d.id], w = workOf(d.id), items = cleanItems(r), shots = cfg().photos[r.type] || [];
     const miss = items.filter((i) => !w.checks[i.key]).length, missP = shots.filter((l) => !w.photos[l]);
     if (miss || missP.length) { toast((miss ? `Il reste ${miss} case${miss > 1 ? 's' : ''} à cocher. ` : '') + (missP.length ? `Photo manquante : ${missP.join(', ')}.` : '')); return; }
+    if (typeof edlBlock === 'function' && edlBlock(r)) return;
     const periodic = items.filter((i) => i.pid).map((i) => i.pid);
     if (el) el.classList.add('busy');
     try { await api('room_finish', { id: r.id, photos: shots.map((l) => ({ l, id: w.photos[l] })), periodic }); }

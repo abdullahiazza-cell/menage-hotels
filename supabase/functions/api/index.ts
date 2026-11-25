@@ -4,6 +4,7 @@ import { bankState, bankLinkStart, bankSync, bankManual, bankLabel, bankExpiring
 import { chorusSync, chorusDeposer, chorusState, rapprocher, paiementDecide, STRUCT } from "./chorus.ts";
 import { PDFDocument } from "npm:pdf-lib@1.17.1";
 import { TE, travauxAction } from "./travaux.ts";
+import { PE, PLUS_ACTIONS, PLUS_RO, plusAction, plusState, transcribeBatch } from "./plus.ts";
 import { CE, courrierIn, courrierState, courrierSet, courrierQueue, courrierDoc, courrierSent, courrierAValider, courrierChorusPdf, courrierHist } from "./courrier.ts";
 
 const SB_URL = Deno.env.get("SUPABASE_URL")!;
@@ -139,11 +140,13 @@ async function managerIds(hotel?: string | null) {
 
 // ---------- misc ----------
 function parisDay(d = new Date()) { return new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(d); }
+// Envois faits hors ligne puis rejoués : l'heure réelle du geste (donnée par le téléphone) est gardée si elle est plausible (3 jours au plus, pas dans le futur).
+function atMs(v: any) { const n = Number(v), t = Date.now(); return v !== undefined && v !== null && Number.isFinite(n) && n <= t + 60000 && n > t - 72 * 3600e3 ? n : t; }
 function parisHour(d = new Date()) { return Number(new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", hour12: false }).format(d)); }
 const isMgr = (me: any) => me.role === "owner" || me.role === "gerant";
 const isBrico = (me: any) => me.role === "bricoleur";
 // Accès donnés par le propriétaire à l'intendant (« reg_pec » : répartir les PEC reçues ; « reg_full » : tout le registre).
-const RO_OK = ["state", "push_sub", "push_test", "logout", "read_mark", "msg_send", "msg_edit", "msg_delete", "upload_url", "doc_get", "stats", "bank_tx", "tr_state", "tr_catalog"];
+const RO_OK = ["state", "push_sub", "push_test", "logout", "read_mark", "msg_send", "msg_edit", "msg_delete", "upload_url", "doc_get", "stats", "bank_tx", "tr_state", "tr_catalog", ...PLUS_RO];
 const PERMS = ["reg_pec", "reg_full", "contacts"];
 // Soldes bancaires : le propriétaire, et ceux à qui il donne l'accès « banque ».
 const canBank = (me: any) => me.role === "owner" || (Array.isArray(me.perms) && me.perms.includes("banque"));
@@ -356,6 +359,8 @@ async function actState(me: any, device: any) {
   if (canBank(me)) out.banque = await bankState(me.role === "owner").catch(() => null);
   if (canBank(me)) out.chorus = await chorusState(me.role === "owner").catch((e) => { console.error("chorus_state", e); return null; });
   if (me.role === "owner") out.courrier = await courrierState().catch((e) => { console.error("courrier_state", e); return null; });
+  // Objets trouvés, états des lieux, linge (plus.ts).
+  out.plus = await plusState(me, paths).catch((e) => { console.error("plus_state", e); return null; });
   out.urls = await signUrls(paths);
   return out;
 }
@@ -1255,6 +1260,7 @@ async function handle(req: Request) {
       return { sent: Object.keys(per).length, sec: secSent, tasks: taskSent };
     }
     if (body.kind === "point_push") return { sent: await pointPush() };
+    if (body.kind === "transcribe") return await transcribeBatch();
     if (body.kind === "chorus_sync") return await chorusCron();
     if (body.kind === "courrier_push") return await courrierPush();
     if (body.kind === "courrier_chorus_pdf") return await cw(courrierChorusPdf(body));
@@ -1283,6 +1289,7 @@ async function handle(req: Request) {
       await sb.from("messages").update({ media_path: null, media_type: "expired" }).lt("created_at", lim).not("media_path", "is", null);
       await sb.from("issues").update({ video: null, audio: null }).lt("created_at", lim);
       await sb.from("invites").delete().lt("expires_at", new Date().toISOString());
+      await sb.from("off_done").delete().lt("at", new Date(Date.now() - 10 * 864e5).toISOString());
       return { removed: names.length };
     }
     throw new E("bad");
@@ -1357,6 +1364,10 @@ async function handle(req: Request) {
   // Compte en lecture seule : tout voir, rien modifier (sauf messages et notifications).
   if (me.readonly && !RO_OK.includes(a)) throw new E("readonly", 403);
 
+  // Objets trouvés, états des lieux, linge, carnet des chambres, tutos, texte des vocaux (plus.ts).
+  const plus = async () => { try { return await plusAction(me, a, body, { pushTo, managerIds }); } catch (e) { if (e instanceof PE) throw new E(e.code, e.status); throw e; } };
+  const run = async (): Promise<any> => {
+  if (PLUS_ACTIONS.includes(a)) return await plus();
   switch (a) {
     case "state": return await actState(me, device);
 
@@ -1382,7 +1393,7 @@ async function handle(req: Request) {
     case "room_start": {
       const { data: r } = await sb.from("rooms").select("id,assignee,status").eq("id", body.id).single();
       if (!r || r.assignee !== me.id) throw new E("not_yours", 403);
-      if (r.status === "a_faire") await sb.from("rooms").update({ status: "en_cours", started_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq("id", r.id);
+      if (r.status === "a_faire") await sb.from("rooms").update({ status: "en_cours", started_at: new Date(atMs(body._at)).toISOString(), updated_at: new Date().toISOString() }).eq("id", r.id);
       return { ok: true };
     }
     // Gérant ou intendant : prendre un nettoyage pour soi (ou le rendre à répartir).
@@ -1412,7 +1423,7 @@ async function handle(req: Request) {
       if (photos.length < need.length) throw new E("photos_missing");
       const known = new Set((cfg.periodic || []).map((p: any) => p.id));
       const per = (Array.isArray(body.periodic) ? body.periodic : []).filter((x: any) => known.has(x));
-      const now = new Date(); const start = r.started_at || now.toISOString();
+      const now = new Date(atMs(body._at)); const start = r.started_at || now.toISOString();
       const pd = { ...(r.periodic_done || {}) }; per.forEach((id: string) => pd[id] = now.getTime());
       await sb.from("jobs").insert({ staff_id: me.id, room_id: r.id, hotel: r.hotel, num: r.num, type: r.type, started_at: start, ended_at: now.toISOString(), photos, periodic: per });
       await sb.from("rooms").update({
@@ -1426,7 +1437,7 @@ async function handle(req: Request) {
       const items = (Array.isArray(body.items) ? body.items : []).slice(0, 15);
       if (!items.length) throw new E("bad");
       const own = (p: any) => (typeof p === "string" && p.startsWith(me.id + "/")) ? p : null;
-      const now = Date.now();
+      const now = atMs(body._at);
       const rows = items.map((it: any, i: number) => ({
         kind: String(it.kind || "autre").slice(0, 20), hotel, room: body.room ? String(body.room).slice(0, 40) : null,
         text: it.text ? String(it.text).slice(0, 1000) : null, urgent: !!it.urgent, photo: own(it.photo), video: own(it.video), audio: own(it.audio),
@@ -1451,7 +1462,7 @@ async function handle(req: Request) {
       if (!convOk(me, conv)) throw new E("forbidden", 403);
       const hotel = HOTELS.includes(body.hotel) ? body.hotel : null;
       const { to, thread, label } = await convTo(me, conv, hotel);
-      const row = { conv, thread, from_staff: me.id, text, media_path: media, media_type: media ? String(body.media_type || "audio").slice(0, 10) : null, duration: body.duration ? Math.min(600, Math.round(body.duration)) : null, hotel, room: body.room ? String(body.room).slice(0, 40) : null };
+      const row = { conv, thread, from_staff: me.id, text, media_path: media, media_type: media ? String(body.media_type || "audio").slice(0, 10) : null, duration: body.duration ? Math.min(600, Math.round(body.duration)) : null, hotel, room: body.room ? String(body.room).slice(0, 40) : null, ...(body._at ? { created_at: new Date(atMs(body._at)).toISOString() } : {}) };
       const { error } = await sb.from("messages").insert(row); if (error) throw new E("db");
       await sb.from("conv_reads").upsert({ staff_id: me.id, conv, read_at: new Date().toISOString() });
       const where = row.room ? `${HOTEL_NAMES[hotel || ""] || ""} · ${/^\d/.test(row.room) ? "Chambre " : ""}${row.room}` : "";
@@ -1754,6 +1765,13 @@ async function handle(req: Request) {
     }
   }
   throw new E("unknown_action");
+  };
+  // Envoi fait hors ligne et rejoué au retour du réseau : le même envoi (même _qid) n'est jamais enregistré deux fois.
+  const qid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(String(body._qid || "")) ? String(body._qid) : null;
+  if (!qid) return await run();
+  const { error: qe } = await sb.from("off_done").insert({ id: qid, staff_id: me.id, a: String(a).slice(0, 40) });
+  if (qe) { if (qe.code === "23505") return { ok: true, dup: true }; return await run(); }
+  try { return await run(); } catch (e) { await sb.from("off_done").delete().eq("id", qid); throw e; }
 }
 
 async function docSign(msg: string) {

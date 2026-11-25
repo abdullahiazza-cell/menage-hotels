@@ -3,6 +3,7 @@
 Application web installable (PWA) de réception et de suivi du ménage pour l'Hôtel Archange, l'Hôtel de Paris et Châteaudun (Orléans).
 
 - `index.html`, `app.js`, `sw.js` : l'application (servie par GitHub Pages).
+- `plus.js` et `supabase/functions/api/plus.ts` (v80) : mode hors ligne, objets trouvés, état des lieux au départ, stock de linge, carnets des chambres, tutos avec voix, texte des vocaux. Chaque nouveauté a un interrupteur dans Réglages → Nouveautés : éteinte, seul le propriétaire la voit.
 - `supabase/functions/api` : l'API (Supabase Edge Function). Les données, photos et vocaux sont stockés chez Supabase, jamais dans ce dépôt.
 
 Aucune donnée ni aucun secret ne se trouve dans ce dépôt.
