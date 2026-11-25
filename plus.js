@@ -429,12 +429,27 @@ async function tutoOpen(id) {
   if (!TUTOS[id]) return; tutoStop(); T.id = id; T.i = 0; T.play = true; drawTuto();
   if (!T.urls) { try { T.urls = (await api('tuto_urls')).urls || {}; } catch (e) { T.urls = null; } if (T.id === id && S.sheet === 'tuto' && T.i === 0) tutoSay(); }
 }
-function tutoStop() { clearTimeout(T.timer); T.timer = null; if (T.audio) { try { T.audio.pause(); } catch (_) {} T.audio = null; } }
+function tutoStop() { clearTimeout(T.timer); T.timer = null; if (T.audio) { try { T.audio.pause(); } catch (_) {} T.audio = null; } try { if (window.speechSynthesis) speechSynthesis.cancel(); } catch (_) {} }
+// Voix française du téléphone : sert tant que les voix enregistrées (Google) ne sont pas installées, et quand il n'y a pas de réseau.
+function frVoice() { try { const L = speechSynthesis.getVoices().filter((v) => /^fr/i.test(v.lang)); return L.find((v) => /fr[-_]FR/i.test(v.lang) && v.localService) || L.find((v) => /fr[-_]FR/i.test(v.lang)) || L[0] || null; } catch (_) { return null; } }
+try { if (window.speechSynthesis) speechSynthesis.getVoices(); } catch (_) {}
 function tutoSay() {
   tutoStop(); if (!T.play || S.sheet !== 'tuto') return;
   const st = TUTOS[T.id].steps[T.i], u = T.urls && T.urls[tutoPath(T.id, T.i)], next = () => { if (S.sheet !== 'tuto' || !T.play) return; if (T.i < TUTOS[T.id].steps.length - 1) { T.i++; drawTuto(); } else { T.play = false; drawTuto(true); } };
-  const fallback = () => { T.timer = setTimeout(next, Math.max(4200, st.say.length * 75)); };
-  if (!u) { fallback(); return; }
+  const wait = Math.max(4200, st.say.length * 75);
+  const speak = () => {
+    // Pas de voix enregistrée : la voix française du téléphone lit la phrase ; sans voix du tout, on laisse juste le temps de lire.
+    let done = false; const end = (ms) => { if (done) return; done = true; clearTimeout(T.timer); T.timer = setTimeout(next, ms); };
+    T.timer = setTimeout(() => end(0), wait + 4000);
+    try {
+      if (!window.speechSynthesis || !window.SpeechSynthesisUtterance) { clearTimeout(T.timer); T.timer = setTimeout(next, wait); return; }
+      const x = new SpeechSynthesisUtterance(st.say.replace(/[«»]/g, '')); x.lang = 'fr-FR'; x.rate = 0.95; const v = frVoice(); if (v) x.voice = v;
+      x.onend = () => end(700); x.onerror = () => end(wait);
+      speechSynthesis.cancel(); speechSynthesis.speak(x);
+    } catch (_) { clearTimeout(T.timer); T.timer = setTimeout(next, wait); }
+  };
+  const fallback = speak;
+  if (!u) { speak(); return; }
   const a = new Audio(u); T.audio = a;
   a.onended = () => { T.timer = setTimeout(next, 700); };
   a.onerror = fallback;
@@ -516,7 +531,7 @@ function plusSettings() {
   if (!S.me || S.me.role !== 'owner') return '';
   const f = cfg().plus || {}, n = PLUS_F.filter(([k]) => f[k]).length;
   return `<div class="card"><h2>🆕 Nouveautés</h2><p class="muted">Vous voyez déjà tout pour essayer (aussi avec « Voir comme femme de ménage »). L’équipe ne voit une nouveauté que lorsqu’elle est allumée ici. ${n} sur ${PLUS_F.length} allumée${n > 1 ? 's' : ''}.</p>
-    <div class="list">${PLUS_F.map(([k, l, d]) => `<div class="li"><span class="t"><b>${l}</b><br><span class="muted">${esc(d)}</span></span><button class="toggle" data-a="plusFlag" data-k="${k}" aria-pressed="${!!f[k]}">${f[k] ? '✓ Pour toute l’équipe' : 'Moi seul'}</button></div>`).join('')}</div>
+    <div class="list">${PLUS_F.map(([k, l, d]) => `<div class="li"><span class="t"><b>${l}</b><br><span class="muted">${esc(d)}${k === 'txt' && !S.plus.stt ? ' · ⚠️ pas encore branché : il manque la clé Google' : ''}</span></span><button class="toggle" data-a="plusFlag" data-k="${k}" aria-pressed="${!!f[k]}">${f[k] ? '✓ Pour toute l’équipe' : 'Moi seul'}</button></div>`).join('')}</div>
     ${pOn('tuto') ? '<button class="btn" data-a="tutoList">🎬 Voir les tutos</button>' : ''}</div>`;
 }
 Object.assign(A, {

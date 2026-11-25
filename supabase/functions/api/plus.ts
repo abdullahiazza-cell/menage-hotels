@@ -4,7 +4,7 @@
 // - stock de linge par hôtel, avec seuil d'alerte ;
 // - carnet de santé de chaque chambre (pannes, travaux, coûts, âge du matelas, ménages) ;
 // - voix des tutos ;
-// - texte écrit des vocaux en français (Google Speech-to-Text, clé Google déjà installée).
+// - texte écrit des vocaux en français (Google Speech-to-Text) : en sommeil tant que la clé GOOGLE_STT_KEY (ou GOOGLE_TTS_KEY) n'est pas installée dans Supabase.
 // Tout passe par la fonction « api » : ce fichier ne répond à rien tout seul.
 import { createClient } from "npm:@supabase/supabase-js@2.45.4";
 
@@ -99,7 +99,8 @@ export async function plusState(me: any, paths: string[]) {
 }
 
 // ---------- texte écrit des vocaux (français) ----------
-// Service : Google Speech-to-Text, avec la clé Google déjà installée pour la voix française du point audio.
+// Service : Google Speech-to-Text, avec la même clé Google que la voix française du point audio (GOOGLE_TTS_KEY), ou une clé à part (GOOGLE_STT_KEY).
+// Sans clé, rien ne se passe : l'appli ne propose pas le texte des vocaux.
 // Les vocaux de l'appli sont des WAV (16 bits, mono) : on les découpe en morceaux de 55 secondes au plus.
 // Un vocal dans une autre langue donne un texte peu sûr : on ne l'affiche pas (note « pas en français »).
 const GKEY = Deno.env.get("GOOGLE_STT_KEY") || Deno.env.get("GOOGLE_TTS_KEY") || "";
