@@ -4,6 +4,7 @@ Application web installable (PWA) de réception et de suivi du ménage pour l'H�
 
 - `index.html`, `app.js`, `sw.js` : l'application (servie par GitHub Pages).
 - `plus.js` et `supabase/functions/api/plus.ts` (v80) : mode hors ligne, objets trouvés, état des lieux au départ, stock de linge, carnets des chambres, tutos avec voix, texte des vocaux. Chaque nouveauté a un interrupteur dans Réglages → Nouveautés : éteinte, seul le propriétaire la voit.
+- `vue3d.js` (v81) : vue 3D des trois hôtels pour les gérants, tracée d'après les plans, avec les ménages en cours, l'état des chambres et les problèmes signalés. Tout vient de l'état déjà chargé par l'appli ; rien à déployer côté API. Même interrupteur dans Réglages → Nouveautés.
 - `supabase/functions/api` : l'API (Supabase Edge Function). Les données, photos et vocaux sont stockés chez Supabase, jamais dans ce dépôt.
 
 Aucune donnée ni aucun secret ne se trouve dans ce dépôt.
